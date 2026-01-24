@@ -1,0 +1,27 @@
+# IdealQuant - Trading Strategy Optimization Suite
+# Python 3.11+
+
+## Core Dependencies
+pandas>=2.0.0
+numpy>=1.24.0
+numba>=0.57.0
+
+## Performance Monitoring
+tqdm>=4.65.0
+
+## GUI / Visualization
+streamlit>=1.28.0
+plotly>=5.18.0
+
+## Parallel Processing
+joblib>=1.3.0
+
+## Statistics & Machine Learning
+scipy>=1.11.0
+scikit-learn>=1.3.0
+
+## Data Export
+openpyxl>=3.1.0
+
+## Development
+pytest>=7.4.0
