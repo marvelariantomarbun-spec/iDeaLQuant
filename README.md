@@ -2,6 +2,8 @@
 
 Trading Strategy Backtesting, Optimization, and Robust Parameter Selection Suite.
 
+> 📍 **Hızlı Bağlantılar:** [Yol Haritası](ROADMAP.md) | [Geliştirme Günlüğü](DEVLOG.md)
+
 ## 🎯 Features
 
 ### 1. Backtest Engine
