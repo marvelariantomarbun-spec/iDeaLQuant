@@ -366,13 +366,19 @@ def ARS_Dynamic(typical: List[float], highs: List[float], lows: List[float],
     """
     Adaptive Regime Switch - Dynamic version
     Band width adapts to volatility (ATR)
+    Includes dynamic rounding based on ATR (IdealData compatible)
     """
+    import math
+    
     n = len(typical)
     result = [0.0] * n
     
     # Calculate EMA and ATR
     ema = EMA(typical, ema_period)
     atr = ATR(highs, lows, closes, atr_period)
+    
+    # First value
+    result[0] = ema[0]
     
     for i in range(1, n):
         # Dynamic K based on ATR
@@ -385,13 +391,25 @@ def ARS_Dynamic(typical: List[float], highs: List[float], lows: List[float],
         alt_band = ema[i] * (1 - dynamic_k)
         ust_band = ema[i] * (1 + dynamic_k)
         
+        # Histerizis mantığı
         if alt_band > result[i - 1]:
-            result[i] = alt_band
+            raw_ars = alt_band
         elif ust_band < result[i - 1]:
-            result[i] = ust_band
+            raw_ars = ust_band
         else:
-            result[i] = result[i - 1]
-    
+            raw_ars = result[i - 1]
+            
+        # Dinamik Yuvarlama (IdealData uyumlu)
+        # roundStep = Max(0.01, ATR * 0.1)
+        round_step = max(0.01, atr[i] * 0.1)
+        
+        # Standart matematik yuvarlama (0.5'i yukarı yuvarla)
+        # IdealData'nın Sistem.SayiYuvarla() ile uyumlu
+        if round_step > 0:
+            result[i] = math.floor(raw_ars / round_step + 0.5) * round_step
+        else:
+            result[i] = raw_ars
+            
     return result
 
 
@@ -491,19 +509,60 @@ def ChaikinMoneyFlow(highs: List[float], lows: List[float],
 def QQEF(closes: List[float], rsi_period: int = 14, smooth_period: int = 5) -> tuple:
     """
     Quantitative Qualitative Estimation Filter (QQEF)
-    Returns: (QQEF, Signal) tuple
-    Based on smoothed RSI. 
-    Brute-Force test verified IdealData uses EMA for smoothing of Wilder's RSI.
+    Returns: (QQEF, QQES) tuple
+    
+    Kıvanç Özbilgiç QQE formülü kullanır:
+    - QQEF: RSI'ın EMA ile smoothed hali
+    - QQES: ATR-bazlı trailing band (Signal Line)
     """
+    n = len(closes)
+    
     # 1. Calculate RSI (Wilder's)
     rsi = RSI(closes, rsi_period)
     
-    # 2. Smooth RSI (using EMA)
-    # Brute-force test result: Match with 0.13 error using EMA
-    qqef_line = EMA(rsi, smooth_period)
+    # 2. Smooth RSI (using EMA) -> QQEF
+    qqef = EMA(rsi, smooth_period)
     
-    # 3. Calculate Signal Line
-    # Signal is EMA of QQEF
-    signal_line = EMA(qqef_line, smooth_period)
+    # 3. Calculate QQES (Trailing Band - Kıvanç Özbilgiç formülü)
+    # TR = |QQEF[i] - QQEF[i-1]|
+    tr = [0.0] * n
+    for i in range(1, n):
+        tr[i] = abs(qqef[i] - qqef[i-1])
     
-    return qqef_line, signal_line
+    # WWMA (Wilder's smoothing) - alpha = 1/period
+    wwalpha = 1.0 / rsi_period
+    wwma = [0.0] * n
+    for i in range(1, n):
+        wwma[i] = wwalpha * tr[i] + (1 - wwalpha) * wwma[i-1]
+    
+    # ATRRSI (Double smoothed)
+    atrrsi = [0.0] * n
+    for i in range(1, n):
+        atrrsi[i] = wwalpha * wwma[i] + (1 - wwalpha) * atrrsi[i-1]
+    
+    # QQES trailing band logic
+    mult = 4.236  # Standart QQE multiplier
+    qqes = [0.0] * n
+    qqes[0] = qqef[0] if n > 0 else 50.0
+    
+    for i in range(1, n):
+        qup = qqef[i] + atrrsi[i] * mult
+        qdn = qqef[i] - atrrsi[i] * mult
+        
+        prev_qqes = qqes[i-1]
+        prev_qqef = qqef[i-1]
+        curr_qqef = qqef[i]
+        
+        # Trailing logic (PineScript uyumlu)
+        if qup < prev_qqes:
+            qqes[i] = qup
+        elif curr_qqef > prev_qqes and prev_qqef < prev_qqes:
+            qqes[i] = qdn
+        elif qdn > prev_qqes:
+            qqes[i] = qdn
+        elif curr_qqef < prev_qqes and prev_qqef > prev_qqes:
+            qqes[i] = qup
+        else:
+            qqes[i] = prev_qqes
+    
+    return qqef, qqes
