@@ -1,0 +1,141 @@
+// ===============================================================================================
+// 1DK İNDİKATÖR ARAŞTIRMA (DÜZELTİLMİŞ) - QQEF, RVI, QSTICK, NET HACİM
+// ===============================================================================================
+// Düzeltme: Üst üste aynı yönde sinyal sorunu giderildi (SonYon takibi eklendi)
+// Tarih: 2026-01-26
+// ===============================================================================================
+
+// --- PARAMETRELER ---
+var MIN_ONAY_SKORU = 5;      // Min 4 indikatör onayı
+var QQEF_PERIOD = 14;
+var QQEF_SMOOTH = 5;
+var RVI_PERIOD = 10;
+var QSTICK_PERIOD = 8;
+var NETLOT_ESIK = 20;
+var ADX_PERIOD = 14;
+var ADX_ESIK = 25;
+
+var V = Sistem.GrafikVerileri;
+var O = Sistem.GrafikFiyatSec("Acilis");
+var H = Sistem.GrafikFiyatSec("Yuksek");
+var L = Sistem.GrafikFiyatSec("Dusuk");
+var C = Sistem.GrafikFiyatSec("Kapanis");
+var T = Sistem.GrafikFiyatSec("Tipik");
+
+// --- 1. ARS ---
+var ARS_K = 0.0123;
+var ARS_EMA = Sistem.MA(T, "Exp", 3);
+var ARS = Sistem.Liste(0);
+for (int i = 1; i < Sistem.BarSayisi; i++) {
+    float altBand = (float)(ARS_EMA[i] * (1 - ARS_K));
+    float ustBand = (float)(ARS_EMA[i] * (1 + ARS_K));
+    if (altBand > ARS[i - 1]) ARS[i] = altBand;
+    else if (ustBand < ARS[i - 1]) ARS[i] = ustBand;
+    else ARS[i] = ARS[i - 1];
+}
+
+// --- 2. YATAY FİLTRE ---
+var ARS_DegismeDurumu = Sistem.Liste(0);
+int yatayEsik = 10;
+for (int i = yatayEsik; i < Sistem.BarSayisi; i++) {
+    bool arsAyni = true;
+    for (int j = 1; j <= yatayEsik; j++)
+        if (ARS[i] != ARS[i - j]) { arsAyni = false; break; }
+    ARS_DegismeDurumu[i] = arsAyni ? 0 : 1;
+}
+
+var ARS_Mesafe = Sistem.Liste(0);
+for (int i = 1; i < Sistem.BarSayisi; i++)
+    ARS_Mesafe[i] = Math.Abs(C[i] - ARS[i]) / ARS[i] * 100;
+
+var ADX14 = Sistem.ADX(ADX_PERIOD);
+
+var BBUp = Sistem.BollingerUp("Simple", 20, 2);
+var BBDown = Sistem.BollingerDown("Simple", 20, 2);
+var BBMid = Sistem.BollingerMid("Simple", 20, 2);
+var BBWidth = Sistem.Liste(0);
+for (int i = 1; i < Sistem.BarSayisi; i++)
+    if (BBMid[i] != 0) BBWidth[i] = ((BBUp[i] - BBDown[i]) / BBMid[i]) * 100;
+var BBWidth_Avg = Sistem.MA(BBWidth, "Simple", 50);
+
+var YatayFiltre = Sistem.Liste(0);
+for (int i = 50; i < Sistem.BarSayisi; i++) {
+    int skor = 0;
+    if (ARS_DegismeDurumu[i] == 1) skor++;
+    if (ARS_Mesafe[i] > 0.25f) skor++;
+    if (ADX14[i] > 20.0f) skor++;
+    if (BBWidth[i] > BBWidth_Avg[i] * 0.8f) skor++;
+    YatayFiltre[i] = (skor >= 2) ? 1 : 0;
+}
+
+// --- DİĞER İNDİKATÖRLER ---
+var NetLot = Sistem.Liste(0);
+for (int i = 1; i < Sistem.BarSayisi; i++) {
+    float barHacim = (H[i] - L[i]) > 0 ? (C[i] - O[i]) / (H[i] - L[i]) : 0;
+    NetLot[i] = barHacim * 100;
+}
+var NetLot_MA = Sistem.MA(NetLot, "Simple", 5);
+
+var QQEF = Sistem.QQEF(QQEF_PERIOD, QQEF_SMOOTH);
+var QQES = Sistem.QQES(QQEF_PERIOD, QQEF_SMOOTH);
+
+var RVI = Sistem.RelativeVigorIndex(RVI_PERIOD);
+var RVI_Signal = Sistem.RelativeVigorIndexSignal(RVI_PERIOD);
+
+var Qstick = Sistem.Qstick(QSTICK_PERIOD);
+
+// --- SİNYAL ve ÇİZİM ---
+for (int i = 1; i < V.Count; i++) Sistem.Yon[i] = "";
+var SonYon = "";
+
+for (int i = 50; i < Sistem.BarSayisi; i++)
+{
+    var Sinyal = "";
+    
+    // --- SKORLAMA ---
+    int longScore = 0;
+    int shortScore = 0;
+
+    if (C[i] > ARS[i]) longScore++; else if (C[i] < ARS[i]) shortScore++;
+    if (QQEF[i] > QQES[i] && QQEF[i] > 50) longScore++; else if (QQEF[i] < QQES[i] && QQEF[i] < 50) shortScore++;
+    if (RVI[i] > RVI_Signal[i]) longScore++; else if (RVI[i] < RVI_Signal[i]) shortScore++;
+    if (Qstick[i] > 0) longScore++; else if (Qstick[i] < 0) shortScore++;
+    if (NetLot_MA[i] > NETLOT_ESIK) longScore++; else if (NetLot_MA[i] < -NETLOT_ESIK) shortScore++;
+    if (ADX14[i] > ADX_ESIK) { longScore++; shortScore++; }
+
+    // --- ÇIKIŞ MANTIĞI ---
+    if (SonYon == "A") {
+        if (C[i] < ARS[i] || shortScore >= 4) Sinyal = "F";
+    }
+    else if (SonYon == "S") {
+        if (C[i] > ARS[i] || longScore >= 4) Sinyal = "F";
+    }
+    
+    // --- GİRİŞ MANTIĞI ---
+    if (Sinyal == "" && SonYon != "A" && SonYon != "S") {
+        if (YatayFiltre[i] == 1) { // Sadece trend varsa
+            if (longScore >= MIN_ONAY_SKORU && shortScore < 2) Sinyal = "A";
+            else if (shortScore >= MIN_ONAY_SKORU && longScore < 2) Sinyal = "S";
+        }
+    }
+    
+    // --- POZİSYON GÜNCELLEME ---
+    if (Sinyal != "" && SonYon != Sinyal) {
+        SonYon = Sinyal;
+        Sistem.Yon[i] = SonYon;
+    }
+}
+
+// --- ÇİZİMLER ---
+Sistem.Cizgiler[0].Deger = ARS;
+Sistem.Cizgiler[0].Aciklama = "ARS";
+Sistem.Cizgiler[0].ActiveBool = true;
+Sistem.Cizgiler[0].Renk = Color.Yellow;
+Sistem.Cizgiler[0].Kalinlik = 2;
+
+// --- PANEL ---
+var son = Sistem.BarSayisi - 1;
+string info = "SKOR: L=" + Sistem.SayiYuvarla(NetLot_MA[son], 0) + 
+              " Q=" + Sistem.SayiYuvarla(Qstick[son], 0);
+Sistem.Dortgen(1, 10, 30, 150, 50, Color.Black, Color.White, Color.Black);
+Sistem.YaziEkle(info, 1, 15, 35, Color.Yellow, "Tahoma", 10);

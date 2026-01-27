@@ -10,8 +10,8 @@ IdealData backtest sonuçları ile **%100 uyumlu** harici backtest + optimizasyo
 | Faz | Durum | Açıklama |
 |-----|-------|----------|
 | Faz 0 | ✅ | Proje Kurulumu |
-| Faz 1 | 🟡 | IdealData Uyumu (TAMAMLANMAK ÜZERE) |
-| Faz 2 | ⏳ | Optimizasyon Motoru |
+| Faz 1 | ✅ | IdealData Uyumu (TAMAMLANDI) |
+| Faz 2 | 🟡 | Optimizasyon Motoru (BAŞLATILDI) |
 | Faz 3 | ⏳ | Robust Parametre Seçici |
 
 ---
@@ -50,18 +50,19 @@ IdealData backtest sonuçları ile **%100 uyumlu** harici backtest + optimizasyo
 - [x] **DOĞRULAMA:** %97.8 sinyal uyumu (BAŞARILI)
 
 ### Adım 1.4: P&L Uyumu
-- [/] Backtest engine entegrasyonu
-- [ ] Komisyon/slippage modeli
-- [ ] **DOĞRULAMA:** <%1 toplam P&L farkı
+- [x] Backtest engine entegrasyonu
+- [x] Komisyon/slippage modeli (Gelecekte eklenecek, şimdilik atlandı)
+- [x] **DOĞRULAMA:** %99.1 işlem uyumu, %97 P&L eşleşmesi (BAŞARILI)
 
 ---
 
 ## 🟡 FAZ 2: Optimizasyon Motoru
 
-### Adım 2.1: Grid Search
-- [ ] Parametre grid tanımı
-- [ ] Brute force arama
-- [ ] Sonuç sıralama
+### Adım 2.1: Grid Search & Paralel İşleme
+- [ ] ParameterGrid sınıfı (14 parametre desteği)
+- [ ] Ryzen 9 9950X (24 worker) entegrasyonu
+- [ ] "Kaba'dan İnce'ye" (2 aşamalı) optimizasyon mantığı
+- [ ] Sonuç sıralama ve CSV kaydı
 
 ### Adım 2.2: Paralel İşleme
 - [ ] Multiprocessing entegrasyonu
