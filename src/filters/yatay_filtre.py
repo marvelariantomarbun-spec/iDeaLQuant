@@ -6,7 +6,7 @@ Yatay piyasada işlem yapılmasını engelleyen modül
 
 from typing import List, Tuple
 import numpy as np
-from indicators.core import EMA, ATR, ADX, SMA, ARS
+from src.indicators.core import EMA, ATR, ADX, SMA, ARS
 
 
 def calculate_ars_change_status(ars: List[float], lookback: int = 10) -> List[int]:

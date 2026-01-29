@@ -14,7 +14,7 @@ from typing import List, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
-from indicators.core import EMA, ATR, ADX, SMA, ARS, RVI, Qstick, NetLot
+from src.indicators.core import EMA, ATR, ADX, SMA, ARS, RVI, Qstick, NetLot
 from .ars_trend import Signal
 
 @dataclass
@@ -95,7 +95,7 @@ class ScoreBasedStrategy:
         self.yatay_filtre = [0] * self.n 
         
         # --- YATAY FİLTRE ---
-        from indicators.core import BollingerBands, SMA
+        from src.indicators.core import BollingerBands, SMA
         upper, middle, lower = BollingerBands(self.closes, 20, 2.0)
         
         bb_width = [0.0] * self.n

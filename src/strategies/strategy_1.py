@@ -4,12 +4,12 @@ IdealQuant - Strateji 1 (Yatay Filtre + Skor Tabanlı Sinyal)
 IdealData '1_Nolu_Strateji.txt' portu.
 """
 
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Any
 from dataclasses import dataclass
 import numpy as np
-from indicators.core import (
-    EMA, SMA, ADX, BollingerBands, QQEF, QQES, 
-    RelativeVigorIndex, RelativeVigorIndexSignal, Qstick, ARS_Dynamic
+from src.indicators.core import (
+    EMA, SMA, ADX, BollingerBands, QQEF, 
+    RVI, Qstick, ARS_Dynamic
 )
 from .ars_trend import Signal
 
@@ -45,16 +45,24 @@ class Strategy1:
                  lows: List[float], 
                  closes: List[float], 
                  typical: List[float], 
-                 config: Optional[Strategy1Config] = None):
+                 times: Optional[List[any]] = None,
+                 config: Optional[Strategy1Config] = None,
+                 config_dict: Optional[Dict[str, Any]] = None):
         
         self.opens = np.array(opens, dtype=np.float64)
         self.highs = np.array(highs, dtype=np.float64)
         self.lows = np.array(lows, dtype=np.float64)
         self.closes = np.array(closes, dtype=np.float64)
         self.typical = np.array(typical, dtype=np.float64)
-        self.config = config or Strategy1Config()
-        self.n = len(closes)
+        self.times = times
         
+        self.config = config or Strategy1Config()
+        if config_dict:
+            for key, value in config_dict.items():
+                if hasattr(self.config, key):
+                    setattr(self.config, key, value)
+                    
+        self.n = len(closes)
         self._calculate_indicators()
 
     def _calculate_indicators(self):
@@ -72,7 +80,9 @@ class Strategy1:
         # 2. Yatay Filtre Bileşenleri
         self.ars_degisme_durumu = self._calculate_ars_degisme(self.ars, cfg.yatay_esik)
         
-        self.ars_mesafe = np.abs(self.closes - self.ars) / self.ars * 100
+        with np.errstate(divide='ignore', invalid='ignore'):
+            self.ars_mesafe = np.abs(self.closes - self.ars) / self.ars * 100
+        self.ars_mesafe = np.nan_to_num(self.ars_mesafe)
         
         self.adx = ADX(self.highs.tolist(), self.lows.tolist(), self.closes.tolist(), cfg.adx_period)
         
@@ -93,11 +103,9 @@ class Strategy1:
                 self.netlot[i] = (self.closes[i] - self.opens[i]) / diff * 100
         self.netlot_ma = SMA(self.netlot.tolist(), 5)
         
-        self.qqef = QQEF(self.typical.tolist(), cfg.qqef_period, cfg.qqef_smooth)
-        self.qqes = QQES(self.typical.tolist(), cfg.qqef_period, cfg.qqef_smooth)
+        self.qqef, self.qqes = QQEF(self.typical.tolist(), cfg.qqef_period, cfg.qqef_smooth)
         
-        self.rvi = RelativeVigorIndex(self.opens.tolist(), self.highs.tolist(), self.lows.tolist(), self.closes.tolist(), cfg.rvi_period)
-        self.rvi_signal = RelativeVigorIndexSignal(self.opens.tolist(), self.highs.tolist(), self.lows.tolist(), self.closes.tolist(), cfg.rvi_period)
+        self.rvi, self.rvi_signal = RVI(self.opens.tolist(), self.highs.tolist(), self.lows.tolist(), self.closes.tolist(), cfg.rvi_period)
         
         self.qstick = Qstick(self.opens.tolist(), self.closes.tolist(), cfg.qstick_period)
         

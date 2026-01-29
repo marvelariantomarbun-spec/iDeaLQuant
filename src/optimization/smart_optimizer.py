@@ -19,7 +19,7 @@ import itertools
 # Proje kök dizini
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
-from indicators.core import EMA, ATR, ADX, SMA, ARS, RVI, Qstick, NetLot
+from src.indicators.core import EMA, ATR, ADX, SMA, ARS, RVI, Qstick, NetLot
 
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')

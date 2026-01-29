@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta, time
 
-from indicators.core import EMA, ATR, RSI, Momentum, HHV, LLV, ARS_Dynamic
+from src.indicators.core import EMA, ATR, RSI, Momentum, HHV, LLV, ARS_Dynamic
 
 class Signal(str, Enum):
     LONG = "A"
@@ -61,7 +61,8 @@ class ARSTrendStrategyV2:
                  closes: List[float],
                  typical: List[float],
                  times: List[datetime],
-                 config: Optional[StrategyConfigV2] = None):
+                 config: Optional[StrategyConfigV2] = None,
+                 config_dict: Optional[Dict[str, Any]] = None):
                  
         self.n = len(closes)
         self.opens = opens
@@ -70,7 +71,12 @@ class ARSTrendStrategyV2:
         self.closes = closes
         self.typical = typical
         self.times = times
+        
         self.config = config or StrategyConfigV2()
+        if config_dict:
+            for key, value in config_dict.items():
+                if hasattr(self.config, key):
+                    setattr(self.config, key, value)
         
         # İndikatörleri hesapla
         self._calculate_indicators()

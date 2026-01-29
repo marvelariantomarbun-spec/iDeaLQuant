@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 import numpy as np
 
-from indicators.core import EMA, ATR, RSI, Momentum, HHV, LLV
+from src.indicators.core import EMA, ATR, RSI, Momentum, HHV, LLV
 
 
 class Signal(Enum):
