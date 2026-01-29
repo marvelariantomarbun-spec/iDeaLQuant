@@ -514,6 +514,8 @@ def QQEF(closes: List[float], rsi_period: int = 14, smooth_period: int = 5) -> t
     Kıvanç Özbilgiç QQE formülü kullanır:
     - QQEF: RSI'ın EMA ile smoothed hali
     - QQES: ATR-bazlı trailing band (Signal Line)
+    
+    IdealData uyumlu: WWMA smooth period = 21
     """
     n = len(closes)
     
@@ -523,14 +525,16 @@ def QQEF(closes: List[float], rsi_period: int = 14, smooth_period: int = 5) -> t
     # 2. Smooth RSI (using EMA) -> QQEF
     qqef = EMA(rsi, smooth_period)
     
-    # 3. Calculate QQES (Trailing Band - Kıvanç Özbilgiç formülü)
+    # 3. Calculate QQES (Trailing Band)
     # TR = |QQEF[i] - QQEF[i-1]|
     tr = [0.0] * n
     for i in range(1, n):
         tr[i] = abs(qqef[i] - qqef[i-1])
     
-    # WWMA (Wilder's smoothing) - alpha = 1/period
-    wwalpha = 1.0 / rsi_period
+    # WWMA smooth period = 21 (IdealData uyumlu)
+    # Bu değer grid search ile bulundu (mean diff 0.047)
+    wwma_period = 21
+    wwalpha = 1.0 / wwma_period
     wwma = [0.0] * n
     for i in range(1, n):
         wwma[i] = wwalpha * tr[i] + (1 - wwalpha) * wwma[i-1]
@@ -553,16 +557,22 @@ def QQEF(closes: List[float], rsi_period: int = 14, smooth_period: int = 5) -> t
         prev_qqef = qqef[i-1]
         curr_qqef = qqef[i]
         
-        # Trailing logic (PineScript uyumlu)
-        if qup < prev_qqes:
+        # IdealData uyumlu trailing logic
+        # Cross detection: Önceki bar üstte iken şimdi altına düştüyse
+        prev_above = prev_qqef > prev_qqes
+        curr_above = curr_qqef > prev_qqes
+        
+        if prev_above and not curr_above:
+            # Cross down -> QUP'a atla
             qqes[i] = qup
-        elif curr_qqef > prev_qqes and prev_qqef < prev_qqes:
+        elif not prev_above and curr_above:
+            # Cross up -> QDN'e atla
             qqes[i] = qdn
-        elif qdn > prev_qqes:
-            qqes[i] = qdn
-        elif curr_qqef < prev_qqes and prev_qqef > prev_qqes:
-            qqes[i] = qup
+        elif curr_above:
+            # Uptrend - QDN'yi trail et
+            qqes[i] = max(qdn, prev_qqes)
         else:
-            qqes[i] = prev_qqes
+            # Downtrend - QUP'u trail et
+            qqes[i] = min(qup, prev_qqes)
     
     return qqef, qqes
