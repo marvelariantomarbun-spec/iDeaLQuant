@@ -1,19 +1,22 @@
 // ===============================================================================================
-// 1DK İNDİKATÖR ARAŞTIRMA (DÜZELTİLMİŞ) - QQEF, RVI, QSTICK, NET HACİM
+// 1DK İNDİKATÖR ARAŞTIRMA v4.0 (GATEKEEPER - SADELEŞTİRİLMİŞ)
 // ===============================================================================================
-// Düzeltme: Üst üste aynı yönde sinyal sorunu giderildi (SonYon takibi eklendi)
-// Tarih: 2026-01-26
+// Hedef: Strateji 2 (Trend Takip) için güvenli giriş filtresi.
+// İndikatörler: ARS + MACD-V + NET HACİM + ADX
+// Kaldırılanlar: QQE, RVI, QSTICK (Gereksiz Momentum)
+// Tarih: 2026-01-30 (Optimization v4.0 Results)
 // ===============================================================================================
 
-// --- PARAMETRELER ---
-var MIN_ONAY_SKORU = 5;      // Min 4 indikatör onayı
-var QQEF_PERIOD = 14;
-var QQEF_SMOOTH = 5;
-var RVI_PERIOD = 10;
-var QSTICK_PERIOD = 8;
+// --- PARAMETRELER (v4.0 OPTIMIZED) ---
+var MIN_ONAY_SKORU = 3;      // Min 3 indikatör onayı (Gatekeeper)
+var CIKIS_HASASIYETI = 3;    // Hızlı çıkış (Risk yok)
+var ARS_PERIYOT = 4;         // Daha sakin trend
+var ARS_K = 0.01;            // 0.01 katsayı
+var ADX_PERIOD = 20;         // Trend gücü filtresi
 var NETLOT_ESIK = 20;
-var ADX_PERIOD = 14;
-var ADX_ESIK = 25;
+var MACDV_SHORT = 12;
+var MACDV_LONG = 26;
+var MACDV_SIGNAL = 9;
 
 var V = Sistem.GrafikVerileri;
 var O = Sistem.GrafikFiyatSec("Acilis");
@@ -22,9 +25,8 @@ var L = Sistem.GrafikFiyatSec("Dusuk");
 var C = Sistem.GrafikFiyatSec("Kapanis");
 var T = Sistem.GrafikFiyatSec("Tipik");
 
-// --- 1. ARS ---
-var ARS_K = 0.0123;
-var ARS_EMA = Sistem.MA(T, "Exp", 3);
+// --- 1. ARS (Adaptive Range Stop) ---
+var ARS_EMA = Sistem.MA(T, "Exp", ARS_PERIYOT);
 var ARS = Sistem.Liste(0);
 for (int i = 1; i < Sistem.BarSayisi; i++) {
     float altBand = (float)(ARS_EMA[i] * (1 - ARS_K));
@@ -34,7 +36,31 @@ for (int i = 1; i < Sistem.BarSayisi; i++) {
     else ARS[i] = ARS[i - 1];
 }
 
-// --- 2. YATAY FİLTRE ---
+// --- 2. MACD-V (Volatility Normalized MACD) ---
+// Matriks Formül: (EMA(S) - EMA(L)) / EMA(TR, L) * 100
+var EMA_S = Sistem.MA(C, "Exp", MACDV_SHORT);
+var EMA_L = Sistem.MA(C, "Exp", MACDV_LONG);
+
+// True Range Hesaplama
+var TR_List = Sistem.Liste(0);
+for (int i = 1; i < Sistem.BarSayisi; i++) {
+    float hl = H[i] - L[i];
+    float hc = Math.Abs(H[i] - C[i-1]);
+    float lc = Math.Abs(L[i] - C[i-1]);
+    TR_List[i] = Math.Max(hl, Math.Max(hc, lc));
+}
+// ATRe (EMA of TR) - Uzun periyot kullanılıyor
+var ATRe = Sistem.MA(TR_List, "Exp", MACDV_LONG);
+
+var MACDV = Sistem.Liste(0);
+for (int i = 0; i < Sistem.BarSayisi; i++) {
+    if (ATRe[i] != 0)
+        MACDV[i] = ((EMA_S[i] - EMA_L[i]) / ATRe[i]) * 100;
+}
+var MACDV_Sig = Sistem.MA(MACDV, "Exp", MACDV_SIGNAL);
+
+
+// --- 3. YATAY FİLTRE ---
 var ARS_DegismeDurumu = Sistem.Liste(0);
 int yatayEsik = 10;
 for (int i = yatayEsik; i < Sistem.BarSayisi; i++) {
@@ -46,9 +72,9 @@ for (int i = yatayEsik; i < Sistem.BarSayisi; i++) {
 
 var ARS_Mesafe = Sistem.Liste(0);
 for (int i = 1; i < Sistem.BarSayisi; i++)
-    ARS_Mesafe[i] = Math.Abs(C[i] - ARS[i]) / ARS[i] * 100;
+    if (ARS[i] != 0) ARS_Mesafe[i] = Math.Abs(C[i] - ARS[i]) / ARS[i] * 100;
 
-var ADX14 = Sistem.ADX(ADX_PERIOD);
+var ADX = Sistem.ADX(ADX_PERIOD);
 
 var BBUp = Sistem.BollingerUp("Simple", 20, 2);
 var BBDown = Sistem.BollingerDown("Simple", 20, 2);
@@ -63,26 +89,19 @@ for (int i = 50; i < Sistem.BarSayisi; i++) {
     int skor = 0;
     if (ARS_DegismeDurumu[i] == 1) skor++;
     if (ARS_Mesafe[i] > 0.25f) skor++;
-    if (ADX14[i] > 20.0f) skor++;
+    if (ADX[i] > 20.0f) skor++;
     if (BBWidth[i] > BBWidth_Avg[i] * 0.8f) skor++;
     YatayFiltre[i] = (skor >= 2) ? 1 : 0;
 }
 
-// --- DİĞER İNDİKATÖRLER ---
+// --- 4. NET HACİM (NetLot) ---
 var NetLot = Sistem.Liste(0);
 for (int i = 1; i < Sistem.BarSayisi; i++) {
-    float barHacim = (H[i] - L[i]) > 0 ? (C[i] - O[i]) / (H[i] - L[i]) : 0;
+    float range = H[i] - L[i];
+    float barHacim = range > 0 ? (C[i] - O[i]) / range : 0;
     NetLot[i] = barHacim * 100;
 }
 var NetLot_MA = Sistem.MA(NetLot, "Simple", 5);
-
-var QQEF = Sistem.QQEF(QQEF_PERIOD, QQEF_SMOOTH);
-var QQES = Sistem.QQES(QQEF_PERIOD, QQEF_SMOOTH);
-
-var RVI = Sistem.RelativeVigorIndex(RVI_PERIOD);
-var RVI_Signal = Sistem.RelativeVigorIndexSignal(RVI_PERIOD);
-
-var Qstick = Sistem.Qstick(QSTICK_PERIOD);
 
 // --- SİNYAL ve ÇİZİM ---
 for (int i = 1; i < V.Count; i++) Sistem.Yon[i] = "";
@@ -92,28 +111,27 @@ for (int i = 50; i < Sistem.BarSayisi; i++)
 {
     var Sinyal = "";
     
-    // --- SKORLAMA ---
+    // --- SKORLAMA (ARS + MACDV + NETLOT + ADX) ---
     int longScore = 0;
     int shortScore = 0;
 
     if (C[i] > ARS[i]) longScore++; else if (C[i] < ARS[i]) shortScore++;
-    if (QQEF[i] > QQES[i] && QQEF[i] > 50) longScore++; else if (QQEF[i] < QQES[i] && QQEF[i] < 50) shortScore++;
-    if (RVI[i] > RVI_Signal[i]) longScore++; else if (RVI[i] < RVI_Signal[i]) shortScore++;
-    if (Qstick[i] > 0) longScore++; else if (Qstick[i] < 0) shortScore++;
+    if (MACDV[i] > MACDV_Sig[i]) longScore++; else if (MACDV[i] < MACDV_Sig[i]) shortScore++;
     if (NetLot_MA[i] > NETLOT_ESIK) longScore++; else if (NetLot_MA[i] < -NETLOT_ESIK) shortScore++;
-    if (ADX14[i] > ADX_ESIK) { longScore++; shortScore++; }
+    if (ADX[i] > 25.0f) { longScore++; shortScore++; } // Güçlü Trend Bonusu
 
     // --- ÇIKIŞ MANTIĞI ---
     if (SonYon == "A") {
-        if (C[i] < ARS[i] || shortScore >= 4) Sinyal = "F";
+        // ARS Kırılması VEYA Karşı Skorun (ShortScore) Artması
+        if (C[i] < ARS[i] || shortScore >= CIKIS_HASASIYETI) Sinyal = "F";
     }
     else if (SonYon == "S") {
-        if (C[i] > ARS[i] || longScore >= 4) Sinyal = "F";
+        if (C[i] > ARS[i] || longScore >= CIKIS_HASASIYETI) Sinyal = "F";
     }
     
-    // --- GİRİŞ MANTIĞI ---
+    // --- GİRİŞ MANTIĞI (GATEKEEPER) ---
     if (Sinyal == "" && SonYon != "A" && SonYon != "S") {
-        if (YatayFiltre[i] == 1) { // Sadece trend varsa
+        if (YatayFiltre[i] == 1) { // Yataydan Çıkış Onayı
             if (longScore >= MIN_ONAY_SKORU && shortScore < 2) Sinyal = "A";
             else if (shortScore >= MIN_ONAY_SKORU && longScore < 2) Sinyal = "S";
         }
@@ -133,9 +151,13 @@ Sistem.Cizgiler[0].ActiveBool = true;
 Sistem.Cizgiler[0].Renk = Color.Yellow;
 Sistem.Cizgiler[0].Kalinlik = 2;
 
+Sistem.Cizgiler[1].Deger = MACDV;
+Sistem.Cizgiler[1].Aciklama = "MACD-V";
+Sistem.Cizgiler[1].ActiveBool = false; // Panelde görünsün ama grafik üstüne çizmesin (ayrı pencere gerekir)
+
 // --- PANEL ---
 var son = Sistem.BarSayisi - 1;
-string info = "SKOR: L=" + Sistem.SayiYuvarla(NetLot_MA[son], 0) + 
-              " Q=" + Sistem.SayiYuvarla(Qstick[son], 0);
-Sistem.Dortgen(1, 10, 30, 150, 50, Color.Black, Color.White, Color.Black);
+string info = "MACD-V: " + Sistem.SayiYuvarla(MACDV[son], 2) + 
+              " Sig: " + Sistem.SayiYuvarla(MACDV_Sig[son], 2);
+Sistem.Dortgen(1, 10, 30, 200, 50, Color.Black, Color.White, Color.Black);
 Sistem.YaziEkle(info, 1, 15, 35, Color.Yellow, "Tahoma", 10);

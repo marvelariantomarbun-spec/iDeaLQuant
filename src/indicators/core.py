@@ -576,3 +576,41 @@ def QQEF(closes: List[float], rsi_period: int = 14, smooth_period: int = 5) -> t
             qqes[i] = min(qup, prev_qqes)
     
     return qqef, qqes
+
+
+def MACDV(closes: List[float], highs: List[float], lows: List[float], 
+          short_p: int = 12, long_p: int = 26, signal_p: int = 9) -> tuple:
+    """
+    MACD-V (Volatility Normalized MACD)
+    Formula: (EMA(short) - EMA(long)) / EMA(TR, long) * 100
+    Signal: EMA(MACDV, signal_p)
+    """
+    n = len(closes)
+    
+    # 1. Calculate Standard MACD Line (Value)
+    ema_short = EMA(closes, short_p)
+    ema_long = EMA(closes, long_p)
+    macd_val = [s - l for s, l in zip(ema_short, ema_long)]
+    
+    # 2. Calculate ATRe (ATR using EMA instead of RMA)
+    tr = [0.0] * n
+    tr[0] = highs[0] - lows[0]
+    for i in range(1, n):
+        hl = highs[i] - lows[i]
+        hc = abs(highs[i] - closes[i - 1])
+        lc = abs(lows[i] - closes[i - 1])
+        tr[i] = max(hl, hc, lc)
+        
+    # EMA of TR using 'long_p' as period (per Matriks formula: ATRe(up))
+    atre = EMA(tr, long_p)
+    
+    # 3. Calculate MACD-V
+    macdv = [0.0] * n
+    for i in range(n):
+        if atre[i] != 0:
+            macdv[i] = (macd_val[i] / atre[i]) * 100
+            
+    # 4. Signal Line
+    signal = EMA(macdv, signal_p)
+    
+    return macdv, signal
