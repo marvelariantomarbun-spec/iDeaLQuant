@@ -356,9 +356,16 @@ def run_3_stage_process():
         print(f"Rank {i+1}: NP={row['NP']:.0f} PF={row['PF']:.2f} DD={row['DD']:.0f}")
         print(f"       Params: ARS({row['AP']},{row['AK']}) ADX({row['ADP']}) MV{row['MV']} EXIT:{row['EX_SC']}")
         
-    df_res2.to_csv("d:/Projects/IdealQuant/tests/final_optimization_results.csv", index=False)
+    df_res2.to_csv("d:/Projects/IdealQuant/results/strategy1_final_results.csv", index=False)
+    
+    # Save top candidates for analysis
+    df_res2.head(50).to_csv("d:/Projects/IdealQuant/results/strategy1_top50.csv", index=False)
+    print(f"\\nSonuçlar kaydedildi: d:/Projects/IdealQuant/results/strategy1_final_results.csv")
 
 if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
-    run_3_stage_process()
+    try:
+        run_3_stage_process()
+    except KeyboardInterrupt:
+        print("İşlem kullanıcı tarafından durduruldu.")

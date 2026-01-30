@@ -1,110 +1,154 @@
-# 🗺️ IdealQuant - Yol Haritası
+# 🗺️ IdealQuant - Yol Haritası v2.0
 
 ## 🎯 Ana Hedef
 IdealData backtest sonuçları ile **%100 uyumlu** harici backtest + optimizasyon + robust parametre seçim sistemi.
+
+**Deadline:** Pazar Geceyarısı (2 Şubat 00:00)
 
 ---
 
 ## 📋 Faz Durumları
 
-| Faz | Durum | Açıklama |
-|-----|-------|----------|
-| Faz 0 | ✅ | Proje Kurulumu |
-| Faz 1 | ✅ | IdealData Uyumu (TAMAMLANDI) |
-| Faz 2 | 🟢 | Optimizasyon Motoru (TAMAMLANDI) |
-| Faz 3 | ⏳ | Robust Parametre Seçici |
+| Faz | Durum | Açıklama | Öncelik |
+|-----|-------|----------|---------|
+| Faz 0 | ✅ | Proje Kurulumu | - |
+| Faz 1 | ✅ | IdealData Uyumu | - |
+| Faz 2 | ✅ | Optimizasyon Motoru | - |
+| Faz 3 | 🔄 AKTİF | Robust Parametre | 🔴 Kritik |
+| Faz 4 | ⏸️ | IdealData Decompile | 🟡 Önemli |
+| Faz 5 | ⏸️ | Veritabanı | 🟢 Nice-to-have |
+| Faz 6 | ⏸️ | Validation Modülü | 🟡 Önemli |
+| Faz 7 | 🔄 | Agent Dokümantasyonu | 🔴 Sürekli |
 
 ---
 
-## ✅ FAZ 0: Proje Kurulumu [TAMAMLANDI]
-- [x] Proje klasörü oluşturuldu
-- [x] `src/engine/data.py` - OHLCV veri yapıları
-- [x] `src/indicators/core.py` - 15+ indikatör
-- [x] Git repo başlatıldı
+## ✅ FAZ 0-2: TAMAMLANDI
+
+<details>
+<summary>Detaylar için tıkla</summary>
+
+### Faz 0: Proje Kurulumu
+- [x] Proje klasörü, Git repo, temel yapı
+
+### Faz 1: IdealData Uyumu
+- [x] Veri okuma %100 uyum
+- [x] İndikatörler %99+ uyum
+- [x] Sinyal eşleşme %97.8
+- [x] P&L eşleşme %97
+
+### Faz 2: Optimizasyon Motoru
+- [x] 32-thread paralel işleme
+- [x] 3-aşamalı optimizasyon (Satellite-Drone-Stability)
+- [x] Strategy 1 & 2 optimize edildi
+
+</details>
 
 ---
 
-## 🔴 FAZ 1: IdealData Uyumu (KRİTİK)
+## 🔄 FAZ 3: Robust Parametre Seçimi [AKTİF]
 
 > [!IMPORTANT]
-> Bu faz tamamlanmadan optimizasyona geçilmemeli. Her adımda %100 uyum doğrulaması şart.
+> Bu faz overfitting'i tespit edip güvenli parametreleri belirler.
 
-### Adım 1.1: Veri Uyumu
-- [x] IdealData'dan CSV export (F_XU030, 1dk, 1 hafta)
-- [x] Python'da veri okuma testi
-- [x] Bar-by-bar karşılaştırma
-- [x] **DOĞRULAMA:** %100 eşleşme
-
-### Adım 1.2: İndikatör Uyumu
-- [x] SMA(20) test ve doğrulama
-- [x] EMA(20) test ve doğrulama
-- [x] RSI(14) test ve doğrulama
-- [x] ATR(14) test ve doğrulama
-- [x] ARS test ve doğrulama (İnce farklar tespit edildi ve doğrulandı)
-- [x] **DOĞRULAMA:** %90 bar < 0.01 fark, max %0.02 hata (Kabul Edildi)
-
-### Adım 1.3: Sinyal Uyumu
-- [x] ARS Trend v2 stratejisi port edildi
-- [x] IdealData'dan 5600+ işlem (1 yıl) export
-- [x] Sinyal karşılaştırma testi
-- [x] **DOĞRULAMA:** %97.8 sinyal uyumu (BAŞARILI)
-
-### Adım 1.4: P&L Uyumu
-- [x] Backtest engine entegrasyonu
-- [x] Komisyon/slippage modeli (Gelecekte eklenecek, şimdilik atlandı)
-- [x] **DOĞRULAMA:** %99.1 işlem uyumu, %97 P&L eşleşmesi (BAŞARILI)
-
----
-
-## 🟡 FAZ 2: Optimizasyon Motoru
-
-### Adım 2.1: Grid Search & Paralel İşleme
-- [x] ParameterGrid sınıfı (Dict config yapısı)
-- [x] Ryzen 9 9950X (32 worker) entegrasyonu
-- [x] "Kaba'dan İnce'ye" (2 aşamalı) optimizasyon mantığı
-- [x] Sonuç sıralama ve CSV kaydı
-
-### Adım 2.2: Paralel İşleme
-- [x] Multiprocessing entegrasyonu
-- [x] 32 thread desteği
-- [x] İlerleme takibi
-
-### Adım 2.3: Sonuç Kaydı
-- [x] CSV export
-- [ ] SQLite opsiyonu (İhtiyaç duyulmadı)
-- [x] Top-N filtreleme
-
----
-
-## 🟢 FAZ 3: Robust Parametre Seçici
-
-### Adım 3.1: Walk-Forward Analiz
+### 3.1 Walk-Forward Analiz
+- [ ] `src/robust/walk_forward.py` oluştur
 - [ ] In-sample / Out-of-sample bölme
-- [ ] Rolling window
+- [ ] Rolling window implementasyonu
 - [ ] WFA skoru hesaplama
 
-### Adım 3.2: Parametre Stabilite
+### 3.2 Monte Carlo Simülasyonu
+- [ ] `src/robust/monte_carlo.py` oluştur
+- [ ] Trade shuffle (1000 simülasyon)
+- [ ] %95 Confidence interval
+- [ ] Overfit tespit algoritması
+
+### 3.3 Parametre Stabilite
+- [ ] `src/robust/stability.py` oluştur
 - [ ] Komşu parametre analizi
 - [ ] Stabilite skoru
-- [ ] Isı haritası görselleştirme
-
-### Adım 3.3: Overfitting Tespiti
-- [ ] Monte Carlo simülasyonu (opsiyonel)
-- [ ] Overfitting raporu
-- [ ] Risk uyarıları
+- [ ] Isı haritası
 
 ---
 
-## 📅 Tahmini Süre
+## ⏸️ FAZ 4: IdealData Dosya Yapısı
 
-| Faz | Süre | Öncelik |
-|-----|------|---------|
-| Faz 1 | ~1 hafta | 🔴 Kritik |
-| Faz 2 | 2-3 gün | 🟡 Önemli |
-| Faz 3 | 2-3 gün | 🟢 Nice-to-have |
+> CSV'ye gerek kalmadan direkt binary okuma.
+
+### 4.1 Binary Analiz
+- [ ] IdealData dosya formatı reverse engineering
+- [ ] `src/engine/ideal_reader.py` oluştur
+- [ ] OHLCV direkt okuma
+
+---
+
+## ⏸️ FAZ 5: Veritabanı Entegrasyonu
+
+### 5.1 SQLite Şema
+- [ ] `src/database/` modül oluştur
+- [ ] OHLCV tabloları
+- [ ] Optimizasyon sonuç tabloları
+- [ ] CRUD operasyonları
+
+---
+
+## ⏸️ FAZ 6: Validation Modülü
+
+### 6.1 İndikatör Karşılaştırma
+- [ ] `src/validation/` modül oluştur
+- [ ] Otomatik indikatör doğrulama
+- [ ] Backtest karşılaştırma raporları
+
+---
+
+## 🔄 FAZ 7: Agent Dokümantasyonu [SÜREKLİ]
+
+### 7.1 AI Kuralları
+- [x] `CLAUDE.md` güncellendi (Gemini 3 Pro uyumu)
+- [ ] Yeni workflow dosyaları
+
+---
+
+## ⏸️ FAZ 8: Uygulama Arayüzü [SON ADIM]
+
+> [!IMPORTANT]
+> AI'ya ihtiyaç duymadan tek başına kullanılabilen uygulama.
+
+### 8.1 CLI (Command Line Interface)
+- [ ] `python -m idealquant optimize --strategy X`
+- [ ] `python -m idealquant wfa --strategy X`
+- [ ] `python -m idealquant mc --simulations 1000`
+
+### 8.2 Web UI (Streamlit)
+- [ ] Parametre grid tanımlama (slider'larla)
+- [ ] Tek tıkla optimizasyon
+- [ ] İnteraktif sonuç grafikleri
+- [ ] Walk-Forward & Monte Carlo dashboard
+
+---
+
+## 📅 Zaman Çizelgesi
+
+```
+Cuma       00:55  ─┬─ FAZ 3 Başlangıç (Walk-Forward)
+              ↓   │
+Cumartesi  12:00  ─┼─ FAZ 3 Monte Carlo
+              ↓   │
+Cumartesi  18:00  ─┼─ FAZ 3 Stabilite
+              ↓   │
+Cumartesi  24:00  ─┼─ FAZ 4 IdealData Decompile
+              ↓   │
+Pazar      12:00  ─┼─ FAZ 5 Veritabanı
+              ↓   │
+Pazar      18:00  ─┼─ FAZ 6 Validation
+              ↓   │
+Pazar      24:00  ─┴─ DEADLINE ✓
+```
 
 ---
 
 ## 🔗 İlgili Dosyalar
-- [Günlük](DEVLOG.md) - Günlük geliştirme notları
-- [README](README.md) - Proje açıklaması
+
+- [Implementation Plan](../.gemini/antigravity/brain/current/implementation_plan.md)
+- [Günlük](DEVLOG.md)
+- [AI Kuralları](.agent/CLAUDE.md)
+- [Workflows](.agent/workflows/)
