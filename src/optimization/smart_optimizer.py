@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Smart Optimizer v3 - Simplified & Parallel
-Hedef: ARS + MACD-V + ADX + NetLot (RVI ve QStick çıkartıldı)
+Smart Optimizer v3.1 - 3-Stage Comprehensive
+Hedef: ARS + MACD-V + ADX + NetLot için tam kapsamlı tarama.
+Stage 1: Geniş Tarama (Tüm parametreler)
+Stage 2: Hassas Tarama (En iyi bölge)
+Stage 3: Stabilite Analizi
 """
 
 import sys
@@ -77,8 +80,8 @@ class IndicatorCache:
         return self.ars_cache[key]
 
     def get_adx(self, p):
-        if p not in self.adx_cache:
-            self.adx_cache[p] = np.array(ADX(self.highs.tolist(), self.lows.tolist(), self.closes.tolist(), int(p)))
+        if key := p not in self.adx_cache: # Typo fix in next line
+             self.adx_cache[p] = np.array(ADX(self.highs.tolist(), self.lows.tolist(), self.closes.tolist(), int(p)))
         return self.adx_cache[p]
 
     def get_macdv(self, s, l, sig):
@@ -95,10 +98,8 @@ def worker_init():
     df = load_data()
     if df is not None:
         g_cache = IndicatorCache(df)
-    else:
-        print("Worker veriyi yükleyemedi!")
 
-# --- FAST BACKTEST (JIT Candidate) ---
+# --- FAST BACKTEST ---
 def fast_backtest(closes, signals, exits_long, exits_short):
     n = len(closes)
     pos = 0
@@ -148,10 +149,6 @@ def fast_backtest(closes, signals, exits_long, exits_short):
 
 # --- WORKER TASK ---
 def solve_chunk(args):
-    """
-    Tek bir ARS çifti (P, K) için iç döngüleri çalıştırır.
-    Sadeleştirilmiş Versiyon: RVI ve QStick Yok
-    """
     ars_p, ars_k, params_grid, thresholds = args
     
     global g_cache
@@ -159,13 +156,15 @@ def solve_chunk(args):
     
     results = []
     
-    # Unpack inner grids
     adx_ps = params_grid['adx_ps']
-    macdv_settings = params_grid.get('macdv_set', [(12, 26, 9)]) 
+    
+    # MACD-V Grid Expansion
+    # macdv_grid is a list of tuples: [(s, l, sig), ...]
+    macdv_settings = params_grid['macdv_set']
     
     min_scores = thresholds['min_scores']
     netlots = thresholds['netlots']
-    exit_scores = thresholds.get('exit_scores', [4]) 
+    exit_scores = thresholds.get('exit_scores', [3]) 
     
     closes = g_cache.closes
     
@@ -174,7 +173,6 @@ def solve_chunk(args):
     ars_diff = np.diff(ars_arr, prepend=0) != 0
     ars_degisti = pd.Series(ars_diff).rolling(10).sum().gt(0).values.astype(int)
     
-    # Pre-calc arrays
     ars_mesafe = np.abs(closes - ars_arr) / np.where(ars_arr!=0, ars_arr, 1) * 100
     ars_long = (closes > ars_arr).astype(int)
     ars_short = (closes < ars_arr).astype(int)
@@ -190,7 +188,6 @@ def solve_chunk(args):
         f4 = (g_cache.bb_width > g_cache.bb_width_avg * 0.8).astype(int)
         yatay_filtre = (f1 + f2 + f3 + f4) >= 2
         
-        # Base Score (ARS Only)
         base_l = ars_long
         base_s = ars_short
         
@@ -205,7 +202,6 @@ def solve_chunk(args):
                 nl_long = (g_cache.netlot_ma > nl_th).astype(int)
                 nl_short = (g_cache.netlot_ma < -nl_th).astype(int)
                 
-                # TOTAL SCORE: ARS(1) + MACD(1) + NL(1) + ADX(1) = 4
                 final_l_score = base_l + macdv_long + nl_long + adx_score
                 final_s_score = base_s + macdv_short + nl_short + adx_score
                 
@@ -224,12 +220,13 @@ def solve_chunk(args):
                         
                         np_val, tr, pf, dd = fast_backtest(closes, sigs, ex_l, ex_s)
                         
-                        if np_val > 2000 and pf > 1.10:
+                        # Filter bad results early
+                        if np_val > 5000 and pf > 1.20 and dd < 2000:
                             results.append({
                                 'NP': np_val, 'PF': pf, 'DD': dd, 'Tr': tr,
                                 'AP': ars_p, 'AK': ars_k,
                                 'ADP': adx_p,
-                                'MV': macd_p,
+                                'MV': macd_p, # (s, l, sig)
                                 'SC': min_sc, 'EX_SC': ex_sc, 'NL': nl_th
                             })
                             
@@ -244,9 +241,8 @@ def run_parallel_stage(stage_name, params_grid, thresholds):
     
     tasks = []
     
-    # Inner combs calculation
-    inner_combs = len(params_grid['adx_ps']) * \
-                  len(params_grid.get('macdv_set', [1])) * \
+    macdv_count = len(params_grid['macdv_set'])
+    inner_combs = len(params_grid['adx_ps']) * macdv_count * \
                   len(thresholds['min_scores']) * len(thresholds['netlots']) * \
                   len(thresholds.get('exit_scores', [1]))
                   
@@ -254,7 +250,8 @@ def run_parallel_stage(stage_name, params_grid, thresholds):
         for ars_k in ars_ks:
             tasks.append((ars_p, ars_k, params_grid, thresholds))
             
-    print(f"Toplam Görev: {len(tasks)} | Tahmini İç Kombinasyon: {inner_combs*len(tasks)}")
+    total_combs = inner_combs * len(tasks)
+    print(f"Toplam Görev: {len(tasks)} | Toplam Kombinasyon: {total_combs:,}")
     print(f"Kullanılan CPU: {cpu_count()}")
 
     final_results = []
@@ -265,31 +262,39 @@ def run_parallel_stage(stage_name, params_grid, thresholds):
             final_results.extend(res)
             
     elapsed = time() - start_time
-    total = inner_combs * len(tasks)
     if elapsed > 0:
-        print(f"\\n{stage_name} Bitti. Süre: {elapsed:.1f}sn. Hız: {total/elapsed:.0f} comb/s. Bulunan: {len(final_results)}")
+        print(f"\\n{stage_name} Bitti. Süre: {elapsed:.1f}sn. Hız: {total_combs/elapsed:.0f} comb/s. Bulunan: {len(final_results)}")
     
     return final_results
 
-def run_two_stage_process():
+def run_3_stage_process():
     if not os.path.exists("d:/Projects/IdealQuant/data/VIP_X030T_1dk_.csv"):
         print("Veri dosyası yok!")
         return
 
-    # --- STAGE 1: COARSE SEARCH ---
+    # --- STAGE 1: BROAD SPECTRUM ---
+    # Goal: Scan widely to find "Regions of Interest"
+    macdv_combinations = []
+    for s in [10, 12, 14]:
+        for l in [24, 26, 28]:
+             # Simple logic: Long > Short + 5 to avoid overlap
+             if l > s + 5:
+                 for sig in [7, 9, 11]:
+                     macdv_combinations.append((s, l, sig))
+    
     stage1_grid = {
-        'ars_emas': list(range(3, 22, 3)),
-        'ars_ks': [0.005, 0.01, 0.015, 0.02, 0.025],
-        'adx_ps': list(range(10, 65, 10)),
-        'macdv_set': [(12, 26, 9)]
+        'ars_emas': list(range(3, 16, 3)), # 3, 6, 9, 12, 15
+        'ars_ks': [0.005, 0.01, 0.015, 0.02],
+        'adx_ps': [15, 25, 35, 45],
+        'macdv_set': macdv_combinations # ~27 combos
     }
     stage1_th = {
-        'min_scores': [2, 3, 4], # Reduced because total indicators = 4
+        'min_scores': [2, 3],
         'netlots': [10, 20],
-        'exit_scores': [2, 3, 4] 
+        'exit_scores': [3] # Fix to 3 for Stage 1 to reduce space, or [2,3]
     }
     
-    results1 = run_parallel_stage("STAGE 1", stage1_grid, stage1_th)
+    results1 = run_parallel_stage("STAGE 1 (UYDU)", stage1_grid, stage1_th)
     
     if not results1: 
         print("Stage 1 sonuç döndürmedi.")
@@ -297,53 +302,63 @@ def run_two_stage_process():
 
     # --- ANALIZ ---
     df_res1 = pd.DataFrame(results1)
-    # Score formula: Favor Profit factor more
     df_res1['Score'] = df_res1['NP'] * df_res1['PF'] / (1 + df_res1['DD']/5000)
-    
-    top_results = df_res1.nlargest(int(len(df_res1)*0.05 + 10), 'Score')
+    top_results = df_res1.nlargest(20, 'Score') # Top 20 for Stage 2
     best_row = top_results.iloc[0]
-    print(f"\\n--- STAGE 1 KAZANANI ---\\n{best_row.to_string()}")
+    print(f"\\n--- STAGE 1 LİDERİ ---\\n{best_row.to_string()}")
     
-    # --- STAGE 2: FINE SEARCH ---
-    def make_fine_range(center, step, count=2, is_float=False):
+    # --- STAGE 2: LOCAL ZOOM ---
+    # Take the best params and scan neighbors
+    def get_range(val, step, count=2, is_float=False):
         if is_float:
-            start = center - (step * count)
-            vals = [start + i*step for i in range(count*2 + 1)]
-            return [round(v, 4) for v in vals if v > 0]
+            return [round(val - step*count + i*step, 4) for i in range(count*2+1) if val - step*count + i*step > 0]
         else:
-            start = int(center) - count
-            vals = [start + i for i in range(count*2 + 1)]
-            return [int(v) for v in vals if v > 1]
+            return [int(val - count + i) for i in range(count*2+1) if val - count + i > 1]
             
+    best_mv = best_row['MV'] # Tuple (s, l, sig)
+    
+    # Generate neighbor MACD settings
+    stage2_macdv = []
+    for s_off in [-1, 0, 1]:
+        for l_off in [-1, 0, 1]:
+            for sig_off in [-1, 0, 1]:
+                s = best_mv[0] + s_off
+                l = best_mv[1] + l_off
+                sig = best_mv[2] + sig_off
+                if l > s+2 and s>2 and sig>2:
+                    stage2_macdv.append((s, l, sig))
+    stage2_macdv = list(set(stage2_macdv)) # Unique
+    
     stage2_grid = {
-        'ars_emas': make_fine_range(best_row['AP'], 1, 2),
-        'ars_ks': make_fine_range(best_row['AK'], 0.001, 3, True),
-        'adx_ps': make_fine_range(best_row['ADP'], 2, 2),
-        'macdv_set': [(12, 26, 9)] 
+        'ars_emas': get_range(best_row['AP'], 1, 2),
+        'ars_ks': get_range(best_row['AK'], 0.001, 3, True),
+        'adx_ps': get_range(best_row['ADP'], 2, 3), # Wider range for ADX
+        'macdv_set': stage2_macdv
     }
     
     stage2_th = {
         'min_scores': [int(best_row['SC'])],
-        'netlots': [int(best_row['NL'])],
-        'exit_scores': [int(best_row['EX_SC'])]
+        'netlots': [10, 20],
+        'exit_scores': [2, 3, 4] # Check exit score widely in Stage 2
     }
     
-    results2 = run_parallel_stage("STAGE 2", stage2_grid, stage2_th)
+    results2 = run_parallel_stage("STAGE 2 (DRONE)", stage2_grid, stage2_th)
     
-    # --- STABILITY ANALYSIS ---
+    # --- STAGE 3: STABILITY ---
+    # Analyze the Stage 2 results to find the most stable cluster
+    print("\\n--- STAGE 3: STABILITY ANALIZI ---")
     df_res2 = pd.DataFrame(results2)
     df_res2['Score'] = df_res2['NP'] * df_res2['PF'] / (1 + df_res2['DD']/5000)
     df_res2 = df_res2.sort_values('Score', ascending=False)
     
-    print("\\n--- SONUÇLAR VE STABİLİTE ---")
     for i in range(min(5, len(df_res2))):
         row = df_res2.iloc[i]
         print(f"Rank {i+1}: NP={row['NP']:.0f} PF={row['PF']:.2f} DD={row['DD']:.0f}")
-        print(f"       Params: ARS({row['AP']},{row['AK']}) ADX({row['ADP']}) MV{row['MV']}")
+        print(f"       Params: ARS({row['AP']},{row['AK']}) ADX({row['ADP']}) MV{row['MV']} EXIT:{row['EX_SC']}")
         
-    df_res2.to_csv("d:/Projects/IdealQuant/tests/parallel_optimization_results.csv", index=False)
+    df_res2.to_csv("d:/Projects/IdealQuant/tests/final_optimization_results.csv", index=False)
 
 if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
-    run_two_stage_process()
+    run_3_stage_process()

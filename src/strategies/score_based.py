@@ -15,28 +15,28 @@ from .ars_trend import Signal
 
 @dataclass
 class ScoreConfig:
-    """Skor Strateji Konfigürasyonu (Simplified v4.0 Gatekeeper)"""
+    """Skor Strateji Konfigürasyonu (Global Optimized v4.1)"""
     min_score: int = 3
     
     # İndikatör Periyotları
-    adx_period: int = 20    
+    adx_period: int = 17    # Optimize Edildi (20 -> 17)
     
     # Eşik Değerler
     netlot_threshold: float = 20.0 
     adx_threshold: float = 25.0
-    exit_score: int = 3      # v4.0 (Gatekeeper) Hızlı Çıkış
+    exit_score: int = 3
     
-    # MACD-V
-    macdv_short: int = 12
-    macdv_long: int = 26
-    macdv_signal: int = 9
+    # MACD-V (Global Opt: 13, 28, 8)
+    macdv_short: int = 13
+    macdv_long: int = 28
+    macdv_signal: int = 8
     
     # Yatay Filtre
     ars_mesafe_threshold: float = 0.25
     bb_width_multiplier: float = 0.8
     
-    # ARS
-    ars_period: int = 4     
+    # ARS (Daha Hızlı)
+    ars_period: int = 3     # Optimize Edildi (4 -> 3)
     ars_k: float = 0.01     
 
 

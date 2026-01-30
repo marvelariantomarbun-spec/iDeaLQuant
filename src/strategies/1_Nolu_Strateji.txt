@@ -7,16 +7,16 @@
 // Tarih: 2026-01-30 (Optimization v4.0 Results)
 // ===============================================================================================
 
-// --- PARAMETRELER (v4.0 OPTIMIZED) ---
-var MIN_ONAY_SKORU = 3;      // Min 3 indikatör onayı (Gatekeeper)
-var CIKIS_HASASIYETI = 3;    // Hızlı çıkış (Risk yok)
-var ARS_PERIYOT = 4;         // Daha sakin trend
+// --- PARAMETRELER (v4.1 GLOBAL OPTIMIZED) ---
+var MIN_ONAY_SKORU = 3;      // Min 3 indikatör onayı
+var CIKIS_HASASIYETI = 3;    // Hızlı çıkış
+var ARS_PERIYOT = 3;         // ARS (Daha Hızlı: 4->3)
 var ARS_K = 0.01;            // 0.01 katsayı
-var ADX_PERIOD = 20;         // Trend gücü filtresi
+var ADX_PERIOD = 17;         // Trend gücü (20->17)
 var NETLOT_ESIK = 20;
-var MACDV_SHORT = 12;
-var MACDV_LONG = 26;
-var MACDV_SIGNAL = 9;
+var MACDV_SHORT = 13;        // 12 -> 13
+var MACDV_LONG = 28;         // 26 -> 28
+var MACDV_SIGNAL = 8;        // 9 -> 8
 
 var V = Sistem.GrafikVerileri;
 var O = Sistem.GrafikFiyatSec("Acilis");
