@@ -2,6 +2,38 @@
 
 ---
 
+## 2026-02-01 (Cumartesi)
+
+### ✅ Yapılanlar
+- **WFA & Monte Carlo Testleri:**
+  - `walk_forward.py` ve `monte_carlo.py` çalıştırıldı ve doğrulandı.
+  - WFA: 5 pencere, 4/5 kazançlı (%80 başarı).
+
+- **UI Kararı:**
+  - Desktop uygulama için **PySide6** seçildi.
+  - Profesyonel ve premium görünüm hedefi.
+
+- **Robot Kodları Analizi:**
+  - `D:\Projects\Robots` klasörü incelendi.
+  - Master Control, VIOP Pozisyon Takip, ARS Trend v2 analiz edildi.
+  - Yön birleştirme robot içinde yapılabilir → modüler mimari.
+
+- **IdealData Binary Parser:**
+  - `src/data/ideal_parser.py` oluşturuldu.
+  - .01 dosyaları okunuyor (1.5M bar test edildi).
+  - Format: 32-byte record, base date: 1988-02-28.
+
+- **IdealData Export Modülü:**
+  - `src/export/idealdata_exporter.py` oluşturuldu.
+  - S1, S2 ve birleşik robot kodu üretimi.
+  - Sistematik dosya isimlendirme: `S{n}_{sembol}_{periyot}DK_{vade}_{tarih}.cs`
+
+### 📌 Mevcut Durum
+- **Aktif Faz:** Faz 5 - Desktop UI (PySide6)
+- **Sıradaki Adım:** UI tasarımı ve implementasyon.
+
+---
+
 ## 2026-01-30 (Cuma)
 
 ### ✅ Yapılanlar
