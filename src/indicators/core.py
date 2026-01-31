@@ -506,6 +506,63 @@ def ChaikinMoneyFlow(highs: List[float], lows: List[float],
     return result
 
 
+def MoneyFlowIndex(highs: List[float], lows: List[float], closes: List[float], 
+                   volumes: List[float], period: int = 14) -> List[float]:
+    """
+    Money Flow Index (MFI) - IdealData compatible
+    Volume-weighted RSI variant
+    
+    Formula:
+    1. Typical Price = (High + Low + Close) / 3
+    2. Raw Money Flow = Typical Price * Volume
+    3. Positive MF = sum of Raw MF when TP > Previous TP
+    4. Negative MF = sum of Raw MF when TP < Previous TP
+    5. Money Ratio = Positive MF / Negative MF
+    6. MFI = 100 - (100 / (1 + Money Ratio))
+    """
+    n = len(closes)
+    result = [50.0] * n
+    
+    if n < period + 1:
+        return result
+    
+    # Calculate Typical Price
+    typical = [(highs[i] + lows[i] + closes[i]) / 3 for i in range(n)]
+    
+    # Calculate Raw Money Flow
+    raw_mf = [typical[i] * volumes[i] for i in range(n)]
+    
+    # Separate positive and negative money flow
+    pos_mf = [0.0] * n
+    neg_mf = [0.0] * n
+    
+    for i in range(1, n):
+        # IdealData compatible: FLAT (TP unchanged) counts as positive
+        if typical[i] >= typical[i - 1]:
+            pos_mf[i] = raw_mf[i]
+        else:
+            neg_mf[i] = raw_mf[i]
+    
+    # Calculate MFI over period
+    for i in range(period, n):
+        sum_pos = sum(pos_mf[i - period + 1 : i + 1])
+        sum_neg = sum(neg_mf[i - period + 1 : i + 1])
+        
+        if sum_neg == 0:
+            result[i] = 100.0
+        elif sum_pos == 0:
+            result[i] = 0.0
+        else:
+            money_ratio = sum_pos / sum_neg
+            result[i] = 100.0 - (100.0 / (1.0 + money_ratio))
+    
+    return result
+
+
+# Alias for compatibility
+MFI = MoneyFlowIndex
+
+
 def QQEF(closes: List[float], rsi_period: int = 14, smooth_period: int = 5) -> tuple:
     """
     Quantitative Qualitative Estimation Filter (QQEF)

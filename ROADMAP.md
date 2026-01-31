@@ -39,7 +39,19 @@ IdealData backtest sonuçları ile **%100 uyumlu** harici backtest + optimizasyo
 ### Faz 2: Optimizasyon Motoru
 - [x] 32-thread paralel işleme
 - [x] 3-aşamalı optimizasyon (Satellite-Drone-Stability)
-- [x] Strategy 1 & 2 optimize edildi
+- [x] Hibrit Grid Optimizer
+- [x] Genetik Algoritma
+- [x] **Bayesian Optimizer (Optuna)** ← YENİ
+- [x] **Extended Fitness (7 faktör)** ← YENİ
+
+### Kalibrasyon (✅ TAMAMLANDI)
+| Gösterge | Max Fark |
+|----------|----------|
+| ARS | ~0.01 |
+| Momentum, HHV/LLV | 0.00 |
+| Volume HHV/LLV | 0.00 |
+| MFI | 0.005 |
+| ATR | 0.0001 |
 
 </details>
 

@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta, time
 
-from src.indicators.core import EMA, ATR, RSI, Momentum, HHV, LLV, ARS_Dynamic
+from src.indicators.core import EMA, ATR, RSI, Momentum, HHV, LLV, ARS_Dynamic, MoneyFlowIndex
 
 class Signal(str, Enum):
     LONG = "A"
@@ -36,12 +36,39 @@ class StrategyConfigV2:
     rsi_overbought: float = 70.0
     rsi_oversold: float = 30.0
     
+    # MFI Breakout Parametreleri (Grup 3 - Yeni)
+    mfi_period: int = 14
+    mfi_hhv_period: int = 14  # MFI üst breakout
+    mfi_llv_period: int = 14  # MFI alt breakout
+    mfi_breakout_enabled: bool = True
+    
+    # Hacim Breakout Parametreleri (Grup 3 - Yeni)
+    volume_hhv_period: int = 14  # Hacim üst breakout
+    volume_llv_period: int = 14  # Hacim alt breakout
+    volume_breakout_enabled: bool = True
+    
     # Çıkış Parametreleri
     kar_al_pct: float = 3.0
     iz_stop_pct: float = 1.5
     
     # Vade Yönetimi
     vade_tipi: str = "ENDEKS" # "ENDEKS" veya "SPOT"
+    
+    def get_max_period(self) -> int:
+        """En uzun indikatör periyodunu hesapla - Isınma periyodu için"""
+        periods = [
+            self.ars_ema_period,
+            self.ars_atr_period,
+            self.momentum_period,
+            self.breakout_period,
+            self.rsi_period,
+            self.mfi_period,
+            self.mfi_hhv_period,
+            self.mfi_llv_period,
+            self.volume_hhv_period,
+            self.volume_llv_period,
+        ]
+        return max(periods) + 10  # +10 güvenlik marjı
 
 class ARSTrendStrategyV2:
     """
@@ -61,6 +88,7 @@ class ARSTrendStrategyV2:
                  closes: List[float],
                  typical: List[float],
                  times: List[datetime],
+                 volumes: Optional[List[float]] = None,  # Lot/Hacim verisi
                  config: Optional[StrategyConfigV2] = None,
                  config_dict: Optional[Dict[str, Any]] = None):
                  
@@ -71,6 +99,7 @@ class ARSTrendStrategyV2:
         self.closes = closes
         self.typical = typical
         self.times = times
+        self.volumes = volumes or [0.0] * self.n  # Varsayılan 0
         
         self.config = config or StrategyConfigV2()
         if config_dict:
@@ -83,6 +112,10 @@ class ARSTrendStrategyV2:
         
         # Vade sonu günlerini hesapla (Eğer times verildiyse)
         self.vade_sonu_gunleri = self._calculate_vade_sonlari() if times else set()
+        
+        # Vade geçişi barlarını tespit et (GAP/Isınma için)
+        self.vade_gecis_barlari = self._detect_vade_transitions() if times else set()
+        self.warmup_period = self.config.get_max_period()
         
     def _calculate_indicators(self):
         cfg = self.config
@@ -113,6 +146,25 @@ class ARSTrendStrategyV2:
         self.llv = LLV(self.lows, cfg.breakout_period)
         self.rsi = RSI(self.closes, cfg.rsi_period)
         
+        # 4. MFI Breakout (Grup 3 - Yeni)
+        if cfg.mfi_breakout_enabled:
+            self.mfi = MoneyFlowIndex(self.highs, self.lows, self.closes, 
+                                       self.volumes, cfg.mfi_period)
+            self.mfi_hhv = HHV(self.mfi, cfg.mfi_hhv_period)
+            self.mfi_llv = LLV(self.mfi, cfg.mfi_llv_period)
+        else:
+            self.mfi = [50.0] * self.n
+            self.mfi_hhv = [50.0] * self.n
+            self.mfi_llv = [50.0] * self.n
+        
+        # 5. Hacim Breakout (Grup 3 - Yeni)
+        if cfg.volume_breakout_enabled:
+            self.volume_hhv = HHV(self.volumes, cfg.volume_hhv_period)
+            self.volume_llv = LLV(self.volumes, cfg.volume_llv_period)
+        else:
+            self.volume_hhv = [0.0] * self.n
+            self.volume_llv = [0.0] * self.n
+        
     def _calculate_vade_sonlari(self) -> set:
         """Vade sonu tarihlerini hesapla (Basitleştirilmiş)"""
         vade_dates = set()
@@ -135,6 +187,42 @@ class ARSTrendStrategyV2:
             vade_dates.add(last_day)
             
         return vade_dates
+    
+    def _detect_vade_transitions(self) -> set:
+        """Vade geçişi barlarını tespit et (Isınma periyodu için)
+        
+        Yeni vade başladığında (vade sonu günü sonraki ilk işlem günü),
+        en uzun indikatör periyodu kadar sinyal üretilmemeli.
+        
+        Returns:
+            set: Vade geçişi olan bar indeksleri
+        """
+        transition_bars = set()
+        
+        if not self.times or not self.vade_sonu_gunleri:
+            return transition_bars
+        
+        prev_date = None
+        for i, t in enumerate(self.times):
+            current_date = t.date()
+            
+            if prev_date is not None:
+                # Günün ilk barı mı?
+                if current_date != prev_date:
+                    # Önceki gün vade sonu mu?
+                    if prev_date in self.vade_sonu_gunleri:
+                        transition_bars.add(i)
+            
+            prev_date = current_date
+        
+        return transition_bars
+    
+    def _is_in_warmup(self, i: int) -> bool:
+        """Bar ısınma periyodunda mı kontrol et"""
+        for vade_bar in self.vade_gecis_barlari:
+            if vade_bar <= i < vade_bar + self.warmup_period:
+                return True
+        return False
 
     def get_signal(self, i: int, current_position: str, 
                    entry_price: float = 0, 
@@ -144,8 +232,14 @@ class ARSTrendStrategyV2:
         
         cfg = self.config
         
+        # --- ISINMA PERİYODU KONTROLÜ (Vade Geçişi) ---
+        if self._is_in_warmup(i):
+            # Isınma periyodundayken sadece çıkış sinyali ver, giriş yok
+            if current_position != "FLAT":
+                return Signal.FLAT  # Pozisyonu kapat
+            return Signal.NONE  # Yeni giriş yok
+        
         # --- VADE SONU KONTROLÜ ---
-        # (Şimdilik pas geçilebilir veya basit kontrol eklenebilir)
         current_time = self.times[i]
         is_vade_sonu = current_time.date() in self.vade_sonu_gunleri
         
@@ -196,7 +290,17 @@ class ARSTrendStrategyV2:
                 pozitif_mom = self.momentum[i] > 100
                 rsi_uygun = self.rsi[i] < cfg.rsi_overbought
                 
-                if yeni_zirve and pozitif_mom and rsi_uygun:
+                # MFI Breakout (Yeni) - MFI yeni zirve yapıyor
+                mfi_onay = True
+                if cfg.mfi_breakout_enabled:
+                    mfi_onay = self.mfi[i] >= self.mfi_hhv[i-1]
+                
+                # Hacim Breakout (Yeni) - Hacim ortalamanın üstünde
+                volume_onay = True
+                if cfg.volume_breakout_enabled:
+                    volume_onay = self.volumes[i] >= self.volume_hhv[i-1] * 0.8  # %80 eşik
+                
+                if yeni_zirve and pozitif_mom and rsi_uygun and mfi_onay and volume_onay:
                     return Signal.LONG
             
             # SHORT GİRİŞ
@@ -205,7 +309,17 @@ class ARSTrendStrategyV2:
                 negatif_mom = self.momentum[i] < 100
                 rsi_uygun = self.rsi[i] > cfg.rsi_oversold
                 
-                if yeni_dip and negatif_mom and rsi_uygun:
+                # MFI Breakout (Yeni) - MFI yeni dip yapıyor
+                mfi_onay = True
+                if cfg.mfi_breakout_enabled:
+                    mfi_onay = self.mfi[i] <= self.mfi_llv[i-1]
+                
+                # Hacim Breakout (Yeni) - Hacim ortalamanın üstünde
+                volume_onay = True
+                if cfg.volume_breakout_enabled:
+                    volume_onay = self.volumes[i] >= self.volume_hhv[i-1] * 0.8  # %80 eşik
+                
+                if yeni_dip and negatif_mom and rsi_uygun and mfi_onay and volume_onay:
                     return Signal.SHORT
                     
         return Signal.NONE

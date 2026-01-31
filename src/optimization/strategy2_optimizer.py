@@ -18,7 +18,7 @@ from numba import jit
 # Proje kök dizini (IdealQuant)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from src.indicators.core import EMA, ATR, RSI, Momentum, HHV, LLV, ARS_Dynamic
+from src.indicators.core import EMA, ATR, RSI, Momentum, HHV, LLV, ARS_Dynamic, MoneyFlowIndex
 
 # Global cache for workers
 g_cache = None
@@ -56,12 +56,16 @@ class IndicatorCache:
         self.closes = df['Kapanis'].values
         self.typical = df['Tipik'].values
         self.n = len(self.closes)
+        self.lots = df['Lot'].values  # Volume data (Lot)
         
         self.ars_cache = {}
         self.rsi_cache = {}
         self.mom_cache = {}
         self.hhv_cache = {}
         self.llv_cache = {}
+        self.mfi_cache = {}  # MFI cache
+        self.vol_hhv_cache = {}  # Volume HHV cache
+        self.vol_llv_cache = {}  # Volume LLV cache
 
     def get_ars(self, ema_p, atr_p, atr_m):
         key = (ema_p, atr_p, round(atr_m, 2))
@@ -93,6 +97,38 @@ class IndicatorCache:
         if p not in self.llv_cache:
             self.llv_cache[p] = np.array(LLV(self.lows.tolist(), int(p)))
         return self.llv_cache[p]
+    
+    def get_mfi(self, p):
+        """Money Flow Index"""
+        if p not in self.mfi_cache:
+            self.mfi_cache[p] = np.array(MoneyFlowIndex(
+                self.highs.tolist(), self.lows.tolist(), 
+                self.closes.tolist(), self.lots.tolist(), int(p)
+            ))
+        return self.mfi_cache[p]
+    
+    def get_mfi_hhv(self, mfi_p, hhv_p):
+        """MFI HHV (breakout up)"""
+        key = (mfi_p, hhv_p)
+        if key not in self.vol_hhv_cache:  # Reuse cache dict
+            mfi = self.get_mfi(mfi_p)
+            self.vol_hhv_cache[key] = np.array(HHV(mfi.tolist(), int(hhv_p)))
+        return self.vol_hhv_cache.get(key)
+    
+    def get_mfi_llv(self, mfi_p, llv_p):
+        """MFI LLV (breakout down)"""
+        key = (mfi_p, llv_p)
+        if key not in self.vol_llv_cache:
+            mfi = self.get_mfi(mfi_p)
+            self.vol_llv_cache[key] = np.array(LLV(mfi.tolist(), int(llv_p)))
+        return self.vol_llv_cache.get(key)
+    
+    def get_volume_hhv(self, p):
+        """Volume (Lot) HHV"""
+        key = ('vol', p)
+        if key not in self.vol_hhv_cache:
+            self.vol_hhv_cache[key] = np.array(HHV(self.lots.tolist(), int(p)))
+        return self.vol_hhv_cache[key]
 
 # --- WORKER INIT ---
 def worker_init():
@@ -103,9 +139,10 @@ def worker_init():
 
 # --- FAST BACKTEST (Strategy 2 Logic) ---
 @jit(nopython=True)
-def fast_backtest_strategy2(closes, highs, lows, ars_arr, hhv, llv, mom, rsi, 
+def fast_backtest_strategy2(closes, highs, lows, volumes, ars_arr, hhv, llv, mom, rsi,
+                            mfi_arr, mfi_hhv, mfi_llv, vol_hhv,
                             mom_p, brk_p, rsi_p, kar_al, iz_stop,
-                            rsi_ob, rsi_os):
+                            rsi_ob, rsi_os, use_mfi, use_vol):
     n = len(closes)
     
     # Pre-calculate Trend Direction
@@ -220,8 +257,19 @@ def fast_backtest_strategy2(closes, highs, lows, ars_arr, hhv, llv, mom, rsi,
             if current_trend == 1:
                 # LONG Conditions
                 # Breakout: High > Prev HHV
-                if (closes[i] > hhv[i-1] or highs[i] > hhv[i-1]) and \
-                   mom_long[i] and rsi_ok_long[i]:
+                price_ok = (closes[i] > hhv[i-1] or highs[i] > hhv[i-1])
+                
+                # MFI Breakout (new): MFI >= Prev MFI HHV
+                mfi_ok = True
+                if use_mfi:
+                    mfi_ok = mfi_arr[i] >= mfi_hhv[i-1]
+                
+                # Volume Breakout (new): Volume >= 80% of Prev Vol HHV
+                vol_ok = True
+                if use_vol:
+                    vol_ok = volumes[i] >= vol_hhv[i-1] * 0.8
+                
+                if price_ok and mom_long[i] and rsi_ok_long[i] and mfi_ok and vol_ok:
                     pos = 1
                     entry_price = closes[i]
                     extreme_price = closes[i]
@@ -229,8 +277,19 @@ def fast_backtest_strategy2(closes, highs, lows, ars_arr, hhv, llv, mom, rsi,
                     
             elif current_trend == -1:
                 # SHORT Conditions
-                if (closes[i] < llv[i-1] or lows[i] < llv[i-1]) and \
-                   mom_short[i] and rsi_ok_short[i]:
+                price_ok = (closes[i] < llv[i-1] or lows[i] < llv[i-1])
+                
+                # MFI Breakout (new): MFI <= Prev MFI LLV
+                mfi_ok = True
+                if use_mfi:
+                    mfi_ok = mfi_arr[i] <= mfi_llv[i-1]
+                
+                # Volume Breakout (new): Volume >= 80% of Prev Vol HHV
+                vol_ok = True
+                if use_vol:
+                    vol_ok = volumes[i] >= vol_hhv[i-1] * 0.8
+                
+                if price_ok and mom_short[i] and rsi_ok_short[i] and mfi_ok and vol_ok:
                     pos = -1
                     entry_price = closes[i]
                     extreme_price = closes[i]
@@ -256,16 +315,29 @@ def solve_chunk(args):
     kar_als = params_grid['kar_als']
     iz_stops = params_grid['iz_stops']
     
+    # MFI/Volume params (new)
+    mfi_period = params_grid.get('mfi_period', 14)
+    use_mfi = params_grid.get('use_mfi', True)
+    use_vol = params_grid.get('use_vol', True)
+    vol_period = params_grid.get('vol_period', 14)
+    
     # Fixed or narrow range params for RSI to reduce dim
     rsi_p = 14
     rsi_ob = 70
     rsi_os = 30
     
     closes = g_cache.closes
+    volumes = g_cache.lots
     
     # Get Indicator Arrays
     ars_arr = g_cache.get_ars(ars_ema, ars_atr_p, ars_atr_m)
     rsi_arr = g_cache.get_rsi(rsi_p)
+    
+    # MFI/Volume arrays (new)
+    mfi_arr = g_cache.get_mfi(mfi_period)
+    mfi_hhv = g_cache.get_mfi_hhv(mfi_period, mfi_period)
+    mfi_llv = g_cache.get_mfi_llv(mfi_period, mfi_period)
+    vol_hhv = g_cache.get_volume_hhv(vol_period)
     
     for mp in mom_ps:
         mom_arr = g_cache.get_mom(mp)
@@ -278,15 +350,18 @@ def solve_chunk(args):
                 for iz in iz_stops:
                     
                     np_val, tr, pf, dd = fast_backtest_strategy2(
-                        closes, g_cache.highs, g_cache.lows, ars_arr, hhv_arr, llv_arr, mom_arr, rsi_arr,
-                        mp, bp, rsi_p, ka, iz, rsi_ob, rsi_os
+                        closes, g_cache.highs, g_cache.lows, volumes,
+                        ars_arr, hhv_arr, llv_arr, mom_arr, rsi_arr,
+                        mfi_arr, mfi_hhv, mfi_llv, vol_hhv,
+                        mp, bp, rsi_p, ka, iz, rsi_ob, rsi_os, use_mfi, use_vol
                     )
                     
                     if np_val > 0 and pf > 1.05 and tr > 5:
                         results.append({
                             'NP': np_val, 'PF': pf, 'DD': dd, 'Tr': tr,
                             'ARS_E': ars_ema, 'ARS_A': ars_atr_p, 'ARS_M': ars_atr_m,
-                            'MOM': mp, 'BRK': bp, 'TP': ka, 'TS': iz
+                            'MOM': mp, 'BRK': bp, 'TP': ka, 'TS': iz,
+                            'MFI': mfi_period, 'VOL': vol_period
                         })
                         
     return results
@@ -333,7 +408,12 @@ def run_strategy2_optimization():
         'mom_ps': [3, 5],
         'brk_ps': [10, 20],
         'kar_als': [2.0, 3.0, 5.0],
-        'iz_stops': [1.0, 2.0]
+        'iz_stops': [1.0, 2.0],
+        # MFI/Volume (new)
+        'mfi_period': 14,
+        'vol_period': 14,
+        'use_mfi': True,
+        'use_vol': True
     }
     
     results1 = run_parallel_stage("STAGE 1 (UYDU)", stage1_grid)
@@ -358,7 +438,12 @@ def run_strategy2_optimization():
         'mom_ps': [int(best['MOM'])],
         'brk_ps': [int(best['BRK'])-2, int(best['BRK']), int(best['BRK'])+2],
         'kar_als': [best['TP']-0.5, best['TP'], best['TP']+0.5],
-        'iz_stops': [best['TS']-0.2, best['TS'], best['TS']+0.2]
+        'iz_stops': [best['TS']-0.2, best['TS'], best['TS']+0.2],
+        # MFI/Volume (same as stage1)
+        'mfi_period': int(best['MFI']),
+        'vol_period': int(best['VOL']),
+        'use_mfi': True,
+        'use_vol': True
     }
     # Note: Logic can be improved to expand ranges dynamically
     # For now, strict local search
