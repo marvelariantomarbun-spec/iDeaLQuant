@@ -174,25 +174,55 @@ def Momentum(closes: List[float], period: int = 10) -> List[float]:
     return result
 
 
+def Aroon(highs: List[float], lows: List[float], period: int = 14) -> tuple:
+    """
+    Aroon Indicator (IdealData Calibrated)
+    Formula: ((period-1 - bars_since) / (period-1)) * 100
+    """
+    n = len(highs)
+    aroon_up = [0.0] * n
+    aroon_down = [0.0] * n
+    
+    for i in range(period - 1, n):
+        window_h = highs[i - period + 1 : i + 1]
+        window_l = lows[i - period + 1 : i + 1]
+        
+        # En yüksek/düşük olan barın sondan kaç bar önce olduğu (bars since)
+        # IdealData: Last occurrence matters
+        hi_idx = period - 1 - list(reversed(window_h)).index(max(window_h))
+        lo_idx = period - 1 - list(reversed(window_l)).index(min(window_l))
+        
+        # Bars Since
+        bs_h = (period - 1) - hi_idx
+        bs_l = (period - 1) - lo_idx
+        
+        aroon_up[i] = ((period - 1 - bs_h) / (period - 1)) * 100
+        aroon_down[i] = ((period - 1 - bs_l) / (period - 1)) * 100
+        
+    return aroon_up, aroon_down
+
+
 def Stochastic(highs: List[float], lows: List[float], closes: List[float], 
                k_period: int = 14, d_period: int = 3) -> tuple:
     """
-    Stochastic Oscillator
-    Returns: (K, D) tuple of lists
+    Stochastic Oscillator (IdealData Calibrated)
+    Returns: (Fast_K, Slow_D) - IdealData SlowD = EMA(K, d_period)
     """
     n = len(closes)
-    k = [50.0] * n
+    fast_k = [50.0] * n
     
     for i in range(k_period - 1, n):
         highest = max(highs[i - k_period + 1 : i + 1])
         lowest = min(lows[i - k_period + 1 : i + 1])
         
         if highest != lowest:
-            k[i] = ((closes[i] - lowest) / (highest - lowest)) * 100.0
+            fast_k[i] = ((closes[i] - lowest) / (highest - lowest)) * 100
+            
+    # IdealData'da StochSlow genellikle K serisinin EMA ile yumuşatılmış halidir
+    # Kalibrasyon: EMA(3) of FastK
+    slow_d = EMA(fast_k, d_period)
     
-    d = SMA(k, d_period)
-    
-    return k, d
+    return fast_k, slow_d
 
 
 # =============================================================================
@@ -400,8 +430,11 @@ def ARS_Dynamic(typical: List[float], highs: List[float], lows: List[float],
             raw_ars = result[i - 1]
             
         # Dinamik Yuvarlama (IdealData uyumlu)
-        # roundStep = Max(0.01, ATR * 0.1)
-        round_step = max(0.01, atr[i] * 0.1)
+        # IdealData: roundStep = ATR_Mult > 0 ? Max(0.01, ATR * 0.1) : 0.025
+        if atr_mult > 0:
+            round_step = max(0.01, atr[i] * 0.1)
+        else:
+            round_step = 0.025  # IdealData default (ATR_Mult = 0 için)
         
         # Standart matematik yuvarlama (0.5'i yukarı yuvarla)
         # IdealData'nın Sistem.SayiYuvarla() ile uyumlu

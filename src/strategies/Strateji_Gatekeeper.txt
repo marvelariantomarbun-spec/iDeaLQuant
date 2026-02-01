@@ -1,0 +1,161 @@
+// --- STRATEJI 1: GATEKEEPER (MACDV + ARS + ADX + NETLOT) ---
+// Bu strateji MACDV, ARS, ADX ve NetLot indikatörlerini kullanır.
+// Tarih: 2026-02-01
+// --- PARAMETRELER ---
+var MIN_ONAY_SKORU = 3;
+var CIKIS_HASSASIYETI = 3;
+var ARS_PERIYOT = 3;
+var ARS_K = 0.01;
+var ADX_PERIOD = 17;
+var NETLOT_ESIK = 20;
+var MACDV_K = 13;
+var MACDV_U = 28;
+var MACDV_SIG = 8;
+
+var V = Sistem.GrafikVerileri;
+var O = Sistem.GrafikFiyatSec("Acilis");
+var H = Sistem.GrafikFiyatSec("Yuksek");
+var L = Sistem.GrafikFiyatSec("Dusuk");
+var C = Sistem.GrafikFiyatSec("Kapanis");
+var T = Sistem.GrafikFiyatSec("Tipik");
+
+// --- ARS ---
+var ARS_EMA = Sistem.MA(T, "Exp", ARS_PERIYOT);
+var ARS = Sistem.Liste(0);
+for (int i = 1; i < Sistem.BarSayisi; i++)
+{
+    float altBand = (float)(ARS_EMA[i] * (1 - ARS_K));
+    float ustBand = (float)(ARS_EMA[i] * (1 + ARS_K));
+    if (altBand > ARS[i - 1]) ARS[i] = altBand;
+    else if (ustBand < ARS[i - 1]) ARS[i] = ustBand;
+    else ARS[i] = ARS[i - 1];
+}
+
+// --- MACDV ---
+var EMA_Kisa = Sistem.MA(C, "Exp", MACDV_K);
+var EMA_Uzun = Sistem.MA(C, "Exp", MACDV_U);
+
+var TR_List = Sistem.Liste(0);
+for (int i = 1; i < Sistem.BarSayisi; i++)
+{
+    float hl = H[i] - L[i];
+    float hc = Math.Abs(H[i] - C[i-1]);
+    float lc = Math.Abs(L[i] - C[i-1]);
+    TR_List[i] = Math.Max(hl, Math.Max(hc, lc));
+}
+var ATRe = Sistem.MA(TR_List, "Exp", MACDV_U);
+
+var MACDV = Sistem.Liste(0);
+for (int i = 0; i < Sistem.BarSayisi; i++)
+{
+    if (ATRe[i] != 0)
+        MACDV[i] = ((EMA_Kisa[i] - EMA_Uzun[i]) / ATRe[i]) * 100;
+}
+var MACDV_Sinyal = Sistem.MA(MACDV, "Exp", MACDV_SIG);
+
+// --- YATAY FILTRE ---
+var ARS_Degisim = Sistem.Liste(0);
+var yatayEsik = 10;
+for (int i = yatayEsik; i < Sistem.BarSayisi; i++)
+{
+    bool arsAyni = true;
+    for (int j = 1; j <= yatayEsik; j++)
+        if (ARS[i] != ARS[i - j]) { arsAyni = false; break; }
+    ARS_Degisim[i] = arsAyni ? 0 : 1;
+}
+
+var ARS_Mesafe = Sistem.Liste(0);
+for (int i = 1; i < Sistem.BarSayisi; i++)
+    if (ARS[i] != 0) ARS_Mesafe[i] = Math.Abs(C[i] - ARS[i]) / ARS[i] * 100;
+
+var ADX14 = Sistem.ADX(ADX_PERIOD);
+
+var BBUp = Sistem.BollingerUp("Simple", 20, 2);
+var BBDown = Sistem.BollingerDown("Simple", 20, 2);
+var BBMid = Sistem.BollingerMid("Simple", 20, 2);
+var BBWidth = Sistem.Liste(0);
+for (int i = 1; i < Sistem.BarSayisi; i++)
+    if (BBMid[i] != 0) BBWidth[i] = ((BBUp[i] - BBDown[i]) / BBMid[i]) * 100;
+var BBWidth_Avg = Sistem.MA(BBWidth, "Simple", 50);
+
+var YatayFiltre = Sistem.Liste(0);
+for (int i = 50; i < Sistem.BarSayisi; i++)
+{
+    int skor = 0;
+    if (ARS_Degisim[i] == 1) skor++;
+    if (ARS_Mesafe[i] > 0.25f) skor++;
+    if (ADX14[i] > 20.0f) skor++;
+    if (BBWidth[i] > BBWidth_Avg[i] * 0.8f) skor++;
+    YatayFiltre[i] = (skor >= 2) ? 1 : 0;
+}
+
+// --- NET HACIM ---
+var NetLot = Sistem.Liste(0);
+for (int i = 1; i < Sistem.BarSayisi; i++)
+{
+    float range = H[i] - L[i];
+    float barHacim = range > 0 ? (C[i] - O[i]) / range : 0;
+    NetLot[i] = barHacim * 100;
+}
+var NetLot_MA = Sistem.MA(NetLot, "Simple", 5);
+
+// --- SINYAL URETIMI ---
+for (int i = 1; i < V.Count; i++) Sistem.Yon[i] = "";
+var Sinyal = "";
+var SonYon = "";
+
+for (int i = 50; i < Sistem.BarSayisi; i++)
+{
+    Sinyal = "";
+    
+    int aSkor = 0;
+    int sSkor = 0;
+
+    if (C[i] > ARS[i]) aSkor++; else if (C[i] < ARS[i]) sSkor++;
+    if (MACDV[i] > MACDV_Sinyal[i]) aSkor++; else if (MACDV[i] < MACDV_Sinyal[i]) sSkor++;
+    if (NetLot_MA[i] > NETLOT_ESIK) aSkor++; else if (NetLot_MA[i] < -NETLOT_ESIK) sSkor++;
+    if (ADX14[i] > 25.0f) { aSkor++; sSkor++; }
+
+    // --- CIKIS MANTIGI ---
+    if (SonYon == "A")
+    {
+        if (C[i] < ARS[i] || sSkor >= CIKIS_HASSASIYETI) Sinyal = "F";
+    }
+    else if (SonYon == "S")
+    {
+        if (C[i] > ARS[i] || aSkor >= CIKIS_HASSASIYETI) Sinyal = "F";
+    }
+    
+    // --- GIRIS MANTIGI ---
+    if (Sinyal == "" && SonYon != "A" && SonYon != "S")
+    {
+        if (YatayFiltre[i] == 1)
+        {
+            if (aSkor >= MIN_ONAY_SKORU && sSkor < 2) Sinyal = "A";
+            else if (sSkor >= MIN_ONAY_SKORU && aSkor < 2) Sinyal = "S";
+        }
+    }
+    
+    if (Sinyal != "" && SonYon != Sinyal)
+    {
+        SonYon = Sinyal;
+        Sistem.Yon[i] = SonYon;
+    }
+}
+
+// --- CIZIMLER ---
+Sistem.Cizgiler[0].Deger = ARS;
+Sistem.Cizgiler[0].Aciklama = "ARS";
+Sistem.Cizgiler[0].ActiveBool = true;
+Sistem.Cizgiler[0].Renk = Color.Yellow;
+Sistem.Cizgiler[0].Kalinlik = 2;
+
+Sistem.Cizgiler[1].Deger = MACDV;
+Sistem.Cizgiler[1].Aciklama = "MACDV";
+Sistem.Cizgiler[1].ActiveBool = false;
+
+// --- PANEL ---
+var son = Sistem.BarSayisi - 1;
+string info = "MACDV: " + Sistem.SayiYuvarla(MACDV[son], 2) + " Sig: " + Sistem.SayiYuvarla(MACDV_Sinyal[son], 2);
+Sistem.Dortgen(1, 10, 30, 200, 50, Color.Black, Color.White, Color.Black);
+Sistem.YaziEkle(info, 1, 15, 35, Color.Yellow, "Tahoma", 10);

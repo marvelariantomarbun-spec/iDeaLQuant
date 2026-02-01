@@ -18,7 +18,8 @@ def OBV(closes: List[float], volumes: List[float]) -> List[float]:
     if n == 0:
         return result
     
-    result[0] = volumes[0]
+    # IdealData uyumu: başlangıç 0
+    result[0] = 0.0
     
     for i in range(1, n):
         if closes[i] > closes[i-1]:
@@ -52,7 +53,8 @@ def PVT(closes: List[float], volumes: List[float]) -> List[float]:
 def ADL(highs: List[float], lows: List[float], closes: List[float], 
         volumes: List[float]) -> List[float]:
     """
-    Accumulation/Distribution Line
+    Accumulation/Distribution Line (IdealData Calibrated)
+    Money Flow Volume cumulative total.
     """
     n = len(closes)
     result = [0.0] * n
@@ -60,7 +62,7 @@ def ADL(highs: List[float], lows: List[float], closes: List[float],
     for i in range(n):
         hl = highs[i] - lows[i]
         if hl != 0:
-            # Money Flow Multiplier
+            # Money Flow Multiplier: ((C-L)-(H-C))/HL
             mf_mult = ((closes[i] - lows[i]) - (highs[i] - closes[i])) / hl
             # Money Flow Volume
             mf_vol = mf_mult * volumes[i]
@@ -70,7 +72,7 @@ def ADL(highs: List[float], lows: List[float], closes: List[float],
             else:
                 result[i] = mf_vol
         else:
-            result[i] = result[i-1] if i > 0 else 0
+            result[i] = result[i-1] if i > 0 else 0.0
     
     return result
 

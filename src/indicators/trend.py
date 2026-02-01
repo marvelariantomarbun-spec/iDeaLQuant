@@ -95,11 +95,18 @@ def AroonUp(highs: List[float], period: int = 25) -> List[float]:
     """
     n = len(highs)
     result = [0.0] * n
-    
-    for i in range(period, n):
-        window = highs[i - period : i + 1]
-        highest_idx = window.index(max(window))
-        result[i] = (highest_idx / period) * 100
+
+    window_len = period + 1
+    for i in range(window_len - 1, n):
+        window = highs[i - window_len + 1 : i + 1]
+        highest = max(window)
+
+        # Tie-break: en son görülen (IdealData davranışına daha yakın)
+        highest_idx = len(window) - 1 - list(reversed(window)).index(highest)
+
+        # Bars since highest -> AroonUp
+        bars_since = (window_len - 1) - highest_idx
+        result[i] = ((period - bars_since) / period) * 100
     
     return result
 
@@ -111,11 +118,17 @@ def AroonDown(lows: List[float], period: int = 25) -> List[float]:
     """
     n = len(lows)
     result = [0.0] * n
-    
-    for i in range(period, n):
-        window = lows[i - period : i + 1]
-        lowest_idx = window.index(min(window))
-        result[i] = (lowest_idx / period) * 100
+
+    window_len = period + 1
+    for i in range(window_len - 1, n):
+        window = lows[i - window_len + 1 : i + 1]
+        lowest = min(window)
+
+        # Tie-break: en son görülen
+        lowest_idx = len(window) - 1 - list(reversed(window)).index(lowest)
+
+        bars_since = (window_len - 1) - lowest_idx
+        result[i] = ((period - bars_since) / period) * 100
     
     return result
 
@@ -158,11 +171,30 @@ def ParabolicSAR(highs: List[float], lows: List[float],
         return result
     
     # Initialize
+    # Determine initial trend based on first bar
+    # If Close > Open (or first 2 bars up), start Long
+    # Simple check: Compare High[0] and Low[0] to reference? 
+    # IdealData: usually checks if C[0] > C[1] but we only have current.
+    # Let's assume Long if Close[0] > Open[0] (need opens?)
+    # Alternative: start with Long=True if H[1] > H[0]... wait, loops starts at 1.
+    
     is_long = True
+    if n > 1:
+        if highs[1] < highs[0] and lows[1] < lows[0]:
+            is_long = False
+    
+    if is_long:
+        sar = lows[0]
+        ep = highs[0]
+    else:
+        sar = highs[0]
+        ep = lows[0]
+        
     af = af_start
-    ep = highs[0]  # Extreme Point
-    sar = lows[0]
-    result[0] = sar
+    result[0] = sar  # SAR for *next* bar effectively, or current? SAR is usually plotted 'stops' for current bar.
+    # IdealData: Standard SAR logic.
+    
+    # Standard SAR often skips the first value or sets it to min/max.
     
     for i in range(1, n):
         prev_sar = sar
@@ -264,15 +296,19 @@ def Ichimoku(highs: List[float], lows: List[float], closes: List[float],
 def PriceChannelUp(highs: List[float], period: int = 20) -> List[float]:
     """
     Price Channel Upper Band (Donchian Channel)
+    Usually excludes current bar for breakout logic.
     """
-    return HHV(highs, period)
+    hhv = HHV(highs, period)
+    # Shift right by 1 to exclude current bar
+    return [0.0] + hhv[:-1]
 
 
 def PriceChannelDown(lows: List[float], period: int = 20) -> List[float]:
     """
     Price Channel Lower Band (Donchian Channel)
     """
-    return LLV(lows, period)
+    llv = LLV(lows, period)
+    return [0.0] + llv[:-1]
 
 
 def PriceChannel(highs: List[float], lows: List[float], 

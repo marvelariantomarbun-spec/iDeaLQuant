@@ -9,35 +9,50 @@ Trend Takipçisi (Strateji 2) için Güvenli Giriş Kapısı.
 from typing import List, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
+from datetime import datetime, time
 
 from src.indicators.core import EMA, ATR, ADX, SMA, ARS, NetLot, MACDV
-from .ars_trend import Signal
+from .common import Signal
+from .holidays import BAYRAM_TARIHLERI, RESMI_TATILLER, is_holiday_eve, vade_sonu_is_gunu
 
 @dataclass
 class ScoreConfig:
-    """Skor Strateji Konfigürasyonu (Global Optimized v4.1)"""
+    """Skor Strateji Konfigürasyonu (Global Optimized v4.1 - 20 Parametre)"""
+    # 1. Grup: Skor Ayarları (2)
     min_score: int = 3
-    
-    # İndikatör Periyotları
-    adx_period: int = 17    # Optimize Edildi (20 -> 17)
-    
-    # Eşik Değerler
-    netlot_threshold: float = 20.0 
-    adx_threshold: float = 25.0
     exit_score: int = 3
     
-    # MACD-V (Global Opt: 13, 28, 8)
+    # 2. Grup: ARS (2)
+    ars_period: int = 3
+    ars_k: float = 0.01
+    
+    # 3. Grup: ADX (2)
+    adx_period: int = 17
+    adx_threshold: float = 25.0
+    
+    # 4. Grup: MACD-V (4)
     macdv_short: int = 13
     macdv_long: int = 28
     macdv_signal: int = 8
+    macdv_threshold: float = 0.0 # MACD-V çizgisinin 0 üstü mü?
     
-    # Yatay Filtre
+    # 5. Grup: NetLot (2)
+    netlot_period: int = 5  # SMA periyodu
+    netlot_threshold: float = 20.0 
+    
+    # 6. Grup: Yatay Filtre (8)
     ars_mesafe_threshold: float = 0.25
+    bb_period: int = 20
+    bb_std: float = 2.0
     bb_width_multiplier: float = 0.8
+    bb_avg_period: int = 50
+    yatay_ars_bars: int = 10 # ARS'nin değişmediği bar sayısı
+    yatay_adx_threshold: float = 20.0
+    filter_score_threshold: int = 2 # Yatay filtrenin geçmesi için gereken puan
     
-    # ARS (Daha Hızlı)
-    ars_period: int = 3     # Optimize Edildi (4 -> 3)
-    ars_k: float = 0.01     
+    # Vade Yönetimi
+    vade_tipi: str = "ENDEKS"  # "ENDEKS" veya "SPOT"
+     
 
 
 class ScoreBasedStrategy:
@@ -61,7 +76,8 @@ class ScoreBasedStrategy:
                  closes: List[float],
                  typical: List[float],
                  config: Optional[ScoreConfig] = None,
-                 indicators_df = None):
+                 indicators_df = None,
+                 dates: Optional[List[datetime]] = None):
                  
         self.n = len(closes)
         self.opens = opens
@@ -70,6 +86,7 @@ class ScoreBasedStrategy:
         self.closes = closes
         self.typical = typical
         self.config = config or ScoreConfig()
+        self.dates = dates or []
         
         self._calculate_indicators()
     
@@ -80,7 +97,7 @@ class ScoreBasedStrategy:
         self.ars = ARS(self.typical, cfg.ars_period, cfg.ars_k)
         
         self.netlot = NetLot(self.opens, self.highs, self.lows, self.closes)
-        self.netlot_ma = SMA(self.netlot, 5)
+        self.netlot_ma = SMA(self.netlot, cfg.netlot_period)
         
         self.adx = ADX(self.highs, self.lows, self.closes, cfg.adx_period)
         
@@ -96,20 +113,19 @@ class ScoreBasedStrategy:
         
         # --- YATAY FİLTRE ---
         from src.indicators.core import BollingerBands, SMA
-        upper, middle, lower = BollingerBands(self.closes, 20, 2.0)
+        cfg = self.config
+        upper, middle, lower = BollingerBands(self.closes, cfg.bb_period, cfg.bb_std)
         
         bb_width = [0.0] * self.n
         for i in range(self.n):
             if middle[i] != 0:
                 bb_width[i] = ((upper[i] - lower[i]) / middle[i]) * 100
                 
-        bb_width_avg = SMA(bb_width, 50)
-        
-        cfg = self.config
+        bb_width_avg = SMA(bb_width, cfg.bb_avg_period)
         
         for i in range(50, self.n):
             ars_sabit = True
-            for j in range(1, 11): 
+            for j in range(1, cfg.yatay_ars_bars + 1): 
                 if i - j >= 0:
                     if self.ars[i] != self.ars[i - j]:
                         ars_sabit = False
@@ -124,20 +140,20 @@ class ScoreBasedStrategy:
             f_skor = 0
             if ars_degisme_durumu == 1: f_skor += 1
             if ars_mesafe > cfg.ars_mesafe_threshold: f_skor += 1
-            if self.adx[i] > 20.0: f_skor += 1 
+            if self.adx[i] > cfg.yatay_adx_threshold: f_skor += 1 
             if bb_width[i] > bb_width_avg[i] * cfg.bb_width_multiplier: f_skor += 1
             
-            self.yatay_filtre[i] = 1 if f_skor >= 2 else 0
+            self.yatay_filtre[i] = 1 if f_skor >= cfg.filter_score_threshold else 0
 
             # --- SİNYAL SKORLARI ---
             ars_long = self.closes[i] > self.ars[i]
             netlot_long = self.netlot_ma[i] > cfg.netlot_threshold
             adx_guclu = self.adx[i] > cfg.adx_threshold
-            macdv_long = self.macdv[i] > self.macdv_sig[i]
+            macdv_long = self.macdv[i] > (self.macdv_sig[i] + cfg.macdv_threshold)
             
             ars_short = self.closes[i] < self.ars[i]
             netlot_short = self.netlot_ma[i] < -cfg.netlot_threshold
-            macdv_short = self.macdv[i] < self.macdv_sig[i]
+            macdv_short = self.macdv[i] < (self.macdv_sig[i] - cfg.macdv_threshold)
             
             l_score = 0
             if ars_long: l_score += 1
@@ -156,10 +172,57 @@ class ScoreBasedStrategy:
 
     def get_signal(self, i: int, current_position: str, 
                    entry_price: float = 0, 
-                   extreme_price: float = 0) -> Signal:
+                   extreme_price: float = 0,
+                   return_flat_reason: bool = False) -> Signal:
         
         if i < 50: 
             return Signal.NONE
+        
+        # ===== VADE/TATİL YÖNETİMİ =====
+        if self.dates and i < len(self.dates):
+            dt = self.dates[i]
+            t = dt.time()
+            
+            # Seans kontrolü (09:30-18:15, 19:00-23:00)
+            gun_seansi = time(9, 30) <= t < time(18, 15)
+            aksam_seansi = time(19, 0) <= t < time(23, 0)
+            
+            if not (gun_seansi or aksam_seansi):
+                return Signal.NONE
+            
+            # Vade ayı kontrolü
+            vade_ayi = (self.config.vade_tipi == "SPOT") or (dt.month % 2 == 0)
+            vade_sonu_gun = vade_ayi and (dt.date() == vade_sonu_is_gunu(dt).date())
+            
+            # Arefe kontrolü
+            arefe = is_holiday_eve(dt.date())
+            
+            # SENARYO 1: Arefe + Vade Sonu → 11:30 flat
+            if arefe and vade_sonu_gun and t > time(11, 30):
+                if current_position != "FLAT":
+                    if return_flat_reason:
+                        return (Signal.FLAT, "arefe_vade_sonu")
+                    return Signal.FLAT
+            
+            # SENARYO 2: Sadece Arefe → 11:30 flat
+            elif arefe and not vade_sonu_gun and t > time(11, 30):
+                if current_position != "FLAT":
+                    if return_flat_reason:
+                        return (Signal.FLAT, "arefe")
+                    return Signal.FLAT
+            
+            # SENARYO 3: Normal Vade Sonu → 17:40 flat
+            elif vade_sonu_gun and t > time(17, 40):
+                if current_position != "FLAT":
+                    if return_flat_reason:
+                        return (Signal.FLAT, "vade_sonu")
+                    return Signal.FLAT
+            
+            # Arefe/Vade günlerinde flat saatlerinde işlem yapma
+            if (arefe and t > time(11, 30)) or (vade_sonu_gun and not arefe and t > time(17, 40)):
+                if return_flat_reason:
+                    return (Signal.NONE, None)
+                return Signal.NONE
             
         cfg = self.config
         l_score = self.long_scores[i]
@@ -171,21 +234,31 @@ class ScoreBasedStrategy:
         # Çıkış Mantığı
         if current_position == "LONG":
             if ars_short or s_score >= cfg.exit_score:
+                if return_flat_reason:
+                    return (Signal.FLAT, None)
                 return Signal.FLAT
                 
         elif current_position == "SHORT":
             if ars_long or l_score >= cfg.exit_score:
+                if return_flat_reason:
+                    return (Signal.FLAT, None)
                 return Signal.FLAT
                 
         # Giriş Mantığı (Strateji 2'ye yol verme)
         if current_position == "FLAT":
             if self.yatay_filtre[i] == 1:
                 if l_score >= cfg.min_score and s_score < 2:
+                    if return_flat_reason:
+                        return (Signal.LONG, None)
                     return Signal.LONG
                     
                 if s_score >= cfg.min_score and l_score < 2:
+                    if return_flat_reason:
+                        return (Signal.SHORT, None)
                     return Signal.SHORT
-                
+        
+        if return_flat_reason:
+            return (Signal.NONE, None)
         return Signal.NONE
 
     def check_long_exit(self, i: int, entry_price: float, max_price: float) -> Tuple[bool, str]: return False, ""

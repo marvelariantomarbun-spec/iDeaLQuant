@@ -57,8 +57,9 @@ def BollingerWidth(closes: List[float], period: int = 20,
         variance = sum((x - mean) ** 2 for x in window) / period
         std = math.sqrt(variance)
         
-        if mean != 0:
-            result[i] = (4 * deviation * std) / mean * 100
+        # IdealData uyumu: normalize edilmeden genişlik
+        # Width = 2 * deviation * std  (Upper - Lower)
+        result[i] = 2 * deviation * std
     
     return result
 
@@ -81,23 +82,27 @@ def BollingerPercentB(closes: List[float], period: int = 20,
 
 
 def KeltnerUp(highs: List[float], lows: List[float], closes: List[float],
-              ema_period: int = 20, atr_period: int = 10, 
+              ema_period: int = 20, atr_period: int = 20, 
               multiplier: float = 2.0) -> List[float]:
     """Keltner Channel Upper Band"""
-    ema = EMA(closes, ema_period)
+    # Use SMA for middle line (Original Keltner uses SMA, Modern uses EMA. IdealData might be Original)
+    # Checking IdealData manual if possible... let's try SMA.
+    # ema = EMA(closes, ema_period) 
+    ma = SMA(closes, ema_period) # Renamed to ma general
     atr = ATR(highs, lows, closes, atr_period)
     
-    return [ema[i] + multiplier * atr[i] for i in range(len(closes))]
+    return [ma[i] + multiplier * atr[i] for i in range(len(closes))]
 
 
 def KeltnerDown(highs: List[float], lows: List[float], closes: List[float],
-                ema_period: int = 20, atr_period: int = 10, 
+                ema_period: int = 20, atr_period: int = 20, 
                 multiplier: float = 2.0) -> List[float]:
     """Keltner Channel Lower Band"""
-    ema = EMA(closes, ema_period)
+    # ema = EMA(closes, ema_period)
+    ma = SMA(closes, ema_period)
     atr = ATR(highs, lows, closes, atr_period)
     
-    return [ema[i] - multiplier * atr[i] for i in range(len(closes))]
+    return [ma[i] - multiplier * atr[i] for i in range(len(closes))]
 
 
 def KeltnerChannel(highs: List[float], lows: List[float], closes: List[float],

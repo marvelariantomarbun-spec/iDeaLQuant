@@ -2,6 +2,21 @@
 
 ---
 
+## 2026-02-02 (Pazartesi)
+
+### ✅ Yapılanlar
+- **v4.1 Sistem Senkronizasyonu:**
+  - **İndikatör Kalibrasyonu:** Aroon, Stochastic, OBV ve ADL kütüphaneleri IdealData ile %100 uyumlu hale getirildi.
+  - **Strateji 1 (ScoreBased):** 20 parametreli v4.1 mimarisine geçildi. Yatay filtre ve MACD-V eşikleri tamamen parametrik yapıldı.
+  - **Strateji 2 (ARS Trend v2):** 21 parametreli v4.1 mimarisine geçildi. "Çift Teyitli" (Double Confirmation) çıkış stratejisi (Mesafe + Çoklu bar) entegre edildi.
+  - **Hibrit Optimizer:** Stabilite Analizi (Phase 4) eklendi. En iyi parametrenin komşuları test edilerek "Robustness" skoru hesaplanıyor.
+
+### 📌 Mevcut Durum
+- **Aktif Faz:** Faz 6 - Desktop UI (PySide6)
+- **Sıradaki Adım:** PySide6 ile ana ekran tasarımı ve veri yönetimi modülü.
+
+---
+
 ## 2026-02-01 (Cumartesi)
 
 ### ✅ Yapılanlar

@@ -26,9 +26,13 @@ string Timeframe = PeriyotDakika + "DK";
 // --- VADE TİPİ ---
 string VadeTipi = "ENDEKS"; // "ENDEKS" (çift ay) veya "SPOT" (her ay)
 
-// --- GENEL PARAMETRELER ---
-var P_KAR_AL = 3.0;
-var P_IZ_STOP = 1.5;
+// --- ATR EXIT PARAMETRELER ---
+int ATR_Exit_Period = 14;
+double ATR_SL_Mult = 2.0;      // Stop Loss çarpanı
+double ATR_TP_Mult = 5.0;      // Take Profit çarpanı
+double ATR_Trail_Mult = 2.0;   // Trailing Stop çarpanı
+int Exit_Confirm_Bars = 2;     // Trend çıkış onay bar sayısı
+double Exit_Confirm_Mult = 1.0; // Trend çıkış mesafe çarpanı
 
 // --- ARS PARAMETRELER ---
 int ARS_EMA_Period;
@@ -127,6 +131,7 @@ var H = Sistem.GrafikFiyatSec("Yuksek");
 var L = Sistem.GrafikFiyatSec("Dusuk");
 var C = Sistem.GrafikFiyatSec("Kapanis");
 var T = Sistem.GrafikFiyatSec("Tipik");
+var Lot = Sistem.GrafikFiyatSec("Lot");
 
 // ===============================================================================================
 // ARS HESAPLAMA
@@ -170,13 +175,24 @@ for (int i = 1; i < Sistem.BarSayisi; i++)
     else TrendYonu[i] = TrendYonu[i-1];
 }
 
+// ATR Exit için ayrı ATR hesapla
+var ATR_Exit = Sistem.AverageTrueRange(ATR_Exit_Period);
+
 // ===============================================================================================
 // GİRİŞ SİNYAL İNDİKATÖRLERİ
 // ===============================================================================================
 var Momentum = Sistem.Momentum(MOMENTUM_Period);
 var HHV = Sistem.HHV(BREAKOUT_Period);
 var LLV = Sistem.LLV(BREAKOUT_Period);
-var RSI = Sistem.RSI(14);
+
+// MFI Breakout
+var MFI = Sistem.MoneyFlowIndex(14);
+var MFI_HHV = Sistem.HHV(14, MFI);
+var MFI_LLV = Sistem.LLV(14, MFI);
+
+// Hacim Breakout
+var Vol_HHV = Sistem.HHV(14, Lot);
+var Vol_LLV = Sistem.LLV(14, Lot);
 
 // ===============================================================================================
 // VADE SONU İŞ GÜNÜ HESAPLAMA
@@ -217,10 +233,20 @@ for (int i = 1; i < V.Count; i++) Sistem.Yon[i] = "";
 
 var Sinyal = "";
 var SonYon = "";
-bool vadeRolloverBekleniyor = false;
-int sonVadeRolloverBar = -999;
-int vadeCooldownBar = Math.Max(BREAKOUT_Period, Math.Max(ARS_ATR_Period, MOMENTUM_Period)) + 10;
+
+// ATR Exit tracking değişkenleri
+float entryPrice = 0;
+int entryBar = 0;
+float extremePrice = 0;  // LONG: max high, SHORT: min low
+int belowArsCount = 0;   // Trend çıkış için sayaç
+int aboveArsCount = 0;
+
+// Vade/Tatil yönetimi değişkenleri
+int vadeCooldownBar = Math.Max(ARS_EMA_Period, Math.Max(BREAKOUT_Period, Math.Max(ARS_ATR_Period, MOMENTUM_Period))) + 10;
 int warmupBars = vadeCooldownBar;
+int warmupBaslangicBar = -999;       // Warmup sayacının başladığı bar
+bool warmupAktif = false;            // Warmup süreci aktif mi?
+bool arefeFlat = false;              // Arefe günü flat olduk mu? (warmup gerektirmez)
 
 for (int i = warmupBars; i < V.Count; i++)
 {
@@ -238,54 +264,133 @@ for (int i = warmupBars; i < V.Count; i++)
     bool vadeAyi = (VadeTipi == "SPOT") || (dt.Month % 2 == 0);
     bool vadeSonuGun = vadeAyi && (dt.Date == VadeSonuIsGunu(dt));
     
-    // Arefe kontrolü
+    // Arefe kontrolü (tüm yıllar için)
     bool arefe = dt.Date == R2024.AddDays(-1).Date || dt.Date == K2024.AddDays(-1).Date ||
                  dt.Date == R2025.AddDays(-1).Date || dt.Date == K2025.AddDays(-1).Date ||
                  dt.Date == R2026.AddDays(-1).Date || dt.Date == K2026.AddDays(-1).Date ||
                  dt.Date == R2027.AddDays(-1).Date || dt.Date == K2027.AddDays(-1).Date;
     
-    // Arefe + Vade sonu: 11:30'da kapat
+    // ===== SENARYO 1: Arefe + Vade Sonu (11:30 flat + bayram sonrası warmup) =====
     if (arefe && vadeSonuGun && t > new TimeSpan(11,30,0))
     {
-        if (SonYon == "A" || SonYon == "S") Sinyal = "F";
-        vadeRolloverBekleniyor = true;
+        if (SonYon != "F") Sinyal = "F";  // Flat değilse flat yap
+        warmupAktif = true;
+        warmupBaslangicBar = -999;  // Bayram sonrası iş günü 09:30'da set edilecek
+        arefeFlat = false;  // Bu vade geçişi, warmup gerektirir
     }
-    // Normal vade sonu: 17:40'da kapat
+    // ===== SENARYO 2: Sadece Arefe (11:30 flat + ertesi gün warmup YOK) =====
+    else if (arefe && !vadeSonuGun && t > new TimeSpan(11,30,0))
+    {
+        if (SonYon != "F") Sinyal = "F";  // Flat değilse flat yap
+        arefeFlat = true;  // Vade geçişi değil, warmup gerektirmez
+    }
+    // ===== SENARYO 3: Normal Vade Sonu (17:40 flat + aynı gün 19:00 warmup) =====
     else if (vadeSonuGun && t > new TimeSpan(17,40,0))
     {
-        if (SonYon == "A" || SonYon == "S") Sinyal = "F";
-        vadeRolloverBekleniyor = true;
+        if (SonYon != "F") Sinyal = "F";  // Flat değilse flat yap
+        warmupAktif = true;
+        warmupBaslangicBar = -999;  // Akşam seansı 19:00'da set edilecek
+        arefeFlat = false;
     }
     
+    // Flat sinyali işle veya zaten flat ise continue
     if (Sinyal == "F")
     {
         if (SonYon != Sinyal) { Sistem.Yon[i] = Sinyal; SonYon = Sinyal; }
         continue;
     }
-    
-    // Rollover tespit
-    if (vadeRolloverBekleniyor && i > 0 && dt.Month != V[i-1].Date.Month)
+    // Arefe/Vade sonu günlerinde flat kalınması gereken saatler
+    if ((arefe && t > new TimeSpan(11,30,0)) || (vadeSonuGun && !arefe && t > new TimeSpan(17,40,0)))
     {
-        sonVadeRolloverBar = i;
-        vadeRolloverBekleniyor = false;
+        continue;  // Bu saatlerde işlem yapma
     }
     
-    // Rollover sonrası cooldown
-    if (sonVadeRolloverBar > 0 && (i - sonVadeRolloverBar) < vadeCooldownBar)
-        continue;
+    // ===== WARMUP BAŞLANGIÇ TESPİTİ =====
+    // Vade geçişi sonrası yeni seans başlangıcını tespit et
+    if (warmupAktif && warmupBaslangicBar == -999)
+    {
+        bool yeniSeansBaslangici = false;
+        
+        // Akşam seansı başlangıcı (19:00) - aynı gün vade geçişi için
+        if (aksamSeansi && i > 0 && V[i-1].Date.TimeOfDay < new TimeSpan(19,0,0))
+            yeniSeansBaslangici = true;
+        
+        // Sabah seansı başlangıcı (09:30) - tatil/bayram sonrası için
+        if (gunSeansi && t >= new TimeSpan(9,30,0) && t < new TimeSpan(9,35,0))
+        {
+            // Önceki günden farklı bir gün mü?
+            if (i > 0 && dt.Date != V[i-1].Date.Date)
+                yeniSeansBaslangici = true;
+        }
+        
+        if (yeniSeansBaslangici)
+            warmupBaslangicBar = i;
+    }
     
-    // === ÇIKIŞ MANTIĞI ===
+    // ===== WARMUP KONTROLÜ =====
+    if (warmupAktif && warmupBaslangicBar > 0)
+    {
+        if ((i - warmupBaslangicBar) < vadeCooldownBar)
+            continue;  // Warmup süresi dolmadı
+        else
+            warmupAktif = false;  // Warmup tamamlandı
+    }
+    
+    // ===== AREFE SONRASI (Warmup yok) =====
+    // Arefe flat sonrası, bayram tatili bitince direkt işleme devam
+    if (arefeFlat && i > 0 && dt.Date != V[i-1].Date.Date)
+    {
+        arefeFlat = false;  // Flag'i sıfırla, artık normal işlem
+    }
+    
+    // === ÇIKIŞ MANTIĞI (ATR-Based) ===
     if (SonYon == "A")
     {
-        if (TrendYonu[i] == -1 && TrendYonu[i-1] == 1) Sinyal = "F";
-        if (C[i] >= Sistem.KarAlYuzde(P_KAR_AL, i)) Sinyal = "F";
-        if (C[i] < Sistem.IzleyenStopYuzde(P_IZ_STOP, i)) Sinyal = "F";
+        // Extreme price güncelle
+        if (H[i] > extremePrice) extremePrice = H[i];
+        
+        // ATR değeri
+        float atr = ATR_Exit[i];
+        
+        // 1. Trend Exit: Son N bar ARS altında ve mesafe yeterli
+        if (C[i] < ARS[i]) belowArsCount++; else belowArsCount = 0;
+        float distanceThreshold = (float)(atr * ARS_ATR_Mult * Exit_Confirm_Mult);
+        if (belowArsCount >= Exit_Confirm_Bars && (ARS[i] - C[i]) > distanceThreshold)
+            Sinyal = "F";
+        
+        // 2. Take Profit: entry + ATR * TP_Mult
+        float tpLevel = entryPrice + (float)(atr * ATR_TP_Mult);
+        if (C[i] >= tpLevel) Sinyal = "F";
+        
+        // 3. Stop Loss / Trailing: max(entry - ATR*SL, extreme - ATR*Trail)
+        float initialStop = entryPrice - (float)(atr * ATR_SL_Mult);
+        float trailStop = extremePrice - (float)(atr * ATR_Trail_Mult);
+        float stopLevel = Math.Max(initialStop, trailStop);
+        if (C[i] < stopLevel) Sinyal = "F";
     }
     else if (SonYon == "S")
     {
-        if (TrendYonu[i] == 1 && TrendYonu[i-1] == -1) Sinyal = "F";
-        if (C[i] <= Sistem.KarAlYuzde(P_KAR_AL, i)) Sinyal = "F";
-        if (C[i] > Sistem.IzleyenStopYuzde(P_IZ_STOP, i)) Sinyal = "F";
+        // Extreme price güncelle
+        if (L[i] < extremePrice) extremePrice = L[i];
+        
+        // ATR değeri
+        float atr = ATR_Exit[i];
+        
+        // 1. Trend Exit: Son N bar ARS üstünde ve mesafe yeterli
+        if (C[i] > ARS[i]) aboveArsCount++; else aboveArsCount = 0;
+        float distanceThreshold = (float)(atr * ARS_ATR_Mult * Exit_Confirm_Mult);
+        if (aboveArsCount >= Exit_Confirm_Bars && (C[i] - ARS[i]) > distanceThreshold)
+            Sinyal = "F";
+        
+        // 2. Take Profit: entry - ATR * TP_Mult
+        float tpLevel = entryPrice - (float)(atr * ATR_TP_Mult);
+        if (C[i] <= tpLevel) Sinyal = "F";
+        
+        // 3. Stop Loss / Trailing: min(entry + ATR*SL, extreme + ATR*Trail)
+        float initialStop = entryPrice + (float)(atr * ATR_SL_Mult);
+        float trailStop = extremePrice + (float)(atr * ATR_Trail_Mult);
+        float stopLevel = Math.Min(initialStop, trailStop);
+        if (C[i] > stopLevel) Sinyal = "F";
     }
     
     // === GİRİŞ MANTIĞI ===
@@ -295,20 +400,46 @@ for (int i = warmupBars; i < V.Count; i++)
         {
             bool yeniZirve = H[i] >= HHV[i-1] && HHV[i] > HHV[i-1];
             bool pozitifMomentum = Momentum[i] > 100;
-            bool rsiUygun = RSI[i] < 70;
-            if (yeniZirve && pozitifMomentum && rsiUygun) Sinyal = "A";
+            bool mfiOnay = MFI[i] >= MFI_HHV[i-1];
+            bool volumeOnay = Lot[i] >= Vol_HHV[i-1] * 0.8f;
+            if (yeniZirve && pozitifMomentum && mfiOnay && volumeOnay) Sinyal = "A";
         }
         else if (TrendYonu[i] == -1)
         {
             bool yeniDip = L[i] <= LLV[i-1] && LLV[i] < LLV[i-1];
             bool negatifMomentum = Momentum[i] < 100;
-            bool rsiUygun = RSI[i] > 30;
-            if (yeniDip && negatifMomentum && rsiUygun) Sinyal = "S";
+            bool mfiOnay = MFI[i] <= MFI_LLV[i-1];
+            bool volumeOnay = Lot[i] >= Vol_HHV[i-1] * 0.8f;
+            if (yeniDip && negatifMomentum && mfiOnay && volumeOnay) Sinyal = "S";
         }
     }
     
     if (Sinyal != "" && SonYon != Sinyal)
     {
+        // Yeni pozisyon açılıyorsa tracking değişkenlerini sıfırla
+        if (Sinyal == "A")
+        {
+            entryPrice = C[i];
+            entryBar = i;
+            extremePrice = H[i];
+            belowArsCount = 0;
+        }
+        else if (Sinyal == "S")
+        {
+            entryPrice = C[i];
+            entryBar = i;
+            extremePrice = L[i];
+            aboveArsCount = 0;
+        }
+        else if (Sinyal == "F")
+        {
+            // Pozisyon kapanınca sıfırla
+            entryPrice = 0;
+            extremePrice = 0;
+            belowArsCount = 0;
+            aboveArsCount = 0;
+        }
+        
         SonYon = Sinyal;
         Sistem.Yon[i] = SonYon;
     }

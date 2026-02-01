@@ -40,7 +40,8 @@ from .moving_avg import (
 from .oscillators import (
     CCI, MACD, StochRSI, WilliamsR, ROC,
     UltimateOscillator, TRIX, DPO, ChandeMomentum,
-    RMI, AwesomeOscillator, ElliotWaveOscillator
+    RMI, AwesomeOscillator, ElliotWaveOscillator,
+    StochasticFast, StochasticSlow
 )
 
 # =============================================================================
@@ -86,6 +87,7 @@ __all__ = [
     'CCI', 'MACD', 'StochRSI', 'WilliamsR', 'ROC',
     'UltimateOscillator', 'TRIX', 'DPO', 'ChandeMomentum',
     'RMI', 'AwesomeOscillator', 'ElliotWaveOscillator',
+    'StochasticFast', 'StochasticSlow',
     
     # Volatility
     'ATR', 'BollingerBands',

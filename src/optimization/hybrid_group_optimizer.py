@@ -40,66 +40,73 @@ class ParameterGroup:
     is_independent: bool = True   # Bağımsız mı, kademeli mi
     default_values: Dict[str, Any] = field(default_factory=dict)  # Diğer gruplar için varsayılanlar
 
-# Strateji 1 Grup Tanımları
+# Strateji 1 Grup Tanımları (20 Parametre)
 STRATEGY1_GROUPS = [
     ParameterGroup(
         name="ARS",
         params={
-            'ars_period': list(range(3, 18, 3)),  # 3, 6, 9, 12, 15
+            'ars_period': [3, 4, 5, 8, 10, 12],
             'ars_k': [0.005, 0.008, 0.01, 0.012, 0.015, 0.02],
         },
         is_independent=True,
-        default_values={'ars_period': 9, 'ars_k': 0.01}
+        default_values={'ars_period': 3, 'ars_k': 0.01}
     ),
     ParameterGroup(
         name="ADX",
         params={
-            'adx_period': list(range(10, 50, 5)),  # 10, 15, 20, ..., 45
-            'adx_trend_th': [20, 25, 30],
-            'adx_strong_th': [35, 40, 45],
+            'adx_period': [14, 17, 21, 25, 30],
+            'adx_threshold': [20.0, 25.0, 30.0],
         },
         is_independent=True,
-        default_values={'adx_period': 25, 'adx_trend_th': 25, 'adx_strong_th': 40}
+        default_values={'adx_period': 17, 'adx_threshold': 25.0}
     ),
     ParameterGroup(
         name="MACDV",
         params={
-            'macdv_short': [8, 10, 12, 14],
-            'macdv_long': [20, 24, 26, 28, 30],
-            'macdv_signal': [5, 7, 9, 11],
+            'macdv_short': [10, 13, 15],
+            'macdv_long': [24, 28, 32],
+            'macdv_signal': [7, 8, 9],
+            'macdv_threshold': [0.0, 0.1, 0.2],
         },
         is_independent=True,
-        default_values={'macdv_short': 12, 'macdv_long': 26, 'macdv_signal': 9}
+        default_values={'macdv_short': 13, 'macdv_long': 28, 'macdv_signal': 8, 'macdv_threshold': 0.0}
     ),
     ParameterGroup(
-        name="BB",
+        name="NetLot",
         params={
+            'netlot_period': [3, 5, 8],
+            'netlot_threshold': [10, 20, 30, 40],
+        },
+        is_independent=True,
+        default_values={'netlot_period': 5, 'netlot_threshold': 20.0}
+    ),
+    ParameterGroup(
+        name="Yatay_Filtre",
+        params={
+            'ars_mesafe_threshold': [0.20, 0.25, 0.30],
             'bb_period': [15, 20, 25],
-            'bb_stddev': [1.5, 2.0, 2.5],
-            'bb_width_mult': [0.6, 0.8, 1.0],
+            'bb_std': [1.5, 2.0, 2.5],
+            'bb_width_multiplier': [0.6, 0.8, 1.0],
+            'bb_avg_period': [30, 50, 70],
+            'yatay_ars_bars': [5, 10, 15],
+            'yatay_adx_threshold': [15.0, 20.0, 25.0],
+            'filter_score_threshold': [1, 2, 3],
         },
         is_independent=True,
-        default_values={'bb_period': 20, 'bb_stddev': 2.0, 'bb_width_mult': 0.8}
+        default_values={
+            'ars_mesafe_threshold': 0.25, 'bb_period': 20, 'bb_std': 2.0,
+            'bb_width_multiplier': 0.8, 'bb_avg_period': 50, 'yatay_ars_bars': 10,
+            'yatay_adx_threshold': 20.0, 'filter_score_threshold': 2
+        }
     ),
     ParameterGroup(
-        name="Hacim",
+        name="Skor_Ayarlari",
         params={
-            'netlot_th': [5, 10, 15, 20, 25],
-            'netlot_ma_period': [10, 20, 30],
+            'min_score': [2, 3, 4],
+            'exit_score': [2, 3, 4],
         },
-        is_independent=False,  # Kademeli
-        default_values={'netlot_th': 15, 'netlot_ma_period': 20}
-    ),
-    ParameterGroup(
-        name="Skor",
-        params={
-            'min_onay_skoru': [2, 3, 4],
-            'cikis_hassasiyeti': [2, 3, 4],
-            'yatay_min_skor': [2, 3],
-            'giris_karsi_max': [1, 2],
-        },
-        is_independent=False,  # Kademeli
-        default_values={'min_onay_skoru': 3, 'cikis_hassasiyeti': 3, 'yatay_min_skor': 2, 'giris_karsi_max': 2}
+        is_independent=False, # Kademeli
+        default_values={'min_score': 3, 'exit_score': 3}
     ),
 ]
 
@@ -305,62 +312,70 @@ class HybridGroupOptimizer:
         return top_results
     
     def _evaluate_params(self, params: Dict[str, Any]) -> Dict[str, float]:
-        """Parametre setini değerlendir"""
+        """Parametre setini değerlendir (ScoreBased v4.1)"""
         global g_cache
         closes = g_cache.closes
         n = len(closes)
         
-        # İndikatörleri hesapla
-        ars = g_cache.get_ars(params.get('ars_period', 9), params.get('ars_k', 0.01))
-        adx = g_cache.get_adx(params.get('adx_period', 25))
+        # 1. İndikatörleri hesapla
+        ars = g_cache.get_ars(params.get('ars_period', 3), params.get('ars_k', 0.01))
+        adx = g_cache.get_adx(params.get('adx_period', 17))
         macdv_val, macdv_sig = g_cache.get_macdv(
-            params.get('macdv_short', 12),
-            params.get('macdv_long', 26),
-            params.get('macdv_signal', 9)
+            params.get('macdv_short', 13),
+            params.get('macdv_long', 28),
+            params.get('macdv_signal', 8)
         )
-        netlot = g_cache.get_netlot(params.get('netlot_ma_period', 20))
+        netlot = g_cache.get_netlot(params.get('netlot_period', 5))
         
-        # Yatay Filtre Skoru
+        # 2. Yatay Filtre Skoru
         ars_diff = np.diff(ars, prepend=0) != 0
-        ars_degisti = pd.Series(ars_diff).rolling(10).sum().gt(0).values.astype(int)
+        ars_degisti = pd.Series(ars_diff).rolling(params.get('yatay_ars_bars', 10)).sum().gt(0).values.astype(int)
         ars_mesafe = np.abs(closes - ars) / np.where(ars != 0, ars, 1) * 100
         
-        f1 = ars_degisti
-        f2 = (ars_mesafe > 0.25).astype(int)
-        f3 = (adx > params.get('adx_trend_th', 25)).astype(int)
-        f4 = (g_cache.bb_width > g_cache.bb_width_avg * params.get('bb_width_mult', 0.8)).astype(int)
-        yatay_filtre = (f1 + f2 + f3 + f4) >= params.get('yatay_min_skor', 2)
+        # Bollinger (Özel Periyot)
+        from src.indicators.core import BollingerBands
+        upper, middle, lower = BollingerBands(closes.tolist(), params.get('bb_period', 20), params.get('bb_std', 2.0))
+        bb_width = np.where(middle != 0, (np.array(upper) - np.array(lower)) / np.array(middle) * 100, 0)
+        bb_width_avg = pd.Series(bb_width).rolling(params.get('bb_avg_period', 50)).mean().values
         
-        # Sinyal Skorları
+        f1 = (ars_degisti == 1).astype(int)
+        f2 = (ars_mesafe > params.get('ars_mesafe_threshold', 0.25)).astype(int)
+        f3 = (adx > params.get('yatay_adx_threshold', 20.0)).astype(int)
+        f4 = (bb_width > bb_width_avg * params.get('bb_width_multiplier', 0.8)).astype(int)
+        
+        yatay_filtre = (f1 + f2 + f3 + f4) >= params.get('filter_score_threshold', 2)
+        
+        # 3. Sinyal Skorları
         ars_long = (closes > ars).astype(int)
         ars_short = (closes < ars).astype(int)
-        macdv_long = (macdv_val > macdv_sig).astype(int)
-        macdv_short = (macdv_val < macdv_sig).astype(int)
-        adx_score = (adx > params.get('adx_strong_th', 40)).astype(int)
         
-        nl_th = params.get('netlot_th', 15)
+        macdv_th = params.get('macdv_threshold', 0.0)
+        macdv_long = (macdv_val > (macdv_sig + macdv_th)).astype(int)
+        macdv_short = (macdv_val < (macdv_sig - macdv_th)).astype(int)
+        
+        adx_score = (adx > params.get('adx_threshold', 25.0)).astype(int)
+        
+        nl_th = params.get('netlot_threshold', 20.0)
         nl_long = (netlot > nl_th).astype(int)
         nl_short = (netlot < -nl_th).astype(int)
         
         final_l_score = ars_long + macdv_long + nl_long + adx_score
         final_s_score = ars_short + macdv_short + nl_short + adx_score
         
-        min_sc = params.get('min_onay_skoru', 3)
-        karsi_max = params.get('giris_karsi_max', 2)
-        
-        # Sinyaller
+        # 4. Sinyaller
+        min_sc = params.get('min_score', 3)
         signals = np.zeros(n, dtype=int)
-        l_cond = yatay_filtre & (final_l_score >= min_sc) & (final_s_score < karsi_max)
-        s_cond = yatay_filtre & (final_s_score >= min_sc) & (final_l_score < karsi_max)
+        l_cond = yatay_filtre & (final_l_score >= min_sc) & (final_s_score < 2)
+        s_cond = yatay_filtre & (final_s_score >= min_sc) & (final_l_score < 2)
         signals[l_cond] = 1
         signals[s_cond] = -1
         
-        # Çıkış Koşulları
-        ex_sc = params.get('cikis_hassasiyeti', 3)
+        # 5. Çıkış Koşulları
+        ex_sc = params.get('exit_score', 3)
         exits_long = (closes < ars) | (final_s_score >= ex_sc)
         exits_short = (closes > ars) | (final_l_score >= ex_sc)
         
-        # Backtest
+        # 6. Backtest
         np_val, trades, pf, dd = fast_backtest(closes, signals, exits_long, exits_short)
         
         return {
@@ -464,6 +479,55 @@ class HybridGroupOptimizer:
         
         print(f"\nFINAL: NP={final_score['net_profit']:.0f}, PF={final_score['pf']:.2f}, DD={final_score['max_dd']:.0f}")
     
+    def run_stability_phase(self, best_params: Dict[str, Any]):
+        """PHASE 4: STABILITE ANALIZI (Stage 3)
+           En iyi parametrenin komşularını tarayarak 'Stability Score' hesaplar.
+        """
+        print("\n" + "="*60)
+        print("PHASE 4: STABILITE ANALIZI")
+        print("="*60)
+        
+        # Sayısal parametreler ve değişim miktarları
+        numeric_params = {
+            'ars_period': [1], 'ars_k': [0.001],
+            'adx_period': [1], 'adx_threshold': [1.0],
+            'macdv_short': [1], 'macdv_long': [1], 'macdv_signal': [1],
+            'bb_period': [1], 'bb_std': [0.1],
+            'netlot_period': [1], 'netlot_threshold': [1.0],
+            'ars_ema_period': [1], 'ars_atr_period': [1], 'ars_atr_mult': [0.1],
+            'momentum_period': [1], 'breakout_period': [1],
+            'atr_exit_period': [1], 'atr_sl_mult': [0.1], 'atr_tp_mult': [0.1], 'atr_trail_mult': [0.1]
+        }
+        
+        current_score = best_params['net_profit']
+        neighbor_scores = []
+        
+        # Sadece best_params içinde olan sayısal parametreleri al
+        to_test = {k: v for k, v in numeric_params.items() if k in best_params}
+        
+        print(f"Test edilecek parametre sayısı: {len(to_test)}")
+        
+        for p_name, steps in to_test.items():
+            for step in steps:
+                for direction in [-1, 1]:
+                    test_params = best_params.copy()
+                    # Metrik temizle
+                    for k in ['net_profit', 'trades', 'pf', 'max_dd']: test_params.pop(k, None)
+                    
+                    original_val = test_params[p_name]
+                    test_params[p_name] = original_val + (step * direction)
+                    
+                    # Sayısal sınırları koru
+                    if isinstance(original_val, int): test_params[p_name] = max(1, int(test_params[p_name]))
+                    else: test_params[p_name] = max(0.001, test_params[p_name])
+                    
+                    res = self._evaluate_params(test_params)
+                    neighbor_scores.append(res['net_profit'])
+        
+        stability = (sum(neighbor_scores) / len(neighbor_scores)) / current_score if neighbor_scores else 0
+        print(f"Stabilite Skoru: {stability:.2f} (1.00 = Mükemmel, < 0.70 = Riskli)")
+        return stability
+
     def run(self):
         """Tam optimizasyon akışı"""
         start_time = time()
@@ -472,6 +536,10 @@ class HybridGroupOptimizer:
         self.run_combination_phase()
         self.run_cascaded_phase()
         
+        if self.final_results:
+            stability_score = self.run_stability_phase(self.final_results[0])
+            self.final_results[0]['stability_score'] = stability_score
+            
         elapsed = time() - start_time
         print(f"\nToplam süre: {elapsed:.1f}sn")
         
@@ -510,6 +578,7 @@ if __name__ == "__main__":
 # ==============================================================================
 # STRATEGY 2 GROUP DEFINITIONS
 # ==============================================================================
+# Strateji 2 Grup Tanımları (21 Parametre)
 STRATEGY2_GROUPS = [
     ParameterGroup(
         name="ARS_Dinamik",
@@ -521,47 +590,47 @@ STRATEGY2_GROUPS = [
             'ars_max_band': [0.012, 0.015, 0.018],
         },
         is_independent=True,
-        default_values={'ars_ema_period': 5, 'ars_atr_period': 14, 'ars_atr_mult': 1.0, 
+        default_values={'ars_ema_period': 3, 'ars_atr_period': 10, 'ars_atr_mult': 0.5, 
                        'ars_min_band': 0.002, 'ars_max_band': 0.015}
     ),
     ParameterGroup(
-        name="Breakout_Mom",
+        name="Giris_Filtreleri",
         params={
-            'momentum_period': [3, 5, 8, 10],
-            'breakout_period_1': [10, 14, 20],      # Kısa vadeli HHV/LLV
-            'breakout_period_2': [20, 30, 40],      # Orta vadeli HHV/LLV
-            'breakout_period_3': [40, 60, 80],      # Uzun vadeli HHV/LLV (YENİ)
-        },
-        is_independent=True,
-        default_values={'momentum_period': 5, 'breakout_period_1': 14, 
-                       'breakout_period_2': 30, 'breakout_period_3': 60}
-    ),
-    ParameterGroup(
-        name="MFI_Hacim",
-        params={
+            'momentum_period': [3, 5, 8],
+            'momentum_threshold': [100.0, 102.0, 105.0],
+            'breakout_period': [10, 20, 30],
             'mfi_period': [10, 14, 20],
             'mfi_hhv_period': [10, 14, 20],
             'mfi_llv_period': [10, 14, 20],
-            'vol_hhv_period': [10, 14, 20],
+            'volume_hhv_period': [10, 14, 20],
         },
         is_independent=True,
-        default_values={'mfi_period': 14, 'mfi_hhv_period': 14, 
-                       'mfi_llv_period': 14, 'vol_hhv_period': 14}
+        default_values={'momentum_period': 5, 'momentum_threshold': 100.0, 'breakout_period': 10,
+                       'mfi_period': 14, 'mfi_hhv_period': 14, 'mfi_llv_period': 14, 'volume_hhv_period': 14}
+    ),
+    ParameterGroup(
+        name="Ince_Ayar",
+        params={
+            'volume_mult': [0.6, 0.8, 1.0],
+            'volume_llv_period': [10, 14, 20],
+            'use_atr_exit': [True],
+        },
+        is_independent=True,
+        default_values={'volume_mult': 0.8, 'volume_llv_period': 14, 'use_atr_exit': True}
     ),
     ParameterGroup(
         name="Cikis_ATR",
         params={
             'atr_exit_period': [10, 14, 20],
-            'atr_sl_mult': [1.0, 1.5, 2.0, 2.5],
-            'atr_tp_mult': [2.0, 3.0, 4.0, 5.0],
-            'atr_trail_mult': [1.0, 1.5, 2.0],
-            # Çift Teyitli Trend Dönüşü Parametreleri (YENİ)
-            'exit_confirm_bars': [1, 2, 3],         # Kaç bar ARS karşı tarafında kapanmalı
-            'exit_confirm_mult': [0.5, 1.0, 1.5],   # ARS mesafe çarpanı (dinamikK × mult)
+            'atr_sl_mult': [1.0, 2.0, 3.0],
+            'atr_tp_mult': [3.0, 5.0, 7.0],
+            'atr_trail_mult': [1.0, 2.0, 3.0],
+            'exit_confirm_bars': [1, 2, 3],
+            'exit_confirm_mult': [0.5, 1.0, 1.5],
         },
-        is_independent=False,  # Kademeli - giriş sabit, çıkış optimize
-        default_values={'atr_exit_period': 14, 'atr_sl_mult': 1.5, 
-                       'atr_tp_mult': 3.0, 'atr_trail_mult': 1.5,
+        is_independent=False,  # Kademeli
+        default_values={'atr_exit_period': 14, 'atr_sl_mult': 2.0, 
+                       'atr_tp_mult': 5.0, 'atr_trail_mult': 2.0,
                        'exit_confirm_bars': 2, 'exit_confirm_mult': 1.0}
     ),
 ]
@@ -574,11 +643,10 @@ class Strategy2HybridOptimizer(HybridGroupOptimizer):
         super().__init__(STRATEGY2_GROUPS)
     
     def _evaluate_params(self, params: Dict[str, Any]) -> Dict[str, float]:
-        """Strateji 2 parametrelerini değerlendir (Planlanmış Mimari v4.1)"""
+        """Strateji 2 parametrelerini değerlendir (Planlanmış Mimari v4.1 - 21 Parametre)"""
         global g_cache
         
-        # Import additional indicators
-        from src.indicators.core import ARS_Dynamic, Momentum, HHV, LLV, MoneyFlowIndex
+        from src.indicators.core import ARS_Dynamic, Momentum, HHV, LLV, MoneyFlowIndex, ATR, EMA
         
         closes = g_cache.closes
         highs = g_cache.highs
@@ -587,10 +655,10 @@ class Strategy2HybridOptimizer(HybridGroupOptimizer):
         lots = g_cache.lots
         n = len(closes)
         
-        # ARS Dinamik - dinamikK'yı da döndürecek şekilde hesapla
-        ars_ema = int(params.get('ars_ema_period', 5))
-        ars_atr_p = int(params.get('ars_atr_period', 14))
-        ars_atr_m = float(params.get('ars_atr_mult', 1.0))
+        # 1. ARS Dinamik
+        ars_ema = int(params.get('ars_ema_period', 3))
+        ars_atr_p = int(params.get('ars_atr_period', 10))
+        ars_atr_m = float(params.get('ars_atr_mult', 0.5))
         ars_min = float(params.get('ars_min_band', 0.002))
         ars_max = float(params.get('ars_max_band', 0.015))
         
@@ -603,66 +671,35 @@ class Strategy2HybridOptimizer(HybridGroupOptimizer):
             ))
         ars = g_cache._cache[ars_key]
         
-        # ATR ve dinamikK hesapla (çıkış mesafe teyidi için)
-        from src.indicators.core import ATR as ATR_fn, EMA
+        # 2. ATR_Exit ve dinamikK
         atr_exit_p = int(params.get('atr_exit_period', 14))
         atr_key = f'atr_{atr_exit_p}'
         if atr_key not in g_cache._cache:
-            g_cache._cache[atr_key] = np.array(ATR_fn(highs.tolist(), lows.tolist(), closes.tolist(), atr_exit_p))
-        atr = g_cache._cache[atr_key]
+            g_cache._cache[atr_key] = np.array(ATR(highs.tolist(), lows.tolist(), closes.tolist(), atr_exit_p))
+        atr_exit = g_cache._cache[atr_key]
         
-        ema_key = f'ema_{ars_ema}'
-        if ema_key not in g_cache._cache:
-            g_cache._cache[ema_key] = np.array(EMA(typical.tolist(), ars_ema))
-        ars_ema_arr = g_cache._cache[ema_key]
-        
-        # dinamikK: ATR bazlı band genişliği (çıkış mesafe teyidi için)
-        dinamikK = np.zeros(n)
-        for i in range(n):
-            if ars_ema_arr[i] > 0:
-                dinamikK[i] = (atr[i] / ars_ema_arr[i]) * ars_atr_m
-                dinamikK[i] = max(ars_min, min(ars_max, dinamikK[i]))
-            else:
-                dinamikK[i] = ars_min
-        
-        # Momentum
+        # 3. Momentum ve Breakout
         mom_p = int(params.get('momentum_period', 5))
+        mom_th = float(params.get('momentum_threshold', 100.0))
         mom_key = f'mom_{mom_p}'
         if mom_key not in g_cache._cache:
             g_cache._cache[mom_key] = np.array(Momentum(closes.tolist(), mom_p))
         mom = g_cache._cache[mom_key]
         
-        # Çoklu HHV/LLV (3 farklı periyot)
-        brk1 = int(params.get('breakout_period_1', 14))
-        brk2 = int(params.get('breakout_period_2', 30))
-        brk3 = int(params.get('breakout_period_3', 60))
+        brk_p = int(params.get('breakout_period', 10))
+        hhv_key, llv_key = f'hhv_{brk_p}', f'llv_{brk_p}'
+        if hhv_key not in g_cache._cache:
+            g_cache._cache[hhv_key] = np.array(HHV(highs.tolist(), brk_p))
+            g_cache._cache[llv_key] = np.array(LLV(lows.tolist(), brk_p))
+        hhv, llv = g_cache._cache[hhv_key], g_cache._cache[llv_key]
         
-        hhv1_key, llv1_key = f'hhv_{brk1}', f'llv_{brk1}'
-        hhv2_key, llv2_key = f'hhv_{brk2}', f'llv_{brk2}'
-        hhv3_key, llv3_key = f'hhv_{brk3}', f'llv_{brk3}'
-        
-        if hhv1_key not in g_cache._cache:
-            g_cache._cache[hhv1_key] = np.array(HHV(highs.tolist(), brk1))
-            g_cache._cache[llv1_key] = np.array(LLV(lows.tolist(), brk1))
-        if hhv2_key not in g_cache._cache:
-            g_cache._cache[hhv2_key] = np.array(HHV(highs.tolist(), brk2))
-            g_cache._cache[llv2_key] = np.array(LLV(lows.tolist(), brk2))
-        if hhv3_key not in g_cache._cache:
-            g_cache._cache[hhv3_key] = np.array(HHV(highs.tolist(), brk3))
-            g_cache._cache[llv3_key] = np.array(LLV(lows.tolist(), brk3))
-            
-        hhv1, llv1 = g_cache._cache[hhv1_key], g_cache._cache[llv1_key]
-        hhv2, llv2 = g_cache._cache[hhv2_key], g_cache._cache[llv2_key]
-        hhv3, llv3 = g_cache._cache[hhv3_key], g_cache._cache[llv3_key]
-        
-        # MFI Breakout (RSI yerine)
+        # 4. MFI Breakout
         mfi_p = int(params.get('mfi_period', 14))
         mfi_key = f'mfi_{mfi_p}'
         if mfi_key not in g_cache._cache:
             g_cache._cache[mfi_key] = np.array(MoneyFlowIndex(highs.tolist(), lows.tolist(), closes.tolist(), lots.tolist(), mfi_p))
         mfi = g_cache._cache[mfi_key]
         
-        # MFI HHV/LLV
         mfi_hhv_p = int(params.get('mfi_hhv_period', 14))
         mfi_llv_p = int(params.get('mfi_llv_period', 14))
         mfi_hhv_key = f'mfi_hhv_{mfi_p}_{mfi_hhv_p}'
@@ -671,34 +708,21 @@ class Strategy2HybridOptimizer(HybridGroupOptimizer):
             g_cache._cache[mfi_hhv_key] = np.array(HHV(mfi.tolist(), mfi_hhv_p))
         if mfi_llv_key not in g_cache._cache:
             g_cache._cache[mfi_llv_key] = np.array(LLV(mfi.tolist(), mfi_llv_p))
-        mfi_hhv = g_cache._cache[mfi_hhv_key]
-        mfi_llv = g_cache._cache[mfi_llv_key]
+        mfi_hhv, mfi_llv = g_cache._cache[mfi_hhv_key], g_cache._cache[mfi_llv_key]
         
-        # Volume HHV
-        vol_hhv_p = int(params.get('vol_hhv_period', 14))
+        # 5. Volume Breakout
+        vol_hhv_p = int(params.get('volume_hhv_period', 14))
+        vol_llv_p = int(params.get('volume_llv_period', 14))
+        vol_mult = float(params.get('volume_mult', 0.8))
         vol_hhv_key = f'vol_hhv_{vol_hhv_p}'
         if vol_hhv_key not in g_cache._cache:
             g_cache._cache[vol_hhv_key] = np.array(HHV(lots.tolist(), vol_hhv_p))
         vol_hhv = g_cache._cache[vol_hhv_key]
         
-        # Çıkış parametreleri
-        atr_sl = float(params.get('atr_sl_mult', 1.5))
-        atr_tp = float(params.get('atr_tp_mult', 3.0))
-        atr_trail = float(params.get('atr_trail_mult', 1.5))
-        exit_confirm_bars = int(params.get('exit_confirm_bars', 2))
-        exit_confirm_mult = float(params.get('exit_confirm_mult', 1.0))
-        
-        # Trend yönü
-        trend = np.zeros(n, dtype=int)
-        trend[closes > ars] = 1
-        trend[closes < ars] = -1
-        
-        # Backtest değişkenleri
+        # 6. Trade Logic
         pos = 0
         entry_price = 0.0
         extreme_price = 0.0
-        entry_atr = 0.0
-        bars_against_trend = 0  # Çift teyit için sayaç
         
         gross_profit = 0.0
         gross_loss = 0.0
@@ -707,97 +731,130 @@ class Strategy2HybridOptimizer(HybridGroupOptimizer):
         peak_equity = 0.0
         current_equity = 0.0
         
-        warmup = max(brk3, 60)  # En uzun periyot kadar warmup
+        bars_against_trend = 0
+        
+        # ATR Exit Params
+        atr_sl_m = float(params.get('atr_sl_mult', 2.0))
+        atr_tp_m = float(params.get('atr_tp_mult', 5.0))
+        atr_trail_m = float(params.get('atr_trail_mult', 2.0))
+        ex_conf_bars = int(params.get('exit_confirm_bars', 2))
+        ex_conf_mult = float(params.get('exit_confirm_mult', 1.0))
+        
+        warmup = max(brk_p, 50)
         
         for i in range(warmup, n):
-            current_trend = trend[i]
-            current_dinamikK = dinamikK[i]
-            
-            # ========== EXIT MANTIGI ==========
+            # EXIT
             if pos == 1:
-                if closes[i] > extreme_price:
-                    extreme_price = closes[i]
+                extreme_price = max(extreme_price, highs[i])
                 
                 exit_signal = False
                 
-                # 1. Çift Teyitli Trend Dönüşü
-                if current_trend == -1:
+                # A. Double Confirmation Exit
+                if closes[i] < ars[i]:
                     bars_against_trend += 1
-                    # Mesafe teyidi: Fiyat ARS'tan (dinamikK × mult) kadar uzaklaştı mı?
-                    distance_threshold = ars[i] * (1 - current_dinamikK * exit_confirm_mult)
-                    distance_ok = closes[i] < distance_threshold
-                    # Çoklu bar teyidi
-                    if bars_against_trend >= exit_confirm_bars and distance_ok:
-                        exit_signal = True
                 else:
-                    bars_against_trend = 0  # Trend döndü, sayacı sıfırla
+                    bars_against_trend = 0
                 
-                # 2. Take Profit (ATR bazlı)
-                if closes[i] >= entry_price + entry_atr * atr_tp:
+                dist_th = atr_exit[i] * ars_atr_m * ex_conf_mult
+                distance_ok = (ars[i] - closes[i]) > dist_th
+                
+                if bars_against_trend >= ex_conf_bars and distance_ok:
                     exit_signal = True
                 
-                # 3. Stop Loss (ATR bazlı)
-                if closes[i] <= entry_price - entry_atr * atr_sl:
-                    exit_signal = True
-                
-                # 4. Trailing Stop (ATR bazlı)
-                if closes[i] < extreme_price - entry_atr * atr_trail:
-                    exit_signal = True
+                # B. ATR TP/SL/Trail
+                if not exit_signal:
+                    tp_price = entry_price + (atr_exit[i] * atr_tp_m)
+                    sl_price = entry_price - (atr_exit[i] * atr_sl_m)
+                    trail_price = extreme_price - (atr_exit[i] * atr_trail_m)
+                    actual_stop = max(sl_price, trail_price)
+                    
+                    if closes[i] >= tp_price or closes[i] < actual_stop:
+                        exit_signal = True
                 
                 if exit_signal:
                     pnl = closes[i] - entry_price
-                    if pnl > 0:
-                        gross_profit += pnl
-                    else:
-                        gross_loss += abs(pnl)
+                    if pnl > 0: gross_profit += pnl
+                    else: gross_loss += abs(pnl)
                     current_equity += pnl
                     pos = 0
-                    bars_against_trend = 0
-                    if current_equity > peak_equity:
-                        peak_equity = current_equity
-                    dd = peak_equity - current_equity
-                    if dd > max_dd:
-                        max_dd = dd
-                        
+                    trades += 1
+                    if current_equity > peak_equity: peak_equity = current_equity
+                    max_dd = max(max_dd, peak_equity - current_equity)
+
             elif pos == -1:
-                if closes[i] < extreme_price:
-                    extreme_price = closes[i]
+                extreme_price = min(extreme_price, lows[i])
                 
                 exit_signal = False
                 
-                # 1. Çift Teyitli Trend Dönüşü
-                if current_trend == 1:
+                # A. Double Confirmation Exit
+                if closes[i] > ars[i]:
                     bars_against_trend += 1
-                    distance_threshold = ars[i] * (1 + current_dinamikK * exit_confirm_mult)
-                    distance_ok = closes[i] > distance_threshold
-                    if bars_against_trend >= exit_confirm_bars and distance_ok:
-                        exit_signal = True
                 else:
                     bars_against_trend = 0
                 
-                # 2. Take Profit (ATR bazlı)
-                if closes[i] <= entry_price - entry_atr * atr_tp:
+                dist_th = atr_exit[i] * ars_atr_m * ex_conf_mult
+                distance_ok = (closes[i] - ars[i]) > dist_th
+                
+                if bars_against_trend >= ex_conf_bars and distance_ok:
                     exit_signal = True
                 
-                # 3. Stop Loss (ATR bazlı)
-                if closes[i] >= entry_price + entry_atr * atr_sl:
-                    exit_signal = True
-                
-                # 4. Trailing Stop (ATR bazlı)
-                if closes[i] > extreme_price + entry_atr * atr_trail:
-                    exit_signal = True
+                # B. ATR TP/SL/Trail
+                if not exit_signal:
+                    tp_price = entry_price - (atr_exit[i] * atr_tp_m)
+                    sl_price = entry_price + (atr_exit[i] * atr_sl_m)
+                    trail_price = extreme_price + (atr_exit[i] * atr_trail_m)
+                    actual_stop = min(sl_price, trail_price)
+                    
+                    if closes[i] <= tp_price or closes[i] > actual_stop:
+                        exit_signal = True
                 
                 if exit_signal:
                     pnl = entry_price - closes[i]
-                    if pnl > 0:
-                        gross_profit += pnl
-                    else:
-                        gross_loss += abs(pnl)
+                    if pnl > 0: gross_profit += pnl
+                    else: gross_loss += abs(pnl)
                     current_equity += pnl
                     pos = 0
-                    bars_against_trend = 0
-                    if current_equity > peak_equity:
-                        peak_equity = current_equity
+                    trades += 1
+                    if current_equity > peak_equity: peak_equity = current_equity
+                    max_dd = max(max_dd, peak_equity - current_equity)
+
+            # ENTRY
+            if pos == 0:
+                # LONG Entry
+                if closes[i] > ars[i]:
+                    new_high = highs[i] >= hhv[i-1] and hhv[i] > hhv[i-1]
+                    mom_ok = mom[i] > mom_th
+                    mfi_ok = mfi[i] >= mfi_hhv[i-1]
+                    vol_ok = lots[i] >= vol_hhv[i-1] * vol_mult
+                    
+                    if new_high and mom_ok and mfi_ok and vol_ok:
+                        pos = 1
+                        entry_price = closes[i]
+                        extreme_price = highs[i]
+                        bars_against_trend = 0
+                
+                # SHORT Entry
+                elif closes[i] < ars[i]:
+                    new_low = lows[i] <= llv[i-1] and llv[i] < llv[i-1]
+                    mom_ok = mom[i] < (200 - mom_th)
+                    mfi_ok = mfi[i] <= mfi_llv[i-1]
+                    vol_ok = lots[i] >= vol_hhv[i-1] * vol_mult
+                    
+                    if new_low and mom_ok and mfi_ok and vol_ok:
+                        pos = -1
+                        entry_price = closes[i]
+                        extreme_price = lows[i]
+                        bars_against_trend = 0
+
+        net_profit = gross_profit - gross_loss
+        pf = (gross_profit / gross_loss) if gross_loss > 0 else 999
+        
+        return {
+            'net_profit': net_profit,
+            'trades': trades,
+            'pf': pf,
+            'max_dd': max_dd
+        }
                     dd = peak_equity - current_equity
                     if dd > max_dd:
                         max_dd = dd

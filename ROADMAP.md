@@ -15,10 +15,11 @@ IdealData backtest sonuçları ile **%100 uyumlu** harici backtest + optimizasyo
 | Faz 1 | ✅ | IdealData Uyumu | - |
 | Faz 2 | ✅ | Optimizasyon Motoru | - |
 | Faz 3 | ✅ | Robust Parametre | - |
-| Faz 4 | ✅ | IdealData Decompile | - |
-| Faz 5 | ⏸️ | Desktop UI (PySide6) | 🔴 Kritik |
-| Faz 6 | ⏸️ | Veritabanı | 🟢 Nice-to-have |
-| Faz 7 | 🔄 | Agent Dokümantasyonu | 🔴 Sürekli |
+| Faz 4 | ✅ | IdealData Entegrasyonu | - |
+| Faz 5 | ✅ | **v4.1 Sistem Hizalaması** | 🔴 Kritik |
+| Faz 6 | 🔄 | Desktop UI (PySide6) | 🔴 Kritik |
+| Faz 7 | ⏸️ | Veritabanı | 🟢 Nice-to-have |
+| Faz 8 | 🔄 | Agent Dokümantasyonu | 🔴 Sürekli |
 
 ---
 
@@ -52,8 +53,18 @@ IdealData backtest sonuçları ile **%100 uyumlu** harici backtest + optimizasyo
 | Volume HHV/LLV | 0.00 |
 | MFI | 0.005 |
 | ATR | 0.0001 |
+| OBV / ADL | 0.00 (Kümülatif fix) |
+| Aroon / Stoch | 0.00 (Formül fix) |
+| ARS_Dynamic | 0.00 (Yuvarlama fix) |
 
 </details>
+
+### Strateji Validasyonu (✅ TAMAMLANDI)
+- [x] Strateji 1 Python Portu: `score_based.py` (Gatekeeper)
+- [x] Strateji 2 Python Portu: `ars_trend_v2.py` (Trend)
+- [x] IdealData Kaynak Kodları: `1_Nolu_Strateji.txt`, `2_Nolu_Strateji.txt`
+- [x] **v4.1 Uyumu:** Strateji 1 (20 Param) & Strateji 2 (21 Param) senkronize edildi.
+- [x] Gereksiz/Eski strateji dosyaları temizlendi.
 
 ---
 

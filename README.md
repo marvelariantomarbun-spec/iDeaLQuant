@@ -7,9 +7,15 @@ Trading Strategy Backtesting, Optimization, and Robust Parameter Selection Suite
 ## 🎯 Features
 
 ### 1. Backtest Engine
-- IdealData compatible backtest
-- Bar-by-bar simulation
-- Multiple indicator support (ARS, RSI, QQEF, RVI, Qstick, etc.)
+- IdealData compatible backtest (v4.1 Logic)
+- Bar-by-bar simulation with Warmup handling
+- **Finalized Strategies:**
+  - `score_based.py` (Strategy 1 - 20 Parameters)
+    - ARS Stability + ADX + NetLot + MACD-V (Volatility Normalized)
+    - Fully parameterized Horizontal Filter
+  - `ars_trend_v2.py` (Strategy 2 - 21 Parameters)
+    - ARS Dynamic + MFI + Volume Breakout
+    - **Double Confirmation Exit:** ATR-based TP/SL/Trail + Multi-bar/Distance confirmation.
 - Commission and slippage modeling
 
 ### 2. Optimization Engine

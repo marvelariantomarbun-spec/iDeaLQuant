@@ -1,22 +1,75 @@
 // ===============================================================================================
-// 1DK İNDİKATÖR ARAŞTIRMA v4.0 (GATEKEEPER - SADELEŞTİRİLMİŞ)
-// ===============================================================================================
-// Hedef: Strateji 2 (Trend Takip) için güvenli giriş filtresi.
-// İndikatörler: ARS + MACD-V + NET HACİM + ADX
-// Kaldırılanlar: QQE, RVI, QSTICK (Gereksiz Momentum)
-// Tarih: 2026-01-30 (Optimization v4.0 Results)
+// STRATEJI 1: GATEKEEPER (MACDV + ARS + ADX + NETLOT)
 // ===============================================================================================
 
-// --- PARAMETRELER (v4.1 GLOBAL OPTIMIZED) ---
-var MIN_ONAY_SKORU = 3;      // Min 3 indikatör onayı
-var CIKIS_HASASIYETI = 3;    // Hızlı çıkış
-var ARS_PERIYOT = 3;         // ARS (Daha Hızlı: 4->3)
-var ARS_K = 0.01;            // 0.01 katsayı
-var ADX_PERIOD = 17;         // Trend gücü (20->17)
+// --- PARAMETRELER ---
+var MIN_ONAY_SKORU = 3;
+var CIKIS_HASSASIYETI = 3;
+var ARS_PERIYOT = 3;
+var ARS_K = 0.01;
+var ADX_PERIOD = 17;
 var NETLOT_ESIK = 20;
-var MACDV_SHORT = 13;        // 12 -> 13
-var MACDV_LONG = 28;         // 26 -> 28
-var MACDV_SIGNAL = 8;        // 9 -> 8
+var MACDV_K = 13;
+var MACDV_U = 28;
+var MACDV_SIG = 8;
+
+// --- VADE TİPİ ---
+string VadeTipi = "ENDEKS"; // "ENDEKS" (çift ay) veya "SPOT" (her ay)
+
+// ===============================================================================================
+// DİNAMİK BAYRAM TARİHLERİ (2024-2030)
+// ===============================================================================================
+int yil = DateTime.Now.Year;
+DateTime Ramazan, Kurban;
+
+switch(yil)
+{
+    case 2024:
+        Ramazan = new DateTime(2024, 4, 10);
+        Kurban = new DateTime(2024, 6, 16);
+        break;
+    case 2025:
+        Ramazan = new DateTime(2025, 3, 30);
+        Kurban = new DateTime(2025, 6, 6);
+        break;
+    case 2026:
+        Ramazan = new DateTime(2026, 3, 20);
+        Kurban = new DateTime(2026, 5, 27);
+        break;
+    case 2027:
+        Ramazan = new DateTime(2027, 3, 9);
+        Kurban = new DateTime(2027, 5, 16);
+        break;
+    case 2028:
+        Ramazan = new DateTime(2028, 2, 26);
+        Kurban = new DateTime(2028, 5, 5);
+        break;
+    case 2029:
+        Ramazan = new DateTime(2029, 2, 14);
+        Kurban = new DateTime(2029, 4, 24);
+        break;
+    case 2030:
+        Ramazan = new DateTime(2030, 2, 3);
+        Kurban = new DateTime(2030, 4, 13);
+        break;
+    default:
+        Ramazan = new DateTime(yil, 3, 15);
+        Kurban = new DateTime(yil, 5, 20);
+        break;
+}
+
+// Optimizasyon için tüm yıllar
+DateTime R2024 = new DateTime(2024, 4, 10);
+DateTime K2024 = new DateTime(2024, 6, 16);
+DateTime R2025 = new DateTime(2025, 3, 30);
+DateTime K2025 = new DateTime(2025, 6, 6);
+DateTime R2026 = new DateTime(2026, 3, 20);
+DateTime K2026 = new DateTime(2026, 5, 27);
+DateTime R2027 = new DateTime(2027, 3, 9);
+DateTime K2027 = new DateTime(2027, 5, 16);
+
+// Resmi tatiller (MM.dd formatında)
+string[] resmiTatiller = new string[] { "01.01","04.23","05.01","05.19","07.15","08.30","10.29" };
 
 var V = Sistem.GrafikVerileri;
 var O = Sistem.GrafikFiyatSec("Acilis");
@@ -25,7 +78,39 @@ var L = Sistem.GrafikFiyatSec("Dusuk");
 var C = Sistem.GrafikFiyatSec("Kapanis");
 var T = Sistem.GrafikFiyatSec("Tipik");
 
-// --- 1. ARS (Adaptive Range Stop) ---
+// ===============================================================================================
+// VADE SONU İŞ GÜNÜ HESAPLAMA
+// ===============================================================================================
+Func<DateTime, DateTime> VadeSonuIsGunu = (dt) =>
+{
+    var aySonu = new DateTime(dt.Year, dt.Month, DateTime.DaysInMonth(dt.Year, dt.Month));
+    var d = aySonu;
+    
+    for (int k = 0; k < 15; k++)  // Max 15 gün geri git
+    {
+        if (d.DayOfWeek == DayOfWeek.Saturday || d.DayOfWeek == DayOfWeek.Sunday)
+        { d = d.AddDays(-1); continue; }
+        
+        // Resmi tatil kontrolü
+        string mmdd = d.ToString("MM.dd");
+        bool tatil = false;
+        for (int t = 0; t < resmiTatiller.Length; t++)
+            if (resmiTatiller[t] == mmdd) { tatil = true; break; }
+        if (tatil) { d = d.AddDays(-1); continue; }
+        
+        // Bayram kontrolü (3-4 günlük tatil)
+        if ((d >= R2024 && d <= R2024.AddDays(3)) || (d >= K2024 && d <= K2024.AddDays(4)) ||
+            (d >= R2025 && d <= R2025.AddDays(3)) || (d >= K2025 && d <= K2025.AddDays(4)) ||
+            (d >= R2026 && d <= R2026.AddDays(3)) || (d >= K2026 && d <= K2026.AddDays(4)) ||
+            (d >= R2027 && d <= R2027.AddDays(3)) || (d >= K2027 && d <= K2027.AddDays(4)))
+        { d = d.AddDays(-1); continue; }
+        
+        break;
+    }
+    return d.Date;
+};
+
+// --- 1. ARS ---
 var ARS_EMA = Sistem.MA(T, "Exp", ARS_PERIYOT);
 var ARS = Sistem.Liste(0);
 for (int i = 1; i < Sistem.BarSayisi; i++) {
@@ -36,12 +121,10 @@ for (int i = 1; i < Sistem.BarSayisi; i++) {
     else ARS[i] = ARS[i - 1];
 }
 
-// --- 2. MACD-V (Volatility Normalized MACD) ---
-// Matriks Formül: (EMA(S) - EMA(L)) / EMA(TR, L) * 100
-var EMA_S = Sistem.MA(C, "Exp", MACDV_SHORT);
-var EMA_L = Sistem.MA(C, "Exp", MACDV_LONG);
+// --- 2. MACDV ---
+var EMA_S = Sistem.MA(C, "Exp", MACDV_K);
+var EMA_L = Sistem.MA(C, "Exp", MACDV_U);
 
-// True Range Hesaplama
 var TR_List = Sistem.Liste(0);
 for (int i = 1; i < Sistem.BarSayisi; i++) {
     float hl = H[i] - L[i];
@@ -49,32 +132,30 @@ for (int i = 1; i < Sistem.BarSayisi; i++) {
     float lc = Math.Abs(L[i] - C[i-1]);
     TR_List[i] = Math.Max(hl, Math.Max(hc, lc));
 }
-// ATRe (EMA of TR) - Uzun periyot kullanılıyor
-var ATRe = Sistem.MA(TR_List, "Exp", MACDV_LONG);
+var ATRe = Sistem.MA(TR_List, "Exp", MACDV_U);
 
 var MACDV = Sistem.Liste(0);
 for (int i = 0; i < Sistem.BarSayisi; i++) {
     if (ATRe[i] != 0)
         MACDV[i] = ((EMA_S[i] - EMA_L[i]) / ATRe[i]) * 100;
 }
-var MACDV_Sig = Sistem.MA(MACDV, "Exp", MACDV_SIGNAL);
+var MACDV_Sinyal = Sistem.MA(MACDV, "Exp", MACDV_SIG);
 
-
-// --- 3. YATAY FİLTRE ---
-var ARS_DegismeDurumu = Sistem.Liste(0);
+// --- 3. YATAY FILTRE ---
+var ARS_Degisim = Sistem.Liste(0);
 int yatayEsik = 10;
 for (int i = yatayEsik; i < Sistem.BarSayisi; i++) {
     bool arsAyni = true;
     for (int j = 1; j <= yatayEsik; j++)
         if (ARS[i] != ARS[i - j]) { arsAyni = false; break; }
-    ARS_DegismeDurumu[i] = arsAyni ? 0 : 1;
+    ARS_Degisim[i] = arsAyni ? 0 : 1;
 }
 
 var ARS_Mesafe = Sistem.Liste(0);
 for (int i = 1; i < Sistem.BarSayisi; i++)
-    if (ARS[i] != 0) ARS_Mesafe[i] = Math.Abs(C[i] - ARS[i]) / ARS[i] * 100;
+    ARS_Mesafe[i] = Math.Abs(C[i] - ARS[i]) / ARS[i] * 100;
 
-var ADX = Sistem.ADX(ADX_PERIOD);
+var ADX14 = Sistem.ADX(ADX_PERIOD);
 
 var BBUp = Sistem.BollingerUp("Simple", 20, 2);
 var BBDown = Sistem.BollingerDown("Simple", 20, 2);
@@ -87,51 +168,135 @@ var BBWidth_Avg = Sistem.MA(BBWidth, "Simple", 50);
 var YatayFiltre = Sistem.Liste(0);
 for (int i = 50; i < Sistem.BarSayisi; i++) {
     int skor = 0;
-    if (ARS_DegismeDurumu[i] == 1) skor++;
+    if (ARS_Degisim[i] == 1) skor++;
     if (ARS_Mesafe[i] > 0.25f) skor++;
-    if (ADX[i] > 20.0f) skor++;
+    if (ADX14[i] > 20.0f) skor++;
     if (BBWidth[i] > BBWidth_Avg[i] * 0.8f) skor++;
     YatayFiltre[i] = (skor >= 2) ? 1 : 0;
 }
 
-// --- 4. NET HACİM (NetLot) ---
+// --- 4. NET HACİM ---
 var NetLot = Sistem.Liste(0);
 for (int i = 1; i < Sistem.BarSayisi; i++) {
-    float range = H[i] - L[i];
-    float barHacim = range > 0 ? (C[i] - O[i]) / range : 0;
+    float barHacim = (H[i] - L[i]) > 0 ? (C[i] - O[i]) / (H[i] - L[i]) : 0;
     NetLot[i] = barHacim * 100;
 }
 var NetLot_MA = Sistem.MA(NetLot, "Simple", 5);
 
-// --- SİNYAL ve ÇİZİM ---
+// --- SINYAL ---
 for (int i = 1; i < V.Count; i++) Sistem.Yon[i] = "";
 var SonYon = "";
 
-for (int i = 50; i < Sistem.BarSayisi; i++)
+// Vade/Tatil yönetimi değişkenleri
+int vadeCooldownBar = Math.Max(ARS_PERIYOT, Math.Max(ADX_PERIOD, Math.Max(MACDV_K, MACDV_U))) + 10;
+int warmupBars = Math.Max(50, vadeCooldownBar);
+int warmupBaslangicBar = -999;
+bool warmupAktif = false;
+bool arefeFlat = false;
+
+for (int i = warmupBars; i < Sistem.BarSayisi; i++)
 {
-    var Sinyal = "";
+    var Sinyal = "";    var dt = V[i].Date;
+    var t = dt.TimeOfDay;
     
-    // --- SKORLAMA (ARS + MACDV + NETLOT + ADX) ---
+    // Seans kontrolü (09:30-18:15, 19:00-23:00)
+    bool gunSeansi = t >= new TimeSpan(9,30,0) && t < new TimeSpan(18,15,0);
+    bool aksamSeansi = t >= new TimeSpan(19,0,0) && t < new TimeSpan(23,0,0);
+    if (!(gunSeansi || aksamSeansi))
+        continue;
+    
+    // ---- VADE YÖNETİMİ ----
+    bool vadeAyi = (VadeTipi == "SPOT") || (dt.Month % 2 == 0);
+    bool vadeSonuGun = vadeAyi && (dt.Date == VadeSonuIsGunu(dt));
+    
+    // Arefe kontrolü
+    bool arefe = dt.Date == R2024.AddDays(-1).Date || dt.Date == K2024.AddDays(-1).Date ||
+                 dt.Date == R2025.AddDays(-1).Date || dt.Date == K2025.AddDays(-1).Date ||
+                 dt.Date == R2026.AddDays(-1).Date || dt.Date == K2026.AddDays(-1).Date ||
+                 dt.Date == R2027.AddDays(-1).Date || dt.Date == K2027.AddDays(-1).Date;
+    
+    // ===== SENARYO 1: Arefe + Vade Sonu (11:30 flat + bayram sonrası warmup) =====
+    if (arefe && vadeSonuGun && t > new TimeSpan(11,30,0))
+    {
+        if (SonYon != "F") Sinyal = "F";
+        warmupAktif = true;
+        warmupBaslangicBar = -999;
+        arefeFlat = false;
+    }
+    // ===== SENARYO 2: Sadece Arefe (11:30 flat + ertesi gün warmup YOK) =====
+    else if (arefe && !vadeSonuGun && t > new TimeSpan(11,30,0))
+    {
+        if (SonYon != "F") Sinyal = "F";
+        arefeFlat = true;
+    }
+    // ===== SENARYO 3: Normal Vade Sonu (17:40 flat + aynı gün 19:00 warmup) =====
+    else if (vadeSonuGun && t > new TimeSpan(17,40,0))
+    {
+        if (SonYon != "F") Sinyal = "F";
+        warmupAktif = true;
+        warmupBaslangicBar = -999;
+        arefeFlat = false;
+    }
+    
+    // Flat sinyali işle veya zaten flat ise continue
+    if (Sinyal == "F")
+    {
+        if (SonYon != Sinyal) { Sistem.Yon[i] = Sinyal; SonYon = Sinyal; }
+        continue;
+    }
+    // Arefe/Vade sonu günlerinde flat kalınması gereken saatler
+    if ((arefe && t > new TimeSpan(11,30,0)) || (vadeSonuGun && !arefe && t > new TimeSpan(17,40,0)))
+    {
+        continue;
+    }
+    
+    // ===== WARMUP BAŞLANGIÇ TESPİTİ =====
+    if (warmupAktif && warmupBaslangicBar == -999)
+    {
+        bool yeniSeansBaslangici = false;
+        if (aksamSeansi && i > 0 && V[i-1].Date.TimeOfDay < new TimeSpan(19,0,0))
+            yeniSeansBaslangici = true;
+        if (gunSeansi && t >= new TimeSpan(9,30,0) && t < new TimeSpan(9,35,0))
+            if (i > 0 && dt.Date != V[i-1].Date.Date)
+                yeniSeansBaslangici = true;
+        if (yeniSeansBaslangici)
+            warmupBaslangicBar = i;
+    }
+    
+    // ===== WARMUP KONTROLÜ =====
+    if (warmupAktif && warmupBaslangicBar > 0)
+    {
+        if ((i - warmupBaslangicBar) < vadeCooldownBar)
+            continue;
+        else
+            warmupAktif = false;
+    }
+    
+    // ===== AREFE SONRASI =====
+    if (arefeFlat && i > 0 && dt.Date != V[i-1].Date.Date)
+    {
+        arefeFlat = false;
+    }    
+    // --- SKORLAMA ---
     int longScore = 0;
     int shortScore = 0;
 
     if (C[i] > ARS[i]) longScore++; else if (C[i] < ARS[i]) shortScore++;
-    if (MACDV[i] > MACDV_Sig[i]) longScore++; else if (MACDV[i] < MACDV_Sig[i]) shortScore++;
+    if (MACDV[i] > MACDV_Sinyal[i]) longScore++; else if (MACDV[i] < MACDV_Sinyal[i]) shortScore++;
     if (NetLot_MA[i] > NETLOT_ESIK) longScore++; else if (NetLot_MA[i] < -NETLOT_ESIK) shortScore++;
-    if (ADX[i] > 25.0f) { longScore++; shortScore++; } // Güçlü Trend Bonusu
+    if (ADX14[i] > 25.0f) { longScore++; shortScore++; }
 
     // --- ÇIKIŞ MANTIĞI ---
     if (SonYon == "A") {
-        // ARS Kırılması VEYA Karşı Skorun (ShortScore) Artması
-        if (C[i] < ARS[i] || shortScore >= CIKIS_HASASIYETI) Sinyal = "F";
+        if (C[i] < ARS[i] || shortScore >= CIKIS_HASSASIYETI) Sinyal = "F";
     }
     else if (SonYon == "S") {
-        if (C[i] > ARS[i] || longScore >= CIKIS_HASASIYETI) Sinyal = "F";
+        if (C[i] > ARS[i] || longScore >= CIKIS_HASSASIYETI) Sinyal = "F";
     }
     
-    // --- GİRİŞ MANTIĞI (GATEKEEPER) ---
+    // --- GİRİŞ MANTIĞI ---
     if (Sinyal == "" && SonYon != "A" && SonYon != "S") {
-        if (YatayFiltre[i] == 1) { // Yataydan Çıkış Onayı
+        if (YatayFiltre[i] == 1) {
             if (longScore >= MIN_ONAY_SKORU && shortScore < 2) Sinyal = "A";
             else if (shortScore >= MIN_ONAY_SKORU && longScore < 2) Sinyal = "S";
         }
@@ -144,7 +309,7 @@ for (int i = 50; i < Sistem.BarSayisi; i++)
     }
 }
 
-// --- ÇİZİMLER ---
+// --- CIZIMLER ---
 Sistem.Cizgiler[0].Deger = ARS;
 Sistem.Cizgiler[0].Aciklama = "ARS";
 Sistem.Cizgiler[0].ActiveBool = true;
@@ -152,12 +317,11 @@ Sistem.Cizgiler[0].Renk = Color.Yellow;
 Sistem.Cizgiler[0].Kalinlik = 2;
 
 Sistem.Cizgiler[1].Deger = MACDV;
-Sistem.Cizgiler[1].Aciklama = "MACD-V";
-Sistem.Cizgiler[1].ActiveBool = false; // Panelde görünsün ama grafik üstüne çizmesin (ayrı pencere gerekir)
+Sistem.Cizgiler[1].Aciklama = "MACDV";
+Sistem.Cizgiler[1].ActiveBool = false;
 
 // --- PANEL ---
 var son = Sistem.BarSayisi - 1;
-string info = "MACD-V: " + Sistem.SayiYuvarla(MACDV[son], 2) + 
-              " Sig: " + Sistem.SayiYuvarla(MACDV_Sig[son], 2);
-Sistem.Dortgen(1, 10, 30, 200, 50, Color.Black, Color.White, Color.Black);
+string info = "MACDV: " + Sistem.SayiYuvarla(MACDV[son], 2) + " Sig: " + Sistem.SayiYuvarla(MACDV_Sinyal[son], 2);
+Sistem.Dortgen(1, 100, 300, 200, 50, Color.Black, Color.White, Color.Black);
 Sistem.YaziEkle(info, 1, 15, 35, Color.Yellow, "Tahoma", 10);

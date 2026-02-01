@@ -89,6 +89,35 @@ def StochRSI(closes: List[float], rsi_period: int = 14,
     return k, d
 
 
+def StochasticFast(highs: List[float], lows: List[float], closes: List[float],
+                   k_period: int = 14) -> List[float]:
+    """
+    Stochastic Fast (%K)
+    IdealData uyumlu: ham %K (smoothing yok)
+    """
+    n = len(closes)
+    k = [50.0] * n
+
+    for i in range(k_period - 1, n):
+        highest = max(highs[i - k_period + 1 : i + 1])
+        lowest = min(lows[i - k_period + 1 : i + 1])
+
+        if highest != lowest:
+            k[i] = ((closes[i] - lowest) / (highest - lowest)) * 100.0
+
+    return k
+
+
+def StochasticSlow(highs: List[float], lows: List[float], closes: List[float],
+                   k_period: int = 14, smooth: int = 3) -> List[float]:
+    """
+    Stochastic Slow (EMA smoothing of %K)
+    IdealData uyumu: Slow = EMA(%K, smooth)
+    """
+    k = StochasticFast(highs, lows, closes, k_period)
+    return EMA(k, smooth)
+
+
 def WilliamsR(highs: List[float], lows: List[float], closes: List[float], 
               period: int = 14) -> List[float]:
     """
