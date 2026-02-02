@@ -287,12 +287,64 @@ class StrategyPanel(QWidget):
                 widget.setValue(defaults[name])
     
     def _load_preset(self):
-        """Preset yükle (TODO)"""
-        QMessageBox.information(self, "Bilgi", "Preset yükleme yakında eklenecek.")
+        """Preset yükle"""
+        from PySide6.QtWidgets import QFileDialog
+        import json
+        
+        preset_dir = Path(__file__).parent.parent.parent.parent / "presets"
+        preset_dir.mkdir(exist_ok=True)
+        
+        filepath, _ = QFileDialog.getOpenFileName(
+            self, "Preset Yükle", str(preset_dir), "JSON Files (*.json)"
+        )
+        
+        if filepath:
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    preset = json.load(f)
+                
+                # Strateji seç
+                if 'strategy' in preset:
+                    self.strategy_combo.setCurrentIndex(preset['strategy'] - 1)
+                
+                # Vade tipi
+                if 'vade_tipi' in preset:
+                    self.vade_combo.setCurrentText(preset['vade_tipi'])
+                
+                # Parametreleri yükle
+                for name, value in preset.items():
+                    if name in self.param_widgets:
+                        self.param_widgets[name].setValue(value)
+                
+                QMessageBox.information(self, "Başarılı", f"Preset yüklendi: {Path(filepath).stem}")
+            except Exception as e:
+                QMessageBox.warning(self, "Hata", f"Preset yüklenemedi: {e}")
     
     def _save_preset(self):
-        """Preset kaydet (TODO)"""
-        QMessageBox.information(self, "Bilgi", "Preset kaydetme yakında eklenecek.")
+        """Preset kaydet"""
+        from PySide6.QtWidgets import QFileDialog
+        import json
+        
+        preset_dir = Path(__file__).parent.parent.parent.parent / "presets"
+        preset_dir.mkdir(exist_ok=True)
+        
+        # Varsayılan isim
+        strategy_name = "strateji1" if self.strategy_combo.currentIndex() == 0 else "strateji2"
+        default_name = f"{strategy_name}_preset.json"
+        
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "Preset Kaydet", str(preset_dir / default_name), "JSON Files (*.json)"
+        )
+        
+        if filepath:
+            try:
+                config = self.get_config()
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(config, f, indent=2, ensure_ascii=False)
+                
+                QMessageBox.information(self, "Başarılı", f"Preset kaydedildi: {Path(filepath).name}")
+            except Exception as e:
+                QMessageBox.warning(self, "Hata", f"Preset kaydedilemedi: {e}")
     
     def _apply_config(self):
         """Konfigürasyonu uygula"""

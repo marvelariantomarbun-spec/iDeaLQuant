@@ -32,11 +32,20 @@ class MainWindow(QMainWindow):
         # Stil dosyasını yükle
         self._load_stylesheet()
         
+        # İkon yükle
+        self._load_icon()
+        
         # UI oluştur
         self._setup_ui()
         
         # Status bar
         self._setup_status_bar()
+    
+    def _load_icon(self):
+        """Pencere ikonunu yükle"""
+        icon_path = Path(__file__).parent / "assets" / "icon.png"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
     
     def _load_stylesheet(self):
         """QSS stylesheet yükle"""
@@ -149,13 +158,21 @@ class MainWindow(QMainWindow):
     
     def _connect_panels(self):
         """Paneller arasındaki sinyalleri bağla"""
-        # Data panel -> Strategy panel
+        # Data panel -> Strategy panel (mevcut)
         self.data_panel.data_loaded.connect(self.strategy_panel.set_data)
         
-        # Strategy panel -> Optimizer panel
+        # Data panel -> Optimizer panel
+        self.data_panel.data_loaded.connect(self.optimizer_panel.set_data)
+        self.data_panel.data_loaded.connect(lambda df: self.update_status(f"Veri yüklendi: {len(df)} bar"))
+        
+        # Strategy panel -> Optimizer panel (mevcut)
         self.strategy_panel.config_changed.connect(self.optimizer_panel.set_strategy_config)
         
-        # Optimizer panel -> Export panel
+        # Optimizer panel -> Validation panel
+        self.optimizer_panel.optimization_complete.connect(self.validation_panel.set_optimization_results)
+        self.optimizer_panel.optimization_complete.connect(lambda r: self.update_status(f"Optimizasyon tamamlandı: {len(r)} sonuç"))
+        
+        # Optimizer panel -> Export panel (mevcut)
         self.optimizer_panel.optimization_complete.connect(self.export_panel.set_results)
     
     def _show_about(self):
