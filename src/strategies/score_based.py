@@ -192,7 +192,7 @@ class ScoreBasedStrategy:
             
             # Vade ayı kontrolü
             vade_ayi = (self.config.vade_tipi == "SPOT") or (dt.month % 2 == 0)
-            vade_sonu_gun = vade_ayi and (dt.date() == vade_sonu_is_gunu(dt).date())
+            vade_sonu_gun = vade_ayi and (dt.date() == vade_sonu_is_gunu(dt))
             
             # Arefe kontrolü
             arefe = is_holiday_eve(dt.date())
@@ -263,3 +263,84 @@ class ScoreBasedStrategy:
 
     def check_long_exit(self, i: int, entry_price: float, max_price: float) -> Tuple[bool, str]: return False, ""
     def check_short_exit(self, i: int, entry_price: float, min_price: float) -> Tuple[bool, str]: return False, ""
+    
+    @classmethod
+    def from_config_dict(cls, data_cache, config_dict: dict, dates: Optional[List[datetime]] = None):
+        """
+        Optimizer için fabrika metodu - config dict'ten strateji oluşturur.
+        
+        Args:
+            data_cache: Opens, highs, lows, closes, typical içeren cache objesi
+            config_dict: Strateji parametreleri (ScoreConfig alanlarıyla eşleşmeli)
+            dates: Opsiyonel tarih listesi (vade/tatil yönetimi için)
+        """
+        config = ScoreConfig(
+            min_score=config_dict.get('min_score', 3),
+            exit_score=config_dict.get('exit_score', 3),
+            ars_period=config_dict.get('ars_period', 3),
+            ars_k=config_dict.get('ars_k', 0.01),
+            adx_period=config_dict.get('adx_period', 17),
+            adx_threshold=config_dict.get('adx_threshold', 25.0),
+            macdv_short=config_dict.get('macdv_short', 13),
+            macdv_long=config_dict.get('macdv_long', 28),
+            macdv_signal=config_dict.get('macdv_signal', 8),
+            macdv_threshold=config_dict.get('macdv_threshold', 0.0),
+            netlot_period=config_dict.get('netlot_period', 5),
+            netlot_threshold=config_dict.get('netlot_threshold', 20.0),
+            ars_mesafe_threshold=config_dict.get('ars_mesafe_threshold', 0.25),
+            bb_period=config_dict.get('bb_period', 20),
+            bb_std=config_dict.get('bb_std', 2.0),
+            bb_width_multiplier=config_dict.get('bb_width_multiplier', 0.8),
+            bb_avg_period=config_dict.get('bb_avg_period', 50),
+            yatay_ars_bars=config_dict.get('yatay_ars_bars', 10),
+            yatay_adx_threshold=config_dict.get('yatay_adx_threshold', 20.0),
+            filter_score_threshold=config_dict.get('filter_score_threshold', 2),
+            vade_tipi=config_dict.get('vade_tipi', 'ENDEKS'),
+        )
+        
+        return cls(
+            opens=list(data_cache.opens) if hasattr(data_cache, 'opens') else data_cache['opens'],
+            highs=list(data_cache.highs) if hasattr(data_cache, 'highs') else data_cache['highs'],
+            lows=list(data_cache.lows) if hasattr(data_cache, 'lows') else data_cache['lows'],
+            closes=list(data_cache.closes) if hasattr(data_cache, 'closes') else data_cache['closes'],
+            typical=list(data_cache.typical) if hasattr(data_cache, 'typical') else data_cache['typical'],
+            config=config,
+            dates=dates or (data_cache.dates if hasattr(data_cache, 'dates') else None),
+        )
+    
+    def generate_all_signals(self) -> Tuple:
+        """
+        Tüm barlar için sinyal üret - Optimizer backtesti için.
+        
+        Returns:
+            Tuple: (signals, exits_long, exits_short)
+                - signals: np.array (1=LONG, -1=SHORT, 0=NONE)
+                - exits_long: np.array (True/False)
+                - exits_short: np.array (True/False)
+        """
+        import numpy as np
+        
+        n = self.n
+        signals = np.zeros(n, dtype=int)
+        exits_long = np.zeros(n, dtype=bool)
+        exits_short = np.zeros(n, dtype=bool)
+        
+        position = "FLAT"
+        
+        for i in range(n):
+            sig = self.get_signal(i, position)
+            
+            if sig == Signal.LONG:
+                signals[i] = 1
+                position = "LONG"
+            elif sig == Signal.SHORT:
+                signals[i] = -1
+                position = "SHORT"
+            elif sig == Signal.FLAT:
+                if position == "LONG":
+                    exits_long[i] = True
+                elif position == "SHORT":
+                    exits_short[i] = True
+                position = "FLAT"
+        
+        return signals, exits_long, exits_short

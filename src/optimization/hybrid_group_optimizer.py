@@ -28,6 +28,8 @@ from itertools import product
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from src.indicators.core import EMA, ATR, ADX, SMA, ARS, NetLot, MACDV
+from src.strategies.score_based import ScoreBasedStrategy
+from src.strategies.ars_trend_v2 import ARSTrendStrategyV2
 
 # ==============================================================================
 # GROUP DEFINITIONS
@@ -118,23 +120,37 @@ g_cache = None
 
 def load_data() -> pd.DataFrame:
     csv_path = "d:/Projects/IdealQuant/data/VIP_X030T_1dk_.csv"
-    df = pd.read_csv(csv_path, sep=';', decimal=',', encoding='cp1254', header=None, low_memory=False)
+    df = pd.read_csv(csv_path, sep=';', decimal=',', encoding='cp1254', header=0, low_memory=False)
     df.columns = ['Tarih', 'Saat', 'Acilis', 'Yuksek', 'Dusuk', 'Kapanis', 'Ortalama', 'Hacim', 'Lot']
     for c in ['Acilis', 'Yuksek', 'Dusuk', 'Kapanis', 'Hacim', 'Lot']:
         df[c] = pd.to_numeric(df[c], errors='coerce')
     df['Tipik'] = (df['Yuksek'] + df['Dusuk'] + df['Kapanis']) / 3
     df.dropna(inplace=True)
+    # Tarih ve saat kolonlarından datetime oluştur (format: 25.12.2024 17:33:00)
+    df['DateTime'] = pd.to_datetime(df['Tarih'] + ' ' + df['Saat'], format='%d.%m.%Y %H:%M:%S', errors='coerce')
+    # NaT değerleri olan satırları sil
+    df = df.dropna(subset=['DateTime']).reset_index(drop=True)
     return df
 
 class IndicatorCache:
     def __init__(self, df):
         self.df = df
+        self.opens = df['Acilis'].values
         self.closes = df['Kapanis'].values
         self.highs = df['Yuksek'].values
         self.lows = df['Dusuk'].values
         self.typical = df['Tipik'].values
         self.lots = df['Lot'].values
+        self.volumes = df['Lot'].values  # Alias for strategy compatibility
         self.n = len(self.closes)
+        
+        # Tarih bilgisi (vade/tatil yönetimi için)
+        if 'DateTime' in df.columns:
+            self.dates = df['DateTime'].tolist()  # For ScoreBasedStrategy
+            self.times = df['DateTime'].tolist()  # For ARSTrendStrategyV2
+        else:
+            self.dates = None
+            self.times = None
         
         # Pre-compute some static indicators
         sma20 = pd.Series(self.closes).rolling(20).mean()
@@ -312,71 +328,18 @@ class HybridGroupOptimizer:
         return top_results
     
     def _evaluate_params(self, params: Dict[str, Any]) -> Dict[str, float]:
-        """Parametre setini değerlendir (ScoreBased v4.1)"""
+        """
+        Parametre setini değerlendir (ScoreBased v4.1)
+        Strateji sınıfı üzerinden sinyal üretimi - Vade/Tatil yönetimi dahil.
+        """
         global g_cache
-        closes = g_cache.closes
-        n = len(closes)
         
-        # 1. İndikatörleri hesapla
-        ars = g_cache.get_ars(params.get('ars_period', 3), params.get('ars_k', 0.01))
-        adx = g_cache.get_adx(params.get('adx_period', 17))
-        macdv_val, macdv_sig = g_cache.get_macdv(
-            params.get('macdv_short', 13),
-            params.get('macdv_long', 28),
-            params.get('macdv_signal', 8)
-        )
-        netlot = g_cache.get_netlot(params.get('netlot_period', 5))
+        # Strateji sınıfını kullanarak sinyal üret
+        strategy = ScoreBasedStrategy.from_config_dict(g_cache, params)
+        signals, exits_long, exits_short = strategy.generate_all_signals()
         
-        # 2. Yatay Filtre Skoru
-        ars_diff = np.diff(ars, prepend=0) != 0
-        ars_degisti = pd.Series(ars_diff).rolling(params.get('yatay_ars_bars', 10)).sum().gt(0).values.astype(int)
-        ars_mesafe = np.abs(closes - ars) / np.where(ars != 0, ars, 1) * 100
-        
-        # Bollinger (Özel Periyot)
-        from src.indicators.core import BollingerBands
-        upper, middle, lower = BollingerBands(closes.tolist(), params.get('bb_period', 20), params.get('bb_std', 2.0))
-        bb_width = np.where(middle != 0, (np.array(upper) - np.array(lower)) / np.array(middle) * 100, 0)
-        bb_width_avg = pd.Series(bb_width).rolling(params.get('bb_avg_period', 50)).mean().values
-        
-        f1 = (ars_degisti == 1).astype(int)
-        f2 = (ars_mesafe > params.get('ars_mesafe_threshold', 0.25)).astype(int)
-        f3 = (adx > params.get('yatay_adx_threshold', 20.0)).astype(int)
-        f4 = (bb_width > bb_width_avg * params.get('bb_width_multiplier', 0.8)).astype(int)
-        
-        yatay_filtre = (f1 + f2 + f3 + f4) >= params.get('filter_score_threshold', 2)
-        
-        # 3. Sinyal Skorları
-        ars_long = (closes > ars).astype(int)
-        ars_short = (closes < ars).astype(int)
-        
-        macdv_th = params.get('macdv_threshold', 0.0)
-        macdv_long = (macdv_val > (macdv_sig + macdv_th)).astype(int)
-        macdv_short = (macdv_val < (macdv_sig - macdv_th)).astype(int)
-        
-        adx_score = (adx > params.get('adx_threshold', 25.0)).astype(int)
-        
-        nl_th = params.get('netlot_threshold', 20.0)
-        nl_long = (netlot > nl_th).astype(int)
-        nl_short = (netlot < -nl_th).astype(int)
-        
-        final_l_score = ars_long + macdv_long + nl_long + adx_score
-        final_s_score = ars_short + macdv_short + nl_short + adx_score
-        
-        # 4. Sinyaller
-        min_sc = params.get('min_score', 3)
-        signals = np.zeros(n, dtype=int)
-        l_cond = yatay_filtre & (final_l_score >= min_sc) & (final_s_score < 2)
-        s_cond = yatay_filtre & (final_s_score >= min_sc) & (final_l_score < 2)
-        signals[l_cond] = 1
-        signals[s_cond] = -1
-        
-        # 5. Çıkış Koşulları
-        ex_sc = params.get('exit_score', 3)
-        exits_long = (closes < ars) | (final_s_score >= ex_sc)
-        exits_short = (closes > ars) | (final_l_score >= ex_sc)
-        
-        # 6. Backtest
-        np_val, trades, pf, dd = fast_backtest(closes, signals, exits_long, exits_short)
+        # Backtest
+        np_val, trades, pf, dd = fast_backtest(g_cache.closes, signals, exits_long, exits_short)
         
         return {
             'net_profit': np_val,
@@ -384,6 +347,7 @@ class HybridGroupOptimizer:
             'pf': pf,
             'max_dd': dd
         }
+
     
     def run_independent_phase(self):
         """Bağımsız grupları optimize et"""
@@ -846,57 +810,6 @@ class Strategy2HybridOptimizer(HybridGroupOptimizer):
                         extreme_price = lows[i]
                         bars_against_trend = 0
 
-        net_profit = gross_profit - gross_loss
-        pf = (gross_profit / gross_loss) if gross_loss > 0 else 999
-        
-        return {
-            'net_profit': net_profit,
-            'trades': trades,
-            'pf': pf,
-            'max_dd': max_dd
-        }
-                    dd = peak_equity - current_equity
-                    if dd > max_dd:
-                        max_dd = dd
-            
-            # ========== ENTRY MANTIGI ==========
-            if pos == 0:
-                if current_trend == 1:
-                    # Fiyat breakout (3 periyottan en az biriyle)
-                    price_ok = (closes[i] > hhv1[i-1] if i > 0 else False) or \
-                               (closes[i] > hhv2[i-1] if i > brk2 else False) or \
-                               (closes[i] > hhv3[i-1] if i > brk3 else False)
-                    # Momentum pozitif
-                    mom_ok = mom[i] > 100
-                    # MFI Breakout (RSI yerine)
-                    mfi_ok = mfi[i] >= mfi_hhv[i-1] if i > 0 else False
-                    # Hacim teyidi
-                    vol_ok = lots[i] >= vol_hhv[i-1] * 0.8 if i > 0 else False
-                    
-                    if price_ok and mom_ok and mfi_ok and vol_ok:
-                        pos = 1
-                        entry_price = closes[i]
-                        extreme_price = closes[i]
-                        entry_atr = atr[i] if atr[i] > 0 else 1.0
-                        bars_against_trend = 0
-                        trades += 1
-                        
-                elif current_trend == -1:
-                    price_ok = (closes[i] < llv1[i-1] if i > 0 else False) or \
-                               (closes[i] < llv2[i-1] if i > brk2 else False) or \
-                               (closes[i] < llv3[i-1] if i > brk3 else False)
-                    mom_ok = mom[i] < 100
-                    mfi_ok = mfi[i] <= mfi_llv[i-1] if i > 0 else False
-                    vol_ok = lots[i] >= vol_hhv[i-1] * 0.8 if i > 0 else False
-                    
-                    if price_ok and mom_ok and mfi_ok and vol_ok:
-                        pos = -1
-                        entry_price = closes[i]
-                        extreme_price = closes[i]
-                        entry_atr = atr[i] if atr[i] > 0 else 1.0
-                        bars_against_trend = 0
-                        trades += 1
-        
         net_profit = gross_profit - gross_loss
         pf = (gross_profit / gross_loss) if gross_loss > 0 else 999
         

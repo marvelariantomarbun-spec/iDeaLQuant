@@ -12,124 +12,12 @@ import pandas as pd
 
 from src.indicators.core import EMA, ATR, Momentum, HHV, LLV, ARS_Dynamic, MoneyFlowIndex
 from .common import Signal
+from .holidays import (
+    BAYRAM_TARIHLERI, RESMI_TATILLER,
+    is_bayram_tatili, is_arefe, is_resmi_tatil, is_tatil_gunu,
+    vade_sonu_is_gunu, is_seans_icinde
+)
 
-# ===============================================================================================
-# DİNAMİK BAYRAM TARİHLERİ (2024-2030) - IdealData ile birebir aynı
-# ===============================================================================================
-BAYRAM_TARIHLERI = {
-    # Ramazan Bayramı (3 gün)
-    2024: {'ramazan': date(2024, 4, 10), 'kurban': date(2024, 6, 16)},
-    2025: {'ramazan': date(2025, 3, 30), 'kurban': date(2025, 6, 6)},
-    2026: {'ramazan': date(2026, 3, 20), 'kurban': date(2026, 5, 27)},
-    2027: {'ramazan': date(2027, 3, 9), 'kurban': date(2027, 5, 16)},
-    2028: {'ramazan': date(2028, 2, 26), 'kurban': date(2028, 5, 5)},
-    2029: {'ramazan': date(2029, 2, 14), 'kurban': date(2029, 4, 24)},
-    2030: {'ramazan': date(2030, 2, 3), 'kurban': date(2030, 4, 13)},
-}
-
-# Resmi Tatiller (MM-DD formatında)
-RESMI_TATILLER = [
-    (1, 1),   # Yılbaşı
-    (4, 23),  # 23 Nisan
-    (5, 1),   # 1 Mayıs
-    (5, 19),  # 19 Mayıs
-    (7, 15),  # 15 Temmuz
-    (8, 30),  # 30 Ağustos
-    (10, 29), # 29 Ekim
-]
-
-def is_bayram_tatili(d: date) -> bool:
-    """Bayram tatili mi kontrol et (Ramazan 3 gün, Kurban 4 gün)"""
-    yil = d.year
-    if yil not in BAYRAM_TARIHLERI:
-        return False
-    
-    bayramlar = BAYRAM_TARIHLERI[yil]
-    ramazan = bayramlar['ramazan']
-    kurban = bayramlar['kurban']
-    
-    # Ramazan Bayramı (3 gün)
-    if ramazan <= d <= ramazan + timedelta(days=3):
-        return True
-    
-    # Kurban Bayramı (4 gün)
-    if kurban <= d <= kurban + timedelta(days=4):
-        return True
-    
-    return False
-
-def is_arefe(d: date) -> bool:
-    """Arefe günü mü kontrol et"""
-    yil = d.year
-    if yil not in BAYRAM_TARIHLERI:
-        return False
-    
-    bayramlar = BAYRAM_TARIHLERI[yil]
-    ramazan_arefe = bayramlar['ramazan'] - timedelta(days=1)
-    kurban_arefe = bayramlar['kurban'] - timedelta(days=1)
-    
-    return d == ramazan_arefe or d == kurban_arefe
-
-def is_resmi_tatil(d: date) -> bool:
-    """Resmi tatil mi kontrol et"""
-    return (d.month, d.day) in RESMI_TATILLER
-
-def is_tatil_gunu(d: date) -> bool:
-    """Herhangi bir tatil günü mü (hafta sonu dahil)"""
-    # Hafta sonu
-    if d.weekday() >= 5:
-        return True
-    # Resmi tatil
-    if is_resmi_tatil(d):
-        return True
-    # Bayram tatili
-    if is_bayram_tatili(d):
-        return True
-    return False
-
-def vade_sonu_is_gunu(dt: date, vade_tipi: str = "ENDEKS") -> date:
-    """
-    Vade sonu iş gününü hesapla - IdealData ile birebir aynı mantık
-    
-    Args:
-        dt: Tarih
-        vade_tipi: "ENDEKS" (çift ay) veya "SPOT" (her ay)
-    
-    Returns:
-        Vade sonu iş günü
-    """
-    import calendar
-    
-    # Ayın son günü
-    ay_sonu = date(dt.year, dt.month, calendar.monthrange(dt.year, dt.month)[1])
-    d = ay_sonu
-    
-    # Max 15 gün geri git
-    for _ in range(15):
-        # Hafta sonu
-        if d.weekday() >= 5:
-            d -= timedelta(days=1)
-            continue
-        
-        # Resmi tatil
-        if is_resmi_tatil(d):
-            d -= timedelta(days=1)
-            continue
-        
-        # Bayram tatili
-        if is_bayram_tatili(d):
-            d -= timedelta(days=1)
-            continue
-        
-        break
-    
-    return d
-
-def is_seans_icinde(t: time) -> bool:
-    """Seans saati içinde mi kontrol et (09:30-18:15, 19:00-23:00)"""
-    gun_seansi = time(9, 30) <= t < time(18, 15)
-    aksam_seansi = time(19, 0) <= t < time(23, 0)
-    return gun_seansi or aksam_seansi
 
 @dataclass
 class StrategyConfigV2:
@@ -608,3 +496,109 @@ class ARSTrendStrategyV2:
                     return (Signal.SHORT, None) if return_flat_reason else Signal.SHORT
                     
         return (Signal.NONE, None) if return_flat_reason else Signal.NONE
+
+    @classmethod
+    def from_config_dict(cls, data_cache, config_dict: dict, times: Optional[List[datetime]] = None):
+        """
+        Optimizer için fabrika metodu - config dict'ten strateji oluşturur.
+        
+        Args:
+            data_cache: Opens, highs, lows, closes, typical, volumes içeren cache objesi
+            config_dict: Strateji parametreleri (StrategyConfigV2 alanlarıyla eşleşmeli)
+            times: Tarih listesi (vade/tatil yönetimi için)
+        """
+        config = StrategyConfigV2(
+            ars_ema_period=config_dict.get('ars_ema_period', 3),
+            ars_atr_period=config_dict.get('ars_atr_period', 10),
+            ars_atr_mult=config_dict.get('ars_atr_mult', 0.5),
+            ars_min_band=config_dict.get('ars_min_band', 0.002),
+            ars_max_band=config_dict.get('ars_max_band', 0.015),
+            momentum_period=config_dict.get('momentum_period', 5),
+            momentum_threshold=config_dict.get('momentum_threshold', 100.0),
+            breakout_period=config_dict.get('breakout_period', 10),
+            mfi_period=config_dict.get('mfi_period', 14),
+            mfi_hhv_period=config_dict.get('mfi_hhv_period', 14),
+            mfi_llv_period=config_dict.get('mfi_llv_period', 14),
+            volume_hhv_period=config_dict.get('volume_hhv_period', 14),
+            atr_exit_period=config_dict.get('atr_exit_period', 14),
+            atr_sl_mult=config_dict.get('atr_sl_mult', 2.0),
+            atr_tp_mult=config_dict.get('atr_tp_mult', 5.0),
+            atr_trail_mult=config_dict.get('atr_trail_mult', 2.0),
+            exit_confirm_bars=config_dict.get('exit_confirm_bars', 2),
+            exit_confirm_mult=config_dict.get('exit_confirm_mult', 1.0),
+            volume_mult=config_dict.get('volume_mult', 0.8),
+            volume_llv_period=config_dict.get('volume_llv_period', 14),
+            use_atr_exit=config_dict.get('use_atr_exit', True),
+            vade_tipi=config_dict.get('vade_tipi', 'ENDEKS'),
+        )
+        
+        # Data cache'den değerleri al
+        opens = list(data_cache.opens) if hasattr(data_cache, 'opens') else data_cache['opens']
+        highs = list(data_cache.highs) if hasattr(data_cache, 'highs') else data_cache['highs']
+        lows = list(data_cache.lows) if hasattr(data_cache, 'lows') else data_cache['lows']
+        closes = list(data_cache.closes) if hasattr(data_cache, 'closes') else data_cache['closes']
+        typical = list(data_cache.typical) if hasattr(data_cache, 'typical') else data_cache['typical']
+        volumes = list(data_cache.volumes) if hasattr(data_cache, 'volumes') else data_cache.get('volumes', None)
+        _times = times or (list(data_cache.times) if hasattr(data_cache, 'times') else data_cache.get('times', []))
+        
+        return cls(
+            opens=opens,
+            highs=highs,
+            lows=lows,
+            closes=closes,
+            typical=typical,
+            times=_times,
+            volumes=volumes,
+            config=config,
+        )
+    
+    def generate_all_signals(self) -> tuple:
+        """
+        Tüm barlar için sinyal üret - Optimizer backtesti için.
+        
+        Returns:
+            Tuple: (signals, exits_long, exits_short)
+                - signals: np.array (1=LONG, -1=SHORT, 0=NONE)
+                - exits_long: np.array (True/False)
+                - exits_short: np.array (True/False)
+        """
+        import numpy as np
+        
+        n = self.n
+        signals = np.zeros(n, dtype=int)
+        exits_long = np.zeros(n, dtype=bool)
+        exits_short = np.zeros(n, dtype=bool)
+        
+        position = "FLAT"
+        entry_price = 0.0
+        extreme_price = 0.0
+        
+        for i in range(n):
+            # Extreme price güncelle
+            if position == "LONG":
+                extreme_price = max(extreme_price, self.highs[i])
+            elif position == "SHORT":
+                extreme_price = min(extreme_price, self.lows[i])
+            
+            sig = self.get_signal(i, position, entry_price, extreme_price)
+            
+            if sig == Signal.LONG:
+                signals[i] = 1
+                position = "LONG"
+                entry_price = self.closes[i]
+                extreme_price = self.highs[i]
+            elif sig == Signal.SHORT:
+                signals[i] = -1
+                position = "SHORT"
+                entry_price = self.closes[i]
+                extreme_price = self.lows[i]
+            elif sig == Signal.FLAT:
+                if position == "LONG":
+                    exits_long[i] = True
+                elif position == "SHORT":
+                    exits_short[i] = True
+                position = "FLAT"
+                entry_price = 0.0
+                extreme_price = 0.0
+        
+        return signals, exits_long, exits_short
