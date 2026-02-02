@@ -64,12 +64,19 @@ def load_data() -> pd.DataFrame:
 # ==============================================================================
 # OBJECTIVE FUNCTION
 # ==============================================================================
+
+# Genetik optimizer'dan parametre tanımlarını import et
+from src.optimization.genetic_optimizer import STRATEGY1_PARAMS, STRATEGY2_PARAMS
+
+
 class BayesianObjective:
-    """Optuna için objective fonksiyonu"""
+    """Optuna için objective fonksiyonu - Her iki strateji için"""
     
-    def __init__(self, cache: IndicatorCache, fitness_config: Optional[FitnessConfig] = None):
+    def __init__(self, cache: IndicatorCache, fitness_config: Optional[FitnessConfig] = None, strategy_index: int = 1):
         self.cache = cache
         self.fitness_config = fitness_config or FitnessConfig()
+        self.strategy_index = strategy_index
+        self.param_defs = STRATEGY1_PARAMS if strategy_index == 0 else STRATEGY2_PARAMS
         self.best_params = None
         self.best_result = None
         self.best_fitness = -float('inf')
@@ -77,37 +84,19 @@ class BayesianObjective:
     def __call__(self, trial: optuna.Trial) -> float:
         """Optuna tarafından çağrılır"""
         
-        # Parametreleri tanımla
-        params = {
-            # ARS Dinamik
-            'ars_ema': trial.suggest_int('ars_ema', 2, 10),
-            'ars_atr_p': trial.suggest_int('ars_atr_p', 8, 20),
-            'ars_atr_m': trial.suggest_float('ars_atr_m', 0.3, 1.2, step=0.1),
-            
-            # Momentum & Breakout
-            'momentum_p': trial.suggest_int('momentum_p', 3, 15),
-            'breakout_p1': trial.suggest_int('breakout_p1', 8, 20, step=2),
-            'breakout_p2': trial.suggest_int('breakout_p2', 20, 40, step=5),
-            'breakout_p3': trial.suggest_int('breakout_p3', 40, 80, step=10),
-            
-            # MFI & Volume
-            'mfi_p': trial.suggest_int('mfi_p', 10, 20, step=2),
-            'mfi_hhv_p': trial.suggest_int('mfi_hhv_p', 10, 20, step=2),
-            'vol_p': trial.suggest_int('vol_p', 10, 20, step=2),
-            
-            # ATR çıkış
-            'atr_exit_p': trial.suggest_int('atr_exit_p', 10, 20, step=2),
-            'atr_sl_mult': trial.suggest_float('atr_sl_mult', 1.0, 2.5, step=0.5),
-            'atr_tp_mult': trial.suggest_float('atr_tp_mult', 2.0, 5.0, step=0.5),
-            'atr_trail_mult': trial.suggest_float('atr_trail_mult', 1.0, 2.0, step=0.5),
-            
-            # Çift teyitli çıkış
-            'exit_confirm_bars': trial.suggest_int('exit_confirm_bars', 1, 3),
-            'exit_confirm_mult': trial.suggest_float('exit_confirm_mult', 0.5, 1.5, step=0.5),
-        }
+        # Strateji bazlı parametre önerileri
+        params = {}
+        for name, (min_val, max_val, step, is_int) in self.param_defs.items():
+            if is_int:
+                params[name] = trial.suggest_int(name, int(min_val), int(max_val), step=int(step))
+            else:
+                params[name] = trial.suggest_float(name, min_val, max_val, step=step)
         
-        # Backtest yap
-        result = self._run_backtest(params)
+        # Strateji bazlı backtest/evaluate
+        if self.strategy_index == 0:
+            result = self._evaluate_strategy1(params)
+        else:
+            result = self._evaluate_strategy2(params)
         
         # Fitness hesapla
         fitness = quick_fitness(
@@ -126,6 +115,82 @@ class BayesianObjective:
             self.best_result = result.copy()
         
         return fitness
+    
+    def _evaluate_strategy1(self, params: Dict[str, Any]) -> Dict[str, float]:
+        """Strateji 1 için fitness hesapla - ScoreBasedStrategy kullanarak"""
+        try:
+            from src.strategies.score_based import ScoreBasedStrategy, ScoreConfig
+            
+            config = ScoreConfig(
+                ars_period=int(params.get('ars_period', 3)),
+                ars_k=float(params.get('ars_k', 0.01)),
+                adx_period=int(params.get('adx_period', 17)),
+                adx_threshold=float(params.get('adx_threshold', 25.0)),
+                macdv_short=int(params.get('macdv_short', 13)),
+                macdv_long=int(params.get('macdv_long', 28)),
+                macdv_signal=int(params.get('macdv_signal', 8)),
+                macdv_threshold=float(params.get('macdv_threshold', 0.0)),
+                netlot_period=int(params.get('netlot_period', 5)),
+                netlot_threshold=float(params.get('netlot_threshold', 20.0)),
+                ars_mesafe_threshold=float(params.get('ars_mesafe_threshold', 0.25)),
+                bb_period=int(params.get('bb_period', 20)),
+                bb_std=float(params.get('bb_std', 2.0)),
+                bb_width_multiplier=float(params.get('bb_width_multiplier', 0.8)),
+                bb_avg_period=int(params.get('bb_avg_period', 50)),
+                yatay_ars_bars=int(params.get('yatay_ars_bars', 10)),
+                yatay_adx_threshold=float(params.get('yatay_adx_threshold', 20.0)),
+                filter_score_threshold=int(params.get('filter_score_threshold', 2)),
+                min_score=int(params.get('min_score', 3)),
+                exit_score=int(params.get('exit_score', 3)),
+            )
+            
+            df = self.cache.df
+            dates = df['DateTime'].tolist() if 'DateTime' in df.columns else None
+            
+            strategy = ScoreBasedStrategy(
+                opens=df['Acilis'].values.tolist(),
+                highs=df['Yuksek'].values.tolist(),
+                lows=df['Dusuk'].values.tolist(),
+                closes=df['Kapanis'].values.tolist(),
+                volumes=df['Lot'].values.tolist(),
+                dates=dates,
+                config=config
+            )
+            
+            result = strategy.run_backtest()
+            
+            return {
+                'net_profit': result.get('net_profit', 0),
+                'trades': result.get('total_trades', 0),
+                'pf': result.get('profit_factor', 0),
+                'max_dd': result.get('max_drawdown', 0),
+                'win_count': result.get('win_count', 0)
+            }
+        except Exception as e:
+            return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'win_count': 0}
+    
+    def _evaluate_strategy2(self, params: Dict[str, Any]) -> Dict[str, float]:
+        """Strateji 2 için fitness hesapla - inline backtest"""
+        # Yeni parametre isimlerini eski isimlere map'le (mevcut _run_backtest uyumluluğu için)
+        mapped_params = {
+            'ars_ema': params.get('ars_ema_period', 3),
+            'ars_atr_p': params.get('ars_atr_period', 10),
+            'ars_atr_m': params.get('ars_atr_mult', 0.5),
+            'momentum_p': params.get('momentum_period', 5),
+            'breakout_p1': params.get('breakout_period', 10),
+            'breakout_p2': params.get('breakout_period', 10) + 10,  # Offset
+            'breakout_p3': params.get('breakout_period', 10) + 30,  # Offset 
+            'mfi_p': params.get('mfi_period', 14),
+            'mfi_hhv_p': params.get('mfi_hhv_period', 14),
+            'vol_p': params.get('volume_hhv_period', 14),
+            'atr_exit_p': params.get('atr_exit_period', 14),
+            'atr_sl_mult': params.get('atr_sl_mult', 2.0),
+            'atr_tp_mult': params.get('atr_tp_mult', 5.0),
+            'atr_trail_mult': params.get('atr_trail_mult', 2.0),
+            'exit_confirm_bars': params.get('exit_confirm_bars', 2),
+            'exit_confirm_mult': params.get('exit_confirm_mult', 1.0),
+        }
+        return self._run_backtest(mapped_params)
     
     def _run_backtest(self, params: Dict[str, Any]) -> Dict[str, float]:
         """Backtest çalıştır (Planlanmış Mimari v4.1)"""
@@ -343,22 +408,32 @@ class BayesianObjective:
 # BAYESIAN OPTIMIZER
 # ==============================================================================
 class BayesianOptimizer:
-    """Bayesian Optimization motoru (Optuna ile)"""
+    """Bayesian Optimization motoru (Optuna ile) - Her iki strateji için"""
     
     def __init__(
         self, 
         df: pd.DataFrame, 
         n_trials: int = 100,
         fitness_config: Optional[FitnessConfig] = None,
+        strategy_index: int = 1,
         seed: int = 42
     ):
+        """
+        Args:
+            df: Veri DataFrame'i
+            n_trials: Optuna deneme sayısı
+            fitness_config: Fitness konfigürasyonu
+            strategy_index: 0 = Strateji 1 (Gatekeeper), 1 = Strateji 2 (ARS Trend v2)
+            seed: Rastgele seed
+        """
         self.df = df
         self.n_trials = n_trials
         self.fitness_config = fitness_config or FitnessConfig()
+        self.strategy_index = strategy_index
         self.seed = seed
         
         self.cache = IndicatorCache(df)
-        self.objective = BayesianObjective(self.cache, self.fitness_config)
+        self.objective = BayesianObjective(self.cache, self.fitness_config, strategy_index)
         self.study = None
     
     def run(self, verbose: bool = True) -> Dict[str, Any]:

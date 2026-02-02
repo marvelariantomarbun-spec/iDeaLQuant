@@ -16,6 +16,8 @@ from PySide6.QtGui import QFont
 import numpy as np
 from typing import List, Dict, Any
 
+from src.core.database import db
+
 
 class MonteCarloWorker(QThread):
     """Monte Carlo simülasyon thread'i"""
@@ -89,10 +91,13 @@ class MonteCarloWorker(QThread):
 class ValidationPanel(QWidget):
     """Validasyon paneli: MC, WFA, Stabilite"""
     
+    validation_complete = Signal(str, dict)  # process_id, final_params
+    
     def __init__(self):
         super().__init__()
         self.optimization_results = []
         self.trades = []
+        self.current_process_id = None
         self._setup_ui()
     
     def _setup_ui(self):
@@ -100,22 +105,78 @@ class ValidationPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
         
+        # Süreç seçimi
+        process_row = QHBoxLayout()
+        process_row.addWidget(QLabel("Süreç:"))
+        self.process_combo = QComboBox()
+        self.process_combo.setMinimumWidth(250)
+        self.process_combo.currentTextChanged.connect(self._on_process_changed)
+        process_row.addWidget(self.process_combo)
+        
+        refresh_btn = QPushButton("↻")
+        refresh_btn.setMaximumWidth(30)
+        refresh_btn.clicked.connect(self._refresh_processes)
+        process_row.addWidget(refresh_btn)
+        
+        process_row.addStretch()
+        layout.addLayout(process_row)
+        
         # Tab widget
-        tabs = QTabWidget()
+        self.tabs = QTabWidget()
+        
+        # Karşılaştırma Tab (YENİ)
+        compare_tab = self._create_comparison_tab()
+        self.tabs.addTab(compare_tab, "Karşılaştırma")
         
         # Monte Carlo Tab
         mc_tab = self._create_monte_carlo_tab()
-        tabs.addTab(mc_tab, "Monte Carlo")
+        self.tabs.addTab(mc_tab, "Monte Carlo")
         
         # Walk-Forward Tab
         wfa_tab = self._create_wfa_tab()
-        tabs.addTab(wfa_tab, "Walk-Forward")
+        self.tabs.addTab(wfa_tab, "Walk-Forward")
         
         # Stabilite Tab
         stability_tab = self._create_stability_tab()
-        tabs.addTab(stability_tab, "Parametre Stabilitesi")
+        self.tabs.addTab(stability_tab, "Parametre Stabilitesi")
         
-        layout.addWidget(tabs)
+        layout.addWidget(self.tabs)
+    
+    def _create_comparison_tab(self) -> QWidget:
+        """Optimizasyon sonuçları karşılaştırma tab'ı"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Açıklama
+        info = QLabel(
+            "Bu tablo, seçili süreç için tüm optimizasyon sonuçlarını gösterir.\n"
+            "Her strateji için en iyi sonucu 'Final' olarak seçin."
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+        
+        # Karşılaştırma tablosu
+        self.compare_table = QTableWidget()
+        self.compare_table.setColumnCount(8)
+        self.compare_table.setHorizontalHeaderLabels([
+            'Strateji', 'Metod', 'Net Kar', 'Max DD', 'PF', 'Trade', 'Final', 'Seç'
+        ])
+        self.compare_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.compare_table.setAlternatingRowColors(True)
+        layout.addWidget(self.compare_table, 1)
+        
+        # Butonlar
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        
+        self.set_final_btn = QPushButton("Seçileni Final Yap")
+        self.set_final_btn.setObjectName("primaryButton")
+        self.set_final_btn.clicked.connect(self._set_as_final)
+        btn_row.addWidget(self.set_final_btn)
+        
+        layout.addLayout(btn_row)
+        
+        return widget
     
     def _create_monte_carlo_tab(self) -> QWidget:
         """Monte Carlo tab'ı"""
@@ -363,5 +424,134 @@ YORUM:
         self.trades = trades
     
     def set_optimization_results(self, results: List[dict]):
-        """Optimizasyon sonuçlarını ayarla"""
+        """Optimizasyon sonuçlarını ayarla (eski uyumluluk için)"""
         self.optimization_results = results
+    
+    # =========================================================================
+    # SÜREÇ YÖNETİMİ
+    # =========================================================================
+    
+    def _refresh_processes(self):
+        """Süreç listesini yenile (sadece optimize edilmişler)"""
+        self.process_combo.clear()
+        processes = db.get_all_processes()
+        
+        # Sadece optimized veya validated süreçleri göster
+        valid_processes = [p for p in processes if p['status'] in ('optimized', 'validated', 'exported')]
+        
+        if not valid_processes:
+            self.process_combo.addItem("(Optimizasyon yapılmış süreç yok)")
+            return
+        
+        for proc in valid_processes:
+            status_icon = "✓" if proc['status'] == 'validated' else "○"
+            display = f"{status_icon} {proc['process_id']}"
+            self.process_combo.addItem(display, proc['process_id'])
+        
+        # İlkini seç
+        if valid_processes:
+            self.current_process_id = valid_processes[0]['process_id']
+            self._load_comparison_data()
+    
+    def _on_process_changed(self, text: str):
+        """Süreç seçimi değiştiğinde"""
+        idx = self.process_combo.currentIndex()
+        if idx >= 0:
+            self.current_process_id = self.process_combo.itemData(idx)
+            self._load_comparison_data()
+    
+    def _load_comparison_data(self):
+        """Karşılaştırma tablosunu DB'den doldur"""
+        if not self.current_process_id:
+            return
+        
+        results = db.get_optimization_results(self.current_process_id)
+        
+        if not results:
+            self.compare_table.setRowCount(0)
+            return
+        
+        self.compare_table.setRowCount(len(results))
+        
+        for row_idx, result in enumerate(results):
+            # Strateji
+            strategy_name = "S1" if result['strategy_index'] == 0 else "S2"
+            self.compare_table.setItem(row_idx, 0, QTableWidgetItem(strategy_name))
+            
+            # Metod
+            self.compare_table.setItem(row_idx, 1, QTableWidgetItem(result['method'].capitalize()))
+            
+            # Net Kar
+            self.compare_table.setItem(row_idx, 2, QTableWidgetItem(f"{result['net_profit']:,.0f}"))
+            
+            # Max DD
+            self.compare_table.setItem(row_idx, 3, QTableWidgetItem(f"{result['max_drawdown']:,.0f}"))
+            
+            # PF
+            self.compare_table.setItem(row_idx, 4, QTableWidgetItem(f"{result['profit_factor']:.2f}"))
+            
+            # Trade
+            self.compare_table.setItem(row_idx, 5, QTableWidgetItem(str(result['total_trades'])))
+            
+            # Final durumu (validation_results'tan kontrol)
+            validations = db.get_validation_results(self.current_process_id)
+            is_final = any(v['optimization_id'] == result['id'] and v['is_final'] for v in validations)
+            final_text = "✓ Final" if is_final else ""
+            self.compare_table.setItem(row_idx, 6, QTableWidgetItem(final_text))
+            
+            # Seç checkbox (RadioButton yerine text)
+            select_btn = QPushButton("Seç")
+            select_btn.setProperty("opt_id", result['id'])
+            select_btn.clicked.connect(lambda checked, oid=result['id']: self._select_for_final(oid))
+            self.compare_table.setCellWidget(row_idx, 7, select_btn)
+    
+    def _select_for_final(self, optimization_id: int):
+        """Seçili satırı işaretle"""
+        self._selected_opt_id = optimization_id
+        # UI'da seçimi göster
+        for row in range(self.compare_table.rowCount()):
+            widget = self.compare_table.cellWidget(row, 7)
+            if widget:
+                btn = widget
+                if btn.property("opt_id") == optimization_id:
+                    btn.setStyleSheet("background-color: #4CAF50; color: white;")
+                else:
+                    btn.setStyleSheet("")
+    
+    def _set_as_final(self):
+        """Seçili optimizasyonu final olarak işaretle"""
+        if not hasattr(self, '_selected_opt_id') or not self._selected_opt_id:
+            QMessageBox.warning(self, "Uyarı", "Lütfen bir satır seçin.")
+            return
+        
+        # Final olarak kaydet
+        opt_result = db.get_optimization_result_by_id(self._selected_opt_id)
+        if opt_result:
+            db.set_final_selection(self._selected_opt_id, opt_result['params'])
+            
+            # Süreç durumunu güncelle
+            db.update_process_status(self.current_process_id, 'validated')
+            
+            QMessageBox.information(
+                self, 
+                "Başarılı", 
+                f"Strateji {opt_result['strategy_index'] + 1} / {opt_result['method']} final olarak seçildi."
+            )
+            
+            # Tabloyu yenile
+            self._load_comparison_data()
+            
+            # Signal gönder
+            self.validation_complete.emit(self.current_process_id, opt_result['params'])
+    
+    def set_process(self, process_id: str):
+        """Dışarıdan süreç ayarla"""
+        self.current_process_id = process_id
+        self._refresh_processes()
+        
+        # Combo'da ilgili süreci seç
+        for i in range(self.process_combo.count()):
+            if self.process_combo.itemData(i) == process_id:
+                self.process_combo.setCurrentIndex(i)
+                break
+

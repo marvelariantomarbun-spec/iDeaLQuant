@@ -15,8 +15,10 @@ from PySide6.QtCore import Signal, Qt, QThread
 from typing import Dict, List, Any
 import pandas as pd
 
+from src.core.database import db
 
-# Strateji 1 Parametre Grupları
+
+# Strateji 1 Parametre Grupları (20 parametre)
 STRATEGY1_PARAM_GROUPS = {
     'ARS': {
         'label': 'ARS Parametreleri',
@@ -38,6 +40,7 @@ STRATEGY1_PARAM_GROUPS = {
             'macdv_short': {'label': 'Kisa Periyot', 'type': 'int', 'default': 13, 'min': 8, 'max': 18, 'step': 1},
             'macdv_long': {'label': 'Uzun Periyot', 'type': 'int', 'default': 28, 'min': 20, 'max': 40, 'step': 2},
             'macdv_signal': {'label': 'Sinyal Periyot', 'type': 'int', 'default': 8, 'min': 5, 'max': 15, 'step': 1},
+            'macdv_threshold': {'label': 'MACDV Esik', 'type': 'float', 'default': 0.0, 'min': -50.0, 'max': 50.0, 'step': 10.0},
         }
     },
     'NetLot': {
@@ -50,9 +53,14 @@ STRATEGY1_PARAM_GROUPS = {
     'Yatay_Filtre': {
         'label': 'Yatay Filtre',
         'params': {
+            'ars_mesafe_threshold': {'label': 'ARS Mesafe', 'type': 'float', 'default': 0.25, 'min': 0.1, 'max': 0.5, 'step': 0.05},
             'bb_period': {'label': 'BB Periyot', 'type': 'int', 'default': 20, 'min': 15, 'max': 30, 'step': 5},
             'bb_std': {'label': 'BB StdDev', 'type': 'float', 'default': 2.0, 'min': 1.5, 'max': 3.0, 'step': 0.5},
+            'bb_width_multiplier': {'label': 'BB Width Mult', 'type': 'float', 'default': 0.8, 'min': 0.5, 'max': 1.5, 'step': 0.1},
+            'bb_avg_period': {'label': 'BB Avg Periyot', 'type': 'int', 'default': 50, 'min': 30, 'max': 100, 'step': 10},
             'yatay_ars_bars': {'label': 'ARS Bar', 'type': 'int', 'default': 10, 'min': 5, 'max': 20, 'step': 5},
+            'yatay_adx_threshold': {'label': 'Yatay ADX Esik', 'type': 'float', 'default': 20.0, 'min': 15.0, 'max': 30.0, 'step': 5.0},
+            'filter_score_threshold': {'label': 'Filtre Skor', 'type': 'int', 'default': 2, 'min': 1, 'max': 4, 'step': 1},
         }
     },
     'Skor': {
@@ -65,30 +73,47 @@ STRATEGY1_PARAM_GROUPS = {
     }
 }
 
-# Strateji 2 Parametre Grupları
+# Strateji 2 Parametre Grupları (21 parametre)
 STRATEGY2_PARAM_GROUPS = {
-    'ARS_Dinamik': {
-        'label': 'ARS Dinamik',
+    'ARS': {
+        'label': 'ARS Parametreleri',
         'params': {
             'ars_ema_period': {'label': 'EMA Periyot', 'type': 'int', 'default': 3, 'min': 2, 'max': 12, 'step': 1},
             'ars_atr_period': {'label': 'ATR Periyot', 'type': 'int', 'default': 10, 'min': 7, 'max': 20, 'step': 2},
-            'ars_atr_mult': {'label': 'ATR Carpan', 'type': 'float', 'default': 0.5, 'min': 0.3, 'max': 1.5, 'step': 0.2},
+            'ars_atr_mult': {'label': 'ATR Carpan', 'type': 'float', 'default': 0.5, 'min': 0.3, 'max': 1.5, 'step': 0.1},
+            'ars_min_band': {'label': 'Min Band', 'type': 'float', 'default': 0.002, 'min': 0.001, 'max': 0.005, 'step': 0.001},
+            'ars_max_band': {'label': 'Max Band', 'type': 'float', 'default': 0.015, 'min': 0.010, 'max': 0.025, 'step': 0.005},
         }
     },
     'Giris_Filtreleri': {
         'label': 'Giris Filtreleri',
         'params': {
-            'momentum_period': {'label': 'Momentum', 'type': 'int', 'default': 5, 'min': 3, 'max': 10, 'step': 1},
-            'breakout_period': {'label': 'Breakout', 'type': 'int', 'default': 10, 'min': 5, 'max': 30, 'step': 5},
+            'momentum_period': {'label': 'Momentum Periyot', 'type': 'int', 'default': 5, 'min': 3, 'max': 10, 'step': 1},
+            'momentum_threshold': {'label': 'Momentum Esik', 'type': 'float', 'default': 100.0, 'min': 50.0, 'max': 200.0, 'step': 25.0},
+            'breakout_period': {'label': 'Breakout Periyot', 'type': 'int', 'default': 10, 'min': 5, 'max': 30, 'step': 5},
             'mfi_period': {'label': 'MFI Periyot', 'type': 'int', 'default': 14, 'min': 10, 'max': 21, 'step': 2},
+            'mfi_hhv_period': {'label': 'MFI HHV', 'type': 'int', 'default': 14, 'min': 10, 'max': 21, 'step': 2},
+            'mfi_llv_period': {'label': 'MFI LLV', 'type': 'int', 'default': 14, 'min': 10, 'max': 21, 'step': 2},
+            'volume_hhv_period': {'label': 'Hacim HHV', 'type': 'int', 'default': 14, 'min': 10, 'max': 21, 'step': 2},
         }
     },
-    'Cikis_ATR': {
-        'label': 'ATR Cikis (Kademeli)',
+    'Cikis_Risk': {
+        'label': 'Cikis / Risk Yonetimi',
         'params': {
-            'atr_exit_period': {'label': 'ATR Periyot', 'type': 'int', 'default': 14, 'min': 10, 'max': 21, 'step': 2},
+            'atr_exit_period': {'label': 'ATR Exit Periyot', 'type': 'int', 'default': 14, 'min': 10, 'max': 21, 'step': 2},
             'atr_sl_mult': {'label': 'SL Carpan', 'type': 'float', 'default': 2.0, 'min': 1.0, 'max': 4.0, 'step': 0.5},
             'atr_tp_mult': {'label': 'TP Carpan', 'type': 'float', 'default': 5.0, 'min': 3.0, 'max': 8.0, 'step': 1.0},
+            'atr_trail_mult': {'label': 'Trail Carpan', 'type': 'float', 'default': 2.0, 'min': 1.0, 'max': 4.0, 'step': 0.5},
+            'exit_confirm_bars': {'label': 'Onay Bar', 'type': 'int', 'default': 2, 'min': 1, 'max': 5, 'step': 1},
+            'exit_confirm_mult': {'label': 'Onay Carpan', 'type': 'float', 'default': 1.0, 'min': 0.5, 'max': 2.0, 'step': 0.25},
+        },
+        'is_cascaded': True
+    },
+    'Ince_Ayar': {
+        'label': 'Ince Ayar (Kademeli)',
+        'params': {
+            'volume_mult': {'label': 'Hacim Carpan', 'type': 'float', 'default': 0.8, 'min': 0.5, 'max': 1.5, 'step': 0.1},
+            'volume_llv_period': {'label': 'Hacim LLV', 'type': 'int', 'default': 14, 'min': 10, 'max': 21, 'step': 2},
         },
         'is_cascaded': True
     }
@@ -103,10 +128,14 @@ class ParameterGroupWidget(QGroupBox):
         self.group_name = group_name
         self.group_config = group_config
         self.param_widgets = {}
+        # Boyut politikası - içeriğe göre genişle
+        from PySide6.QtWidgets import QSizePolicy
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self._setup_ui()
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 15, 5, 5)  # Başlık için üstte boşluk
         
         # Kademeli grup uyarısı
         if self.group_config.get('is_cascaded', False):
@@ -246,42 +275,108 @@ class OptimizationWorker(QThread):
     result_ready = Signal(list)
     error = Signal(str)
     
-    def __init__(self, config: dict, data, param_ranges: dict):
+    def __init__(self, config: dict, data, param_ranges: dict, 
+                 method: str = "Hibrit Grup", strategy_index: int = 0,
+                 process_id: str = None):
         super().__init__()
         self.config = config
         self.data = data
         self.param_ranges = param_ranges
+        self.method = method
+        self.strategy_index = strategy_index  # 0 = Strateji 1, 1 = Strateji 2
+        self.process_id = process_id
         self._is_running = True
     
     def run(self):
         try:
-            from src.optimization.hybrid_group_optimizer import HybridGroupOptimizer, IndicatorCache
-            
-            self.progress.emit(10, "Cache olusturuluyor...")
-            cache = IndicatorCache(self.data)
-            
-            self.progress.emit(20, "Optimizer baslatiliyor...")
-            optimizer = HybridGroupOptimizer()
-            
-            # TODO: param_ranges'i optimizer'a aktar
-            
-            self.progress.emit(30, "Bagimsiz gruplar optimize ediliyor...")
-            optimizer.run_independent_phase()
-            
-            if not self._is_running:
-                return
-            
-            self.progress.emit(70, "Kombinasyon asamasi...")
-            optimizer.run_combination_phase()
-            
-            self.progress.emit(90, "Sonuclar derleniyor...")
-            results = optimizer.get_best_results(top_n=20)
-            
-            self.progress.emit(100, "Tamamlandi!")
-            self.result_ready.emit(results)
-            
+            if self.method == "Hibrit Grup":
+                self._run_hybrid()
+            elif self.method == "Genetik":
+                self._run_genetic()
+            elif self.method == "Bayesian":
+                self._run_bayesian()
+            else:
+                self.error.emit(f"Bilinmeyen yöntem: {self.method}")
         except Exception as e:
-            self.error.emit(str(e))
+            import traceback
+            self.error.emit(f"{str(e)}\n{traceback.format_exc()}")
+    
+    def _run_hybrid(self):
+        """Hibrit Grup optimizasyonu"""
+        from src.optimization.hybrid_group_optimizer import (
+            HybridGroupOptimizer, IndicatorCache, STRATEGY1_GROUPS, STRATEGY2_GROUPS
+        )
+        
+        self.progress.emit(10, "Cache oluşturuluyor...")
+        cache = IndicatorCache(self.data)
+        
+        # Strateji seçimine göre grupları belirle
+        groups = STRATEGY1_GROUPS if self.strategy_index == 0 else STRATEGY2_GROUPS
+        strategy_name = "Strateji 1" if self.strategy_index == 0 else "Strateji 2"
+        
+        self.progress.emit(20, f"Hibrit Optimizer başlatılıyor ({strategy_name})...")
+        optimizer = HybridGroupOptimizer(
+            groups, 
+            process_id=self.process_id, 
+            strategy_index=self.strategy_index
+        )
+        
+        self.progress.emit(30, "Bağımsız gruplar optimize ediliyor...")
+        optimizer.run_independent_phase()
+        
+        if not self._is_running:
+            return
+        
+        self.progress.emit(70, "Kombinasyon aşaması...")
+        optimizer.run_combination_phase()
+        
+        self.progress.emit(90, "Sonuçlar derleniyor...")
+        results = optimizer.get_best_results(top_n=20)
+        
+        self.progress.emit(100, "Tamamlandı!")
+        self.result_ready.emit(results)
+    
+    def _run_genetic(self):
+        """Genetik Algoritma optimizasyonu - Her iki strateji için"""
+        from src.optimization.genetic_optimizer import GeneticOptimizer, GeneticConfig
+        
+        strategy_name = "Strateji 1" if self.strategy_index == 0 else "Strateji 2"
+        self.progress.emit(10, f"Genetik Algoritma başlatılıyor ({strategy_name})...")
+        
+        config = GeneticConfig(
+            population_size=50,
+            generations=30,
+            elite_ratio=0.1,
+            crossover_rate=0.8,
+            mutation_rate=0.15
+        )
+        
+        self.progress.emit(20, "Popülasyon oluşturuluyor...")
+        optimizer = GeneticOptimizer(self.data, config, strategy_index=self.strategy_index)
+        
+        self.progress.emit(30, "Evrim başlıyor...")
+        results = optimizer.run(verbose=False)
+        
+        self.progress.emit(100, "Genetik optimizasyon tamamlandı!")
+        self.result_ready.emit(results if isinstance(results, list) else [results])
+    
+    def _run_bayesian(self):
+        """Bayesian (Optuna) optimizasyonu - Her iki strateji için"""
+        from src.optimization.bayesian_optimizer import BayesianOptimizer
+        
+        strategy_name = "Strateji 1" if self.strategy_index == 0 else "Strateji 2"
+        self.progress.emit(10, f"Bayesian Optimizer başlatılıyor ({strategy_name})...")
+        
+        n_trials = 100  # Deneme sayısı
+        
+        self.progress.emit(20, f"Optuna çalışması oluşturuluyor ({n_trials} deneme)...")
+        optimizer = BayesianOptimizer(self.data, n_trials=n_trials, strategy_index=self.strategy_index)
+        
+        self.progress.emit(30, "Akıllı arama başlıyor...")
+        results = optimizer.run(verbose=False)
+        
+        self.progress.emit(100, "Bayesian optimizasyon tamamlandı!")
+        self.result_ready.emit(results if isinstance(results, list) else [results])
     
     def stop(self):
         self._is_running = False
@@ -298,6 +393,7 @@ class OptimizerPanel(QWidget):
         self.data = None
         self.worker = None
         self.group_widgets = {}
+        self.current_process_id = None
         self._setup_ui()
     
     def _setup_ui(self):
@@ -306,6 +402,20 @@ class OptimizerPanel(QWidget):
         
         # Üst panel - Yöntem ve genel ayarlar
         top_row = QHBoxLayout()
+        
+        # Süreç seçimi
+        top_row.addWidget(QLabel("Süreç:"))
+        self.process_combo = QComboBox()
+        self.process_combo.setMinimumWidth(200)
+        self.process_combo.currentTextChanged.connect(self._on_process_changed)
+        top_row.addWidget(self.process_combo)
+        
+        refresh_btn = QPushButton("↻")
+        refresh_btn.setMaximumWidth(30)
+        refresh_btn.clicked.connect(self._refresh_processes)
+        top_row.addWidget(refresh_btn)
+        
+        top_row.addSpacing(20)
         
         # Strateji seçimi
         top_row.addWidget(QLabel("Strateji:"))
@@ -319,7 +429,7 @@ class OptimizerPanel(QWidget):
         # Yöntem
         top_row.addWidget(QLabel("Yontem:"))
         self.method_combo = QComboBox()
-        self.method_combo.addItems(["Hibrit Grup", "Grid Search", "Bayesian"])
+        self.method_combo.addItems(["Hibrit Grup", "Genetik", "Bayesian"])
         self.method_combo.currentIndexChanged.connect(self._on_method_changed)
         top_row.addWidget(self.method_combo)
         
@@ -346,12 +456,16 @@ class OptimizerPanel(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setMinimumWidth(400)
+        scroll.setMinimumHeight(300)  # Minimum yükseklik
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
         self.groups_container = QWidget()
         self.groups_layout = QVBoxLayout(self.groups_container)
+        self.groups_layout.setSpacing(10)
+        self.groups_layout.setContentsMargins(5, 5, 5, 5)
         scroll.setWidget(self.groups_container)
         
-        left_layout.addWidget(scroll)
+        left_layout.addWidget(scroll, 1)  # Stretch factor
         
         # Özet ve kontrol
         summary_group = self._create_summary_group()
@@ -458,6 +572,40 @@ class OptimizerPanel(QWidget):
         
         self.groups_layout.addStretch()
     
+    def _refresh_processes(self):
+        """Süreç listesini yenile"""
+        self.process_combo.clear()
+        processes = db.get_all_processes()
+        
+        if not processes:
+            self.process_combo.addItem("(Süreç yok - Veri yükleyin)")
+            return
+        
+        for proc in processes:
+            display = f"{proc['process_id']} ({proc['data_rows']} bar)"
+            self.process_combo.addItem(display, proc['process_id'])
+        
+        # İlkini seç
+        if processes:
+            self.current_process_id = processes[0]['process_id']
+    
+    def _on_process_changed(self, text: str):
+        """Süreç seçimi değiştiğinde"""
+        idx = self.process_combo.currentIndex()
+        if idx >= 0:
+            self.current_process_id = self.process_combo.itemData(idx)
+    
+    def set_process(self, process_id: str):
+        """DataPanel'den gelen süreç ID'sini ayarla"""
+        self.current_process_id = process_id
+        self._refresh_processes()
+        
+        # Combo'da ilgili süreci seç
+        for i in range(self.process_combo.count()):
+            if self.process_combo.itemData(i) == process_id:
+                self.process_combo.setCurrentIndex(i)
+                break
+    
     def _on_method_changed(self, index: int):
         """Yöntem değiştiğinde UI'ı güncelle"""
         # Grid Search: Adım göster
@@ -511,7 +659,12 @@ class OptimizerPanel(QWidget):
         self.status_label.setText("Baslatiliyor...")
         
         # Worker başlat
-        self.worker = OptimizationWorker(self.config, self.data, param_ranges)
+        method = self.method_combo.currentText()
+        strategy_index = self.strategy_combo.currentIndex()
+        self.worker = OptimizationWorker(
+            self.config, self.data, param_ranges, method, strategy_index,
+            process_id=self.current_process_id
+        )
         self.worker.progress.connect(self._on_progress)
         self.worker.result_ready.connect(self._on_result)
         self.worker.error.connect(self._on_error)
@@ -529,6 +682,31 @@ class OptimizerPanel(QWidget):
     
     def _on_result(self, results: list):
         self._display_results(results)
+        
+        # Veritabanına kaydet
+        if self.current_process_id and results:
+            method = self.method_combo.currentText().lower().replace(" ", "_").replace("hibrit_grup", "hibrit")
+            strategy_index = self.strategy_combo.currentIndex()
+            
+            # En iyi sonucu kaydet
+            best = results[0] if results else {}
+            params = best.get('params', best)
+            
+            db.save_optimization_result(
+                process_id=self.current_process_id,
+                strategy_index=strategy_index,
+                method=method,
+                params=params,
+                result={
+                    'net_profit': best.get('net_profit', 0),
+                    'max_drawdown': best.get('max_dd', best.get('max_drawdown', 0)),
+                    'profit_factor': best.get('pf', best.get('profit_factor', 0)),
+                    'total_trades': best.get('trades', best.get('total_trades', 0)),
+                    'win_rate': best.get('win_rate', 0),
+                    'fitness': best.get('fitness', 0)
+                }
+            )
+        
         self.optimization_complete.emit(results)
     
     def _on_error(self, error_msg: str):

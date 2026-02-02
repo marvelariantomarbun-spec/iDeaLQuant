@@ -31,6 +31,14 @@ from src.indicators.core import EMA, ATR, ADX, SMA, ARS, NetLot, MACDV
 from src.strategies.score_based import ScoreBasedStrategy
 from src.strategies.ars_trend_v2 import ARSTrendStrategyV2
 
+# Opsiyonel: Veritabanı entegrasyonu
+try:
+    from src.core.database import db
+    DB_AVAILABLE = True
+except ImportError:
+    DB_AVAILABLE = False
+    db = None
+
 # ==============================================================================
 # GROUP DEFINITIONS
 # ==============================================================================
@@ -112,6 +120,66 @@ STRATEGY1_GROUPS = [
     ),
 ]
 
+# Strateji 2 Grup Tanımları (19 Optimize Edilebilir Parametre)
+STRATEGY2_GROUPS = [
+    ParameterGroup(
+        name="ARS",
+        params={
+            'ars_ema_period': [2, 3, 5, 8, 10, 12],
+            'ars_atr_period': [7, 10, 14, 17, 20],
+            'ars_atr_mult': [0.3, 0.5, 0.7, 1.0, 1.2, 1.5],
+            'ars_min_band': [0.001, 0.002, 0.003, 0.005],
+            'ars_max_band': [0.010, 0.015, 0.020, 0.025],
+        },
+        is_independent=True,
+        default_values={
+            'ars_ema_period': 3, 'ars_atr_period': 10, 'ars_atr_mult': 0.5,
+            'ars_min_band': 0.002, 'ars_max_band': 0.015
+        }
+    ),
+    ParameterGroup(
+        name="Giris_Filtreleri",
+        params={
+            'momentum_period': [3, 5, 7, 10],
+            'momentum_threshold': [50.0, 100.0, 150.0, 200.0],
+            'breakout_period': [5, 10, 15, 20, 30],
+            'mfi_period': [10, 14, 17, 21],
+            'mfi_hhv_period': [10, 14, 17, 21],
+            'mfi_llv_period': [10, 14, 17, 21],
+            'volume_hhv_period': [10, 14, 17, 21],
+        },
+        is_independent=True,
+        default_values={
+            'momentum_period': 5, 'momentum_threshold': 100.0, 'breakout_period': 10,
+            'mfi_period': 14, 'mfi_hhv_period': 14, 'mfi_llv_period': 14, 'volume_hhv_period': 14
+        }
+    ),
+    ParameterGroup(
+        name="Cikis_Risk",
+        params={
+            'atr_exit_period': [10, 14, 17, 21],
+            'atr_sl_mult': [1.0, 1.5, 2.0, 2.5, 3.0, 4.0],
+            'atr_tp_mult': [3.0, 4.0, 5.0, 6.0, 8.0],
+            'atr_trail_mult': [1.0, 1.5, 2.0, 2.5, 3.0, 4.0],
+            'exit_confirm_bars': [1, 2, 3, 4, 5],
+            'exit_confirm_mult': [0.5, 0.75, 1.0, 1.25, 1.5, 2.0],
+        },
+        is_independent=False, # Kademeli - Giriş filtrelerine bağlı
+        default_values={
+            'atr_exit_period': 14, 'atr_sl_mult': 2.0, 'atr_tp_mult': 5.0,
+            'atr_trail_mult': 2.0, 'exit_confirm_bars': 2, 'exit_confirm_mult': 1.0
+        }
+    ),
+    ParameterGroup(
+        name="Ince_Ayar",
+        params={
+            'volume_mult': [0.5, 0.6, 0.8, 1.0, 1.2, 1.5],
+            'volume_llv_period': [10, 14, 17, 21],
+        },
+        is_independent=False, # Kademeli
+        default_values={'volume_mult': 0.8, 'volume_llv_period': 14}
+    ),
+]
 
 # ==============================================================================
 # DATA & CACHE
@@ -261,10 +329,15 @@ def fast_backtest(closes, signals, exits_long, exits_short) -> Tuple[float, int,
 class HybridGroupOptimizer:
     """Hibrit Grup Optimizasyonu"""
     
-    def __init__(self, groups: List[ParameterGroup]):
+    def __init__(self, groups: List[ParameterGroup], 
+                 process_id: str = None, strategy_index: int = 0):
         self.groups = groups
         self.independent_groups = [g for g in groups if g.is_independent]
         self.cascaded_groups = [g for g in groups if not g.is_independent]
+        
+        # Veritabanı entegrasyonu
+        self.process_id = process_id
+        self.strategy_index = strategy_index
         
         self.group_results: Dict[str, List[Dict]] = {}
         self.combined_results: List[Dict] = []
@@ -358,6 +431,16 @@ class HybridGroupOptimizer:
         for group in self.independent_groups:
             results = self.run_group_optimization(group)
             self.group_results[group.name] = results
+            
+            # Veritabanına kaydet
+            if self.process_id and DB_AVAILABLE and db:
+                db.save_group_results_batch(
+                    process_id=self.process_id,
+                    strategy_index=self.strategy_index,
+                    group_name=group.name,
+                    results=results
+                )
+                print(f"  -> {group.name} sonuclari DB'ye kaydedildi")
     
     def run_combination_phase(self):
         """Bağımsız grupların en iyilerini kombine et"""
@@ -430,6 +513,16 @@ class HybridGroupOptimizer:
         
         for group in self.cascaded_groups:
             results = self.run_group_optimization(group, fixed_params=best_base)
+            
+            # Veritabanına kaydet
+            if self.process_id and DB_AVAILABLE and db:
+                db.save_group_results_batch(
+                    process_id=self.process_id,
+                    strategy_index=self.strategy_index,
+                    group_name=group.name,
+                    results=results
+                )
+                print(f"  -> {group.name} sonuclari DB'ye kaydedildi")
             
             # En iyi sonucu base'e ekle
             if results:
@@ -539,66 +632,10 @@ if __name__ == "__main__":
         print("\nİptal edildi.")
 
 
-# ==============================================================================
-# STRATEGY 2 GROUP DEFINITIONS
-# ==============================================================================
-# Strateji 2 Grup Tanımları (21 Parametre)
-STRATEGY2_GROUPS = [
-    ParameterGroup(
-        name="ARS_Dinamik",
-        params={
-            'ars_ema_period': [3, 5, 8, 10],
-            'ars_atr_period': [10, 14, 20],
-            'ars_atr_mult': [0.5, 0.8, 1.0, 1.2],
-            'ars_min_band': [0.002, 0.003],
-            'ars_max_band': [0.012, 0.015, 0.018],
-        },
-        is_independent=True,
-        default_values={'ars_ema_period': 3, 'ars_atr_period': 10, 'ars_atr_mult': 0.5, 
-                       'ars_min_band': 0.002, 'ars_max_band': 0.015}
-    ),
-    ParameterGroup(
-        name="Giris_Filtreleri",
-        params={
-            'momentum_period': [3, 5, 8],
-            'momentum_threshold': [100.0, 102.0, 105.0],
-            'breakout_period': [10, 20, 30],
-            'mfi_period': [10, 14, 20],
-            'mfi_hhv_period': [10, 14, 20],
-            'mfi_llv_period': [10, 14, 20],
-            'volume_hhv_period': [10, 14, 20],
-        },
-        is_independent=True,
-        default_values={'momentum_period': 5, 'momentum_threshold': 100.0, 'breakout_period': 10,
-                       'mfi_period': 14, 'mfi_hhv_period': 14, 'mfi_llv_period': 14, 'volume_hhv_period': 14}
-    ),
-    ParameterGroup(
-        name="Ince_Ayar",
-        params={
-            'volume_mult': [0.6, 0.8, 1.0],
-            'volume_llv_period': [10, 14, 20],
-            'use_atr_exit': [True],
-        },
-        is_independent=True,
-        default_values={'volume_mult': 0.8, 'volume_llv_period': 14, 'use_atr_exit': True}
-    ),
-    ParameterGroup(
-        name="Cikis_ATR",
-        params={
-            'atr_exit_period': [10, 14, 20],
-            'atr_sl_mult': [1.0, 2.0, 3.0],
-            'atr_tp_mult': [3.0, 5.0, 7.0],
-            'atr_trail_mult': [1.0, 2.0, 3.0],
-            'exit_confirm_bars': [1, 2, 3],
-            'exit_confirm_mult': [0.5, 1.0, 1.5],
-        },
-        is_independent=False,  # Kademeli
-        default_values={'atr_exit_period': 14, 'atr_sl_mult': 2.0, 
-                       'atr_tp_mult': 5.0, 'atr_trail_mult': 2.0,
-                       'exit_confirm_bars': 2, 'exit_confirm_mult': 1.0}
-    ),
-]
 
+# ==============================================================================
+# STRATEGY 2 HYBRID OPTIMIZER (Uses STRATEGY2_GROUPS defined at top of file)
+# ==============================================================================
 
 class Strategy2HybridOptimizer(HybridGroupOptimizer):
     """Strateji 2 için özelleştirilmiş hibrit optimizer"""

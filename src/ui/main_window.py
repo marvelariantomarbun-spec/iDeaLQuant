@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QStatusBar, QLabel, 
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QMessageBox
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSettings
 from PySide6.QtGui import QIcon
 
 from .widgets.data_panel import DataPanel
@@ -48,11 +48,19 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(str(icon_path)))
     
     def _load_stylesheet(self):
-        """QSS stylesheet yükle"""
-        style_path = Path(__file__).parent / "styles" / "dark_theme.qss"
+        """QSS stylesheet yükle (kayıtlı temayı kullan)"""
+        settings = QSettings("IdealQuant", "Desktop")
+        theme_index = settings.value("theme_index", 0, type=int)
+        
+        themes = {0: "dark_theme.qss", 1: "professional_theme.qss", 2: "sunset_theme.qss"}
+        theme_file = themes.get(theme_index, "dark_theme.qss")
+        style_path = Path(__file__).parent / "styles" / theme_file
+        
         if style_path.exists():
             with open(style_path, 'r', encoding='utf-8') as f:
                 self.setStyleSheet(f.read())
+        
+        self._saved_theme_index = theme_index
     
     def _setup_ui(self):
         """Ana UI bileşenlerini oluştur"""
@@ -103,7 +111,7 @@ class MainWindow(QMainWindow):
         title.setObjectName("titleLabel")
         layout.addWidget(title)
         
-        subtitle = QLabel("Algorithmic Trading Optimizer v4.1")
+        subtitle = QLabel("Algorithmic Trading Optimizer v1.0")
         subtitle.setObjectName("subtitleLabel")
         layout.addWidget(subtitle)
         
@@ -116,6 +124,11 @@ class MainWindow(QMainWindow):
         self.theme_combo.addItems(["Midnight (Koyu Mavi)", "Professional (Gri)", "Sunset (Turuncu)"])
         self.theme_combo.currentIndexChanged.connect(self._change_theme)
         self.theme_combo.setMinimumWidth(150)
+        # Kayıtlı temayı seç (sinyal tetiklemeden)
+        if hasattr(self, '_saved_theme_index'):
+            self.theme_combo.blockSignals(True)
+            self.theme_combo.setCurrentIndex(self._saved_theme_index)
+            self.theme_combo.blockSignals(False)
         layout.addWidget(self.theme_combo)
         
         layout.addSpacing(20)
@@ -128,7 +141,7 @@ class MainWindow(QMainWindow):
         return header
     
     def _change_theme(self, index: int):
-        """Tema değiştir"""
+        """Tema değiştir ve kaydet"""
         themes = {
             0: "dark_theme.qss",
             1: "professional_theme.qss",
@@ -141,6 +154,11 @@ class MainWindow(QMainWindow):
         if style_path.exists():
             with open(style_path, 'r', encoding='utf-8') as f:
                 self.setStyleSheet(f.read())
+            
+            # Temayı kaydet
+            settings = QSettings("IdealQuant", "Desktop")
+            settings.setValue("theme_index", index)
+            
             self.status_label.setText(f"Tema değiştirildi: {self.theme_combo.currentText()}")
     
     def _setup_status_bar(self):
@@ -153,7 +171,7 @@ class MainWindow(QMainWindow):
         self.status_bar.addWidget(self.status_label, 1)
         
         # Versiyon
-        version_label = QLabel("v4.1.0")
+        version_label = QLabel("v1.0.0")
         self.status_bar.addPermanentWidget(version_label)
     
     def _connect_panels(self):
@@ -165,6 +183,10 @@ class MainWindow(QMainWindow):
         self.data_panel.data_loaded.connect(self.optimizer_panel.set_data)
         self.data_panel.data_loaded.connect(lambda df: self.update_status(f"Veri yüklendi: {len(df)} bar"))
         
+        # Data panel -> Optimizer panel (Süreç bağlantısı)
+        self.data_panel.process_created.connect(self.optimizer_panel.set_process)
+        self.data_panel.process_created.connect(lambda p: self.update_status(f"Süreç oluşturuldu: {p}"))
+        
         # Strategy panel -> Optimizer panel (mevcut)
         self.strategy_panel.config_changed.connect(self.optimizer_panel.set_strategy_config)
         
@@ -174,6 +196,19 @@ class MainWindow(QMainWindow):
         
         # Optimizer panel -> Export panel (mevcut)
         self.optimizer_panel.optimization_complete.connect(self.export_panel.set_results)
+        
+        # Validation panel -> Export panel (Yeni: Final seçildiğinde)
+        self.validation_panel.validation_complete.connect(
+            lambda pid, params: self.export_panel._refresh_processes()
+        )
+        self.validation_panel.validation_complete.connect(
+            lambda pid, params: self.update_status(f"Validasyon tamamlandı: {pid}")
+        )
+        
+        # Export panel -> Status update
+        self.export_panel.export_complete.connect(
+            lambda pid: self.update_status(f"Export tamamlandı: {pid}")
+        )
     
     def _show_about(self):
         """Hakkında dialogu göster"""

@@ -15,19 +15,23 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal, Qt, QDate
 import pandas as pd
 
+from src.core.database import db
+
 
 class DataPanel(QWidget):
     """Veri yükleme ve önizleme paneli"""
     
     # Signals
     data_loaded = Signal(object)  # DataFrame gönderir
+    process_created = Signal(str)  # process_id gönderir
     
     # IdealData default path
-    IDEAL_DATA_PATH = r"D:\iDeal\ChartData"
+    IDEAL_DATA_PATH = r"D:\\iDeal\\ChartData"
     
     def __init__(self):
         super().__init__()
         self.df = None
+        self.current_process_id = None
         self._setup_ui()
     
     def _setup_ui(self):
@@ -249,8 +253,10 @@ class DataPanel(QWidget):
             self.symbol_combo.clear()
             self.symbol_combo.addItems(symbols)
             
-            # Varsayılan olarak X030 seç (varsa)
-            if 'X030' in symbols:
+            # Varsayılan olarak X030-T seç (vadeli, akşam seansı dahil)
+            if 'X030-T' in symbols:
+                self.symbol_combo.setCurrentText('X030-T')
+            elif 'X030' in symbols:
                 self.symbol_combo.setCurrentText('X030')
             
         except Exception as e:
@@ -289,13 +295,25 @@ class DataPanel(QWidget):
             self.df = df
             self._update_preview()
             
-            # Signal gönder
+            # Süreç oluştur
+            full_symbol = f"{market}_{symbol}"
+            process_id = db.create_process(
+                symbol=full_symbol,
+                period=f"{period}dk" if period.isdigit() else period,
+                data_file=f"{symbol}.{period}",
+                data_rows=len(df)
+            )
+            self.current_process_id = process_id
+            
+            # Signals gönder
             self.data_loaded.emit(self.df)
+            self.process_created.emit(process_id)
             
             QMessageBox.information(
                 self, 
                 "Başarılı", 
                 f"{len(df):,} bar yüklendi.\n"
+                f"Süreç: {process_id}\n"
                 f"Tarih: {df['DateTime'].min()} - {df['DateTime'].max()}"
             )
             
@@ -344,13 +362,30 @@ class DataPanel(QWidget):
             self.df = df
             self._update_preview()
             
-            # Signal gönder
+            # CSV dosya adından sembol ve periyot çıkar
+            fname = Path(csv_path).stem
+            parts = fname.split('_')
+            symbol = parts[0] if parts else 'UNKNOWN'
+            period = parts[1] if len(parts) > 1 else '1dk'
+            
+            # Süreç oluştur
+            process_id = db.create_process(
+                symbol=symbol,
+                period=period,
+                data_file=Path(csv_path).name,
+                data_rows=len(df)
+            )
+            self.current_process_id = process_id
+            
+            # Signals gönder
             self.data_loaded.emit(self.df)
+            self.process_created.emit(process_id)
             
             QMessageBox.information(
                 self, 
                 "Başarılı", 
                 f"{len(df):,} satır yüklendi.\n"
+                f"Süreç: {process_id}\n"
                 f"Tarih: {df['DateTime'].min()} - {df['DateTime'].max()}"
             )
             

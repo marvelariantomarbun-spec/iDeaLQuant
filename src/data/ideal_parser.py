@@ -24,7 +24,10 @@ from typing import List, Optional, Dict
 import pandas as pd
 
 
-BASE_DATE = datetime(1988, 2, 28)
+# Base Date: 1988-02-25 (IdealData epoch)
+# NOT: Daha önce 1988-02-28 olarak yanlıştı, bu 3 gün hatalı tarihlere neden oluyordu
+
+BASE_DATE = datetime(1988, 2, 25)
 RECORD_SIZE = 32
 
 # Periyot → Klasör ve Uzantı Mapping
@@ -96,6 +99,71 @@ def read_ideal_data(file_path: str) -> pd.DataFrame:
         df['Tipik'] = (df['High'] + df['Low'] + df['Close']) / 3
     
     return df
+
+
+def resample_bars(df: pd.DataFrame, target_period: int) -> pd.DataFrame:
+    """
+    1 dakikalık bar verisini daha yüksek periyoda resample et.
+    
+    Args:
+        df: 1dk bar verisi (DateTime, Open, High, Low, Close, Volume, Amount)
+        target_period: Hedef periyot (dakika cinsinden: 5, 15, 60, 240)
+        
+    Returns:
+        Resample edilmiş DataFrame
+    """
+    if 'DateTime' not in df.columns:
+        raise ValueError("DataFrame must have 'DateTime' column")
+    
+    # DateTime'ı index yap
+    df_copy = df.copy()
+    df_copy.set_index('DateTime', inplace=True)
+    
+    # OHLC resample kuralları
+    resampled = df_copy.resample(f'{target_period}min', label='left', closed='left').agg({
+        'Open': 'first',
+        'High': 'max',
+        'Low': 'min',
+        'Close': 'last',
+        'Volume': 'sum',
+        'Amount': 'sum'
+    }).dropna()
+    
+    # Index'i kolona çevir
+    resampled.reset_index(inplace=True)
+    
+    # Tipik fiyat ekle
+    resampled['Tipik'] = (resampled['High'] + resampled['Low'] + resampled['Close']) / 3
+    
+    return resampled
+
+
+def load_with_resample(chart_data_path: str, market: str, symbol: str, 
+                       target_period: int) -> Optional[pd.DataFrame]:
+    """
+    1dk verisini yükle ve istenirse resample et.
+    
+    Args:
+        chart_data_path: ChartData klasör yolu
+        market: Pazar
+        symbol: Sembol
+        target_period: Hedef periyot (1, 5, 15, 60, 240)
+        
+    Returns:
+        DataFrame veya None
+    """
+    # Önce 1dk verisini yükle
+    df_1m = load_ideal_data(chart_data_path, market, symbol, '1')
+    
+    if df_1m is None or len(df_1m) == 0:
+        return None
+    
+    # 1dk istenmişse direkt döndür
+    if target_period == 1:
+        return df_1m
+    
+    # Resample et
+    return resample_bars(df_1m, target_period)
 
 
 def get_file_path(chart_data_path: str, market: str, symbol: str, period: str) -> Optional[Path]:

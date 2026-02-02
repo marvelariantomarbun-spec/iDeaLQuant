@@ -45,33 +45,75 @@ class GeneticConfig:
 # ==============================================================================
 # PARAMETER SPACE
 # ==============================================================================
+
+# Strateji 1 Parametre Uzayı (20 parametre)
+STRATEGY1_PARAMS = {
+    # ARS
+    'ars_period': (2, 15, 1, True),
+    'ars_k': (0.005, 0.03, 0.005, False),
+    # ADX
+    'adx_period': (10, 30, 2, True),
+    'adx_threshold': (15.0, 35.0, 5.0, False),
+    # MACD-V
+    'macdv_short': (8, 18, 1, True),
+    'macdv_long': (20, 40, 2, True),
+    'macdv_signal': (5, 15, 1, True),
+    'macdv_threshold': (-50.0, 50.0, 10.0, False),
+    # NetLot
+    'netlot_period': (3, 10, 1, True),
+    'netlot_threshold': (10.0, 50.0, 5.0, False),
+    # Yatay Filtre
+    'ars_mesafe_threshold': (0.1, 0.5, 0.05, False),
+    'bb_period': (15, 30, 5, True),
+    'bb_std': (1.5, 3.0, 0.5, False),
+    'bb_width_multiplier': (0.5, 1.5, 0.1, False),
+    'bb_avg_period': (30, 100, 10, True),
+    'yatay_ars_bars': (5, 20, 5, True),
+    'yatay_adx_threshold': (15.0, 30.0, 5.0, False),
+    'filter_score_threshold': (1, 4, 1, True),
+    # Skor
+    'min_score': (2, 4, 1, True),
+    'exit_score': (2, 4, 1, True),
+}
+
+# Strateji 2 Parametre Uzayı (20 parametre)
+STRATEGY2_PARAMS = {
+    # ARS Dinamik
+    'ars_ema_period': (2, 12, 1, True),
+    'ars_atr_period': (7, 20, 2, True),
+    'ars_atr_mult': (0.3, 1.5, 0.1, False),
+    'ars_min_band': (0.001, 0.005, 0.001, False),
+    'ars_max_band': (0.010, 0.025, 0.005, False),
+    # Giriş Filtreleri
+    'momentum_period': (3, 10, 1, True),
+    'momentum_threshold': (50.0, 200.0, 25.0, False),
+    'breakout_period': (5, 30, 5, True),
+    'mfi_period': (10, 21, 2, True),
+    'mfi_hhv_period': (10, 21, 2, True),
+    'mfi_llv_period': (10, 21, 2, True),
+    'volume_hhv_period': (10, 21, 2, True),
+    # Çıkış/Risk
+    'atr_exit_period': (10, 21, 2, True),
+    'atr_sl_mult': (1.0, 4.0, 0.5, False),
+    'atr_tp_mult': (3.0, 8.0, 1.0, False),
+    'atr_trail_mult': (1.0, 4.0, 0.5, False),
+    'exit_confirm_bars': (1, 5, 1, True),
+    'exit_confirm_mult': (0.5, 2.0, 0.25, False),
+    # İnce Ayar
+    'volume_mult': (0.5, 1.5, 0.1, False),
+    'volume_llv_period': (10, 21, 2, True),
+}
+
+
 class ParameterSpace:
-    """Parametre uzayı tanımı (Planlanmış Mimari v4.1)"""
-    def __init__(self):
-        # Her parametre: (min, max, step, is_int)
-        self.params = {
-            # ARS Dinamik
-            'ars_ema': (2, 10, 1, True),
-            'ars_atr_p': (8, 20, 1, True),
-            'ars_atr_m': (0.3, 1.2, 0.1, False),
-            # Momentum & Breakout (RSI kaldırıldı, 3 farklı breakout periyodu)
-            'momentum_p': (3, 15, 1, True),
-            'breakout_p1': (8, 20, 2, True),    # Kısa vadeli
-            'breakout_p2': (20, 40, 5, True),   # Orta vadeli
-            'breakout_p3': (40, 80, 10, True),  # Uzun vadeli
-            # MFI & Volume
-            'mfi_p': (10, 20, 2, True),
-            'mfi_hhv_p': (10, 20, 2, True),
-            'vol_p': (10, 20, 2, True),
-            # ATR bazlı çıkış
-            'atr_exit_p': (10, 20, 2, True),
-            'atr_sl_mult': (1.0, 2.5, 0.5, False),
-            'atr_tp_mult': (2.0, 5.0, 0.5, False),
-            'atr_trail_mult': (1.0, 2.0, 0.5, False),
-            # Çift teyitli çıkış (YENİ)
-            'exit_confirm_bars': (1, 3, 1, True),
-            'exit_confirm_mult': (0.5, 1.5, 0.5, False),
-        }
+    """Parametre uzayı tanımı - Her iki strateji için"""
+    def __init__(self, strategy_index: int = 1):
+        """
+        Args:
+            strategy_index: 0 = Strateji 1 (Gatekeeper), 1 = Strateji 2 (ARS Trend v2)
+        """
+        self.strategy_index = strategy_index
+        self.params = STRATEGY1_PARAMS if strategy_index == 0 else STRATEGY2_PARAMS
         self.param_names = list(self.params.keys())
         self.n_params = len(self.param_names)
         
@@ -129,13 +171,19 @@ class ParameterSpace:
 
 
 # ==============================================================================
-# FITNESS FUNCTION (Backtest wrapper)
+# FITNESS FUNCTION (Strategy-based Backtest wrapper)
 # ==============================================================================
 class FitnessEvaluator:
-    """Fitness değerlendirici - Backtest fonksiyonunu sarar"""
+    """Fitness değerlendirici - Her iki strateji için backtest wrapper"""
     
-    def __init__(self, df: pd.DataFrame):
+    def __init__(self, df: pd.DataFrame, strategy_index: int = 1):
+        """
+        Args:
+            df: Veri DataFrame'i
+            strategy_index: 0 = Strateji 1 (Gatekeeper), 1 = Strateji 2 (ARS Trend v2)
+        """
         self.df = df
+        self.strategy_index = strategy_index
         self.opens = df['Acilis'].values
         self.highs = df['Yuksek'].values
         self.lows = df['Dusuk'].values
@@ -143,6 +191,12 @@ class FitnessEvaluator:
         self.typical = df['Tipik'].values
         self.volumes = df['Lot'].values
         self.n = len(self.closes)
+        
+        # Tarih bilgisi
+        if 'DateTime' in df.columns:
+            self.dates = df['DateTime'].tolist()
+        else:
+            self.dates = None
         
         # Cache for indicators
         self._indicator_cache = {}
@@ -153,25 +207,98 @@ class FitnessEvaluator:
         return self._indicator_cache[key]
     
     def evaluate(self, params: Dict[str, Any]) -> Dict[str, float]:
-        """Birey fitness'ını hesapla (Planlanmış Mimari v4.1)"""
+        """Birey fitness'ını hesapla - strateji bazlı"""
         try:
-            # Parametreleri çıkar
-            ars_ema = int(params['ars_ema'])
-            ars_atr_p = int(params['ars_atr_p'])
-            ars_atr_m = float(params['ars_atr_m'])
-            mom_p = int(params['momentum_p'])
-            brk_p1 = int(params['breakout_p1'])
-            brk_p2 = int(params['breakout_p2'])
-            brk_p3 = int(params['breakout_p3'])
-            mfi_p = int(params['mfi_p'])
-            mfi_hhv_p = int(params['mfi_hhv_p'])
-            vol_p = int(params['vol_p'])
-            atr_exit_p = int(params['atr_exit_p'])
-            atr_sl_mult = float(params['atr_sl_mult'])
-            atr_tp_mult = float(params['atr_tp_mult'])
-            atr_trail_mult = float(params['atr_trail_mult'])
-            exit_confirm_bars = int(params['exit_confirm_bars'])
-            exit_confirm_mult = float(params['exit_confirm_mult'])
+            if self.strategy_index == 0:
+                return self._evaluate_strategy1(params)
+            else:
+                return self._evaluate_strategy2(params)
+        except Exception as e:
+            return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'fitness': -999999}
+    
+    def _evaluate_strategy1(self, params: Dict[str, Any]) -> Dict[str, float]:
+        """Strateji 1 (Gatekeeper) için fitness hesapla"""
+        from src.strategies.score_based import ScoreBasedStrategy, ScoreConfig
+        
+        # ScoreConfig oluştur
+        config = ScoreConfig(
+            ars_period=int(params.get('ars_period', 3)),
+            ars_k=float(params.get('ars_k', 0.01)),
+            adx_period=int(params.get('adx_period', 17)),
+            adx_threshold=float(params.get('adx_threshold', 25.0)),
+            macdv_short=int(params.get('macdv_short', 13)),
+            macdv_long=int(params.get('macdv_long', 28)),
+            macdv_signal=int(params.get('macdv_signal', 8)),
+            macdv_threshold=float(params.get('macdv_threshold', 0.0)),
+            netlot_period=int(params.get('netlot_period', 5)),
+            netlot_threshold=float(params.get('netlot_threshold', 20.0)),
+            ars_mesafe_threshold=float(params.get('ars_mesafe_threshold', 0.25)),
+            bb_period=int(params.get('bb_period', 20)),
+            bb_std=float(params.get('bb_std', 2.0)),
+            bb_width_multiplier=float(params.get('bb_width_multiplier', 0.8)),
+            bb_avg_period=int(params.get('bb_avg_period', 50)),
+            yatay_ars_bars=int(params.get('yatay_ars_bars', 10)),
+            yatay_adx_threshold=float(params.get('yatay_adx_threshold', 20.0)),
+            filter_score_threshold=int(params.get('filter_score_threshold', 2)),
+            min_score=int(params.get('min_score', 3)),
+            exit_score=int(params.get('exit_score', 3)),
+        )
+        
+        # Strateji çalıştır
+        strategy = ScoreBasedStrategy(
+            opens=self.opens.tolist(),
+            highs=self.highs.tolist(),
+            lows=self.lows.tolist(),
+            closes=self.closes.tolist(),
+            volumes=self.volumes.tolist(),
+            dates=self.dates,
+            config=config
+        )
+        
+        result = strategy.run_backtest()
+        
+        # Fitness hesapla
+        net_profit = result.get('net_profit', 0)
+        pf = result.get('profit_factor', 0)
+        max_dd = result.get('max_drawdown', 0)
+        trades = result.get('total_trades', 0)
+        
+        fitness = net_profit
+        if pf > 1.5:
+            fitness *= (1 + (pf - 1) * 0.1)
+        if max_dd > 0:
+            fitness *= (1 - min(0.5, max_dd / 10000))
+        if trades < 10:
+            fitness *= 0.5
+        
+        return {
+            'net_profit': net_profit,
+            'trades': trades,
+            'pf': pf,
+            'max_dd': max_dd,
+            'fitness': fitness
+        }
+    
+    def _evaluate_strategy2(self, params: Dict[str, Any]) -> Dict[str, float]:
+        """Strateji 2 (ARS Trend v2) için fitness hesapla - inline backtest"""
+        try:
+            # Parametreleri çıkar (yeni isimlerle)
+            ars_ema = int(params.get('ars_ema_period', 3))
+            ars_atr_p = int(params.get('ars_atr_period', 10))
+            ars_atr_m = float(params.get('ars_atr_mult', 0.5))
+            mom_p = int(params.get('momentum_period', 5))
+            brk_p = int(params.get('breakout_period', 10))
+            mfi_p = int(params.get('mfi_period', 14))
+            mfi_hhv_p = int(params.get('mfi_hhv_period', 14))
+            mfi_llv_p = int(params.get('mfi_llv_period', 14))
+            vol_hhv_p = int(params.get('volume_hhv_period', 14))
+            atr_exit_p = int(params.get('atr_exit_period', 14))
+            atr_sl_mult = float(params.get('atr_sl_mult', 2.0))
+            atr_tp_mult = float(params.get('atr_tp_mult', 5.0))
+            atr_trail_mult = float(params.get('atr_trail_mult', 2.0))
+            exit_confirm_bars = int(params.get('exit_confirm_bars', 2))
+            exit_confirm_mult = float(params.get('exit_confirm_mult', 1.0))
+            volume_mult = float(params.get('volume_mult', 0.8))
             
             # İndikatörleri hesapla (cached)
             ars = self._get_cached(
@@ -204,29 +331,23 @@ class FitnessEvaluator:
             
             mom = self._get_cached(f'mom_{mom_p}', lambda: np.array(Momentum(self.closes.tolist(), mom_p)))
             
-            # 3 farklı periyot için HHV/LLV
-            hhv1 = self._get_cached(f'hhv_{brk_p1}', lambda: np.array(HHV(self.highs.tolist(), brk_p1)))
-            llv1 = self._get_cached(f'llv_{brk_p1}', lambda: np.array(LLV(self.lows.tolist(), brk_p1)))
-            hhv2 = self._get_cached(f'hhv_{brk_p2}', lambda: np.array(HHV(self.highs.tolist(), brk_p2)))
-            llv2 = self._get_cached(f'llv_{brk_p2}', lambda: np.array(LLV(self.lows.tolist(), brk_p2)))
-            hhv3 = self._get_cached(f'hhv_{brk_p3}', lambda: np.array(HHV(self.highs.tolist(), brk_p3)))
-            llv3 = self._get_cached(f'llv_{brk_p3}', lambda: np.array(LLV(self.lows.tolist(), brk_p3)))
+            # Tek periyot için HHV/LLV (basitleştirildi)
+            hhv = self._get_cached(f'hhv_{brk_p}', lambda: np.array(HHV(self.highs.tolist(), brk_p)))
+            llv = self._get_cached(f'llv_{brk_p}', lambda: np.array(LLV(self.lows.tolist(), brk_p)))
             
             mfi = self._get_cached(f'mfi_{mfi_p}', lambda: np.array(MoneyFlowIndex(
                 self.highs.tolist(), self.lows.tolist(), self.closes.tolist(), self.volumes.tolist(), mfi_p
             )))
             mfi_hhv = self._get_cached(f'mfi_hhv_{mfi_p}_{mfi_hhv_p}', lambda: np.array(HHV(mfi.tolist(), mfi_hhv_p)))
-            mfi_llv = self._get_cached(f'mfi_llv_{mfi_p}_{mfi_hhv_p}', lambda: np.array(LLV(mfi.tolist(), mfi_hhv_p)))
-            vol_hhv = self._get_cached(f'vol_hhv_{vol_p}', lambda: np.array(HHV(self.volumes.tolist(), vol_p)))
+            mfi_llv = self._get_cached(f'mfi_llv_{mfi_p}_{mfi_llv_p}', lambda: np.array(LLV(mfi.tolist(), mfi_llv_p)))
+            vol_hhv = self._get_cached(f'vol_hhv_{vol_hhv_p}', lambda: np.array(HHV(self.volumes.tolist(), vol_hhv_p)))
             
             # Backtest
-            result = self._run_backtest(
-                ars, atr, dinamikK, mom, 
-                hhv1, llv1, hhv2, llv2, hhv3, llv3,
+            result = self._run_backtest_s2(
+                ars, atr, dinamikK, mom, hhv, llv,
                 mfi, mfi_hhv, mfi_llv, vol_hhv,
                 atr_sl_mult, atr_tp_mult, atr_trail_mult,
-                exit_confirm_bars, exit_confirm_mult,
-                brk_p2, brk_p3
+                exit_confirm_bars, exit_confirm_mult, volume_mult, brk_p
             )
             
             return result
@@ -234,13 +355,11 @@ class FitnessEvaluator:
         except Exception as e:
             return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'fitness': -999999}
     
-    def _run_backtest(self, ars, atr, dinamikK, mom, 
-                      hhv1, llv1, hhv2, llv2, hhv3, llv3,
+    def _run_backtest_s2(self, ars, atr, dinamikK, mom, hhv, llv,
                       mfi, mfi_hhv, mfi_llv, vol_hhv,
                       atr_sl, atr_tp, atr_trail,
-                      exit_confirm_bars, exit_confirm_mult,
-                      brk_p2, brk_p3) -> Dict[str, float]:
-        """Hızlı backtest (Planlanmış Mimari v4.1)"""
+                      exit_confirm_bars, exit_confirm_mult, volume_mult, brk_p) -> Dict[str, float]:
+        """Strateji 2 için hızlı backtest"""
         n = self.n
         closes = self.closes
         highs = self.highs
@@ -269,7 +388,7 @@ class FitnessEvaluator:
         current_equity = 0.0
         
         current_trend = 0
-        warmup = max(brk_p3, 60)
+        warmup = max(brk_p, 60)
         
         for i in range(warmup, n):
             if trend[i] != 0:
@@ -366,16 +485,13 @@ class FitnessEvaluator:
                     if dd > max_dd:
                         max_dd = dd
             
-            # ========== ENTRY LOGIC ==========
+            # ========== ENTRY LOGIC (simplified single period) ==========
             if pos == 0:
                 if current_trend == 1:
-                    # Fiyat breakout (3 periyottan en az birinde)
-                    price_ok = (closes[i] > hhv1[i-1] or highs[i] > hhv1[i-1]) or \
-                               (i > brk_p2 and (closes[i] > hhv2[i-1] or highs[i] > hhv2[i-1])) or \
-                               (i > brk_p3 and (closes[i] > hhv3[i-1] or highs[i] > hhv3[i-1]))
+                    price_ok = closes[i] > hhv[i-1] or highs[i] > hhv[i-1]
                     mom_ok = mom[i] > 100
                     mfi_ok = mfi[i] >= mfi_hhv[i-1]
-                    vol_ok = volumes[i] >= vol_hhv[i-1] * 0.8
+                    vol_ok = volumes[i] >= vol_hhv[i-1] * volume_mult
                     
                     if price_ok and mom_ok and mfi_ok and vol_ok:
                         pos = 1
@@ -386,12 +502,10 @@ class FitnessEvaluator:
                         trades += 1
                         
                 elif current_trend == -1:
-                    price_ok = (closes[i] < llv1[i-1] or lows[i] < llv1[i-1]) or \
-                               (i > brk_p2 and (closes[i] < llv2[i-1] or lows[i] < llv2[i-1])) or \
-                               (i > brk_p3 and (closes[i] < llv3[i-1] or lows[i] < llv3[i-1]))
+                    price_ok = closes[i] < llv[i-1] or lows[i] < llv[i-1]
                     mom_ok = mom[i] < 100
                     mfi_ok = mfi[i] <= mfi_llv[i-1]
-                    vol_ok = volumes[i] >= vol_hhv[i-1] * 0.8
+                    vol_ok = volumes[i] >= vol_hhv[i-1] * volume_mult
                     
                     if price_ok and mom_ok and mfi_ok and vol_ok:
                         pos = -1
@@ -426,13 +540,20 @@ class FitnessEvaluator:
 # GENETIC ALGORITHM ENGINE
 # ==============================================================================
 class GeneticOptimizer:
-    """Genetik Algoritma Optimizasyon Motoru"""
+    """Genetik Algoritma Optimizasyon Motoru - Her iki strateji için"""
     
-    def __init__(self, df: pd.DataFrame, config: Optional[GeneticConfig] = None):
+    def __init__(self, df: pd.DataFrame, config: Optional[GeneticConfig] = None, strategy_index: int = 1):
+        """
+        Args:
+            df: Veri DataFrame'i
+            config: Genetik algoritma konfigürasyonu
+            strategy_index: 0 = Strateji 1, 1 = Strateji 2
+        """
         self.df = df
         self.config = config or GeneticConfig()
-        self.param_space = ParameterSpace()
-        self.evaluator = FitnessEvaluator(df)
+        self.strategy_index = strategy_index
+        self.param_space = ParameterSpace(strategy_index)
+        self.evaluator = FitnessEvaluator(df, strategy_index)
         
         self.population: List[np.ndarray] = []
         self.fitness_scores: List[float] = []
