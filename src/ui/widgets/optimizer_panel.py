@@ -182,16 +182,37 @@ class ParameterGroupWidget(QGroupBox):
                 'type': param_config['type']
             }
         
-        # Satır yüksekliğini azalt
-        for row in range(len(params)):
-            table.setRowHeight(row, 25)
+        # Satır yüksekliğini ayarla
+        row_height = 36  # Spinbox okları için yeterli alan
+        header_height = 22  # Header daha kompakt
         
-        # Tablo yüksekliğini kompakt yap
-        table.setMaximumHeight(len(params) * 26 + 26)
-        table.setMinimumHeight(len(params) * 26 + 26)
+        # Header yüksekliğini ayarla
+        table.horizontalHeader().setFixedHeight(header_height)
+        table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
+        
+        # Satır yüksekliklerini ayarla
+        for row in range(len(params)):
+            table.setRowHeight(row, row_height)
+        
+        # Tablo yüksekliğini tüm satırları gösterecek şekilde ayarla
+        total_height = header_height + (len(params) * row_height) + 2
+        table.setFixedHeight(total_height)
+        
+        # Spinbox styling - varsayılan okları kullan
+        table.setStyleSheet("""
+            QHeaderView::section {
+                font-size: 9pt;
+                padding: 2px;
+            }
+            QSpinBox, QDoubleSpinBox {
+                padding-right: 18px;
+                min-height: 28px;
+            }
+        """)
+        
         layout.addWidget(table)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(3)
+        layout.setContentsMargins(5, 3, 5, 3)
+        layout.setSpacing(2)
     
     def get_ranges(self) -> Dict[str, List[Any]]:
         """Parametre aralıklarını döndür"""

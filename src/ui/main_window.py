@@ -100,12 +100,39 @@ class MainWindow(QMainWindow):
         
         layout.addStretch()
         
+        # Tema seçici
+        from PySide6.QtWidgets import QComboBox
+        layout.addWidget(QLabel("Tema:"))
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(["Midnight (Koyu Mavi)", "Professional (Gri)", "Sunset (Turuncu)"])
+        self.theme_combo.currentIndexChanged.connect(self._change_theme)
+        self.theme_combo.setMinimumWidth(150)
+        layout.addWidget(self.theme_combo)
+        
+        layout.addSpacing(20)
+        
         # Hakkında butonu
-        about_btn = QPushButton("ℹ️ Hakkında")
+        about_btn = QPushButton("Hakkinda")
         about_btn.clicked.connect(self._show_about)
         layout.addWidget(about_btn)
         
         return header
+    
+    def _change_theme(self, index: int):
+        """Tema değiştir"""
+        themes = {
+            0: "dark_theme.qss",
+            1: "professional_theme.qss",
+            2: "sunset_theme.qss"
+        }
+        
+        theme_file = themes.get(index, "dark_theme.qss")
+        style_path = Path(__file__).parent / "styles" / theme_file
+        
+        if style_path.exists():
+            with open(style_path, 'r', encoding='utf-8') as f:
+                self.setStyleSheet(f.read())
+            self.status_label.setText(f"Tema değiştirildi: {self.theme_combo.currentText()}")
     
     def _setup_status_bar(self):
         """Status bar oluştur"""
