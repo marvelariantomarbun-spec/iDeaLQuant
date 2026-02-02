@@ -86,26 +86,46 @@ class StrategyPanel(QWidget):
         # Alt butonlar
         btn_row = QHBoxLayout()
         
-        reset_btn = QPushButton("🔄 Varsayılana Dön")
+        reset_btn = QPushButton("Varsayilana Don")
         reset_btn.clicked.connect(self._reset_to_defaults)
         btn_row.addWidget(reset_btn)
         
-        load_btn = QPushButton("📂 Preset Yükle")
+        load_btn = QPushButton("Preset Yukle")
         load_btn.clicked.connect(self._load_preset)
         btn_row.addWidget(load_btn)
         
-        save_btn = QPushButton("💾 Preset Kaydet")
+        save_btn = QPushButton("Preset Kaydet")
         save_btn.clicked.connect(self._save_preset)
         btn_row.addWidget(save_btn)
         
         btn_row.addStretch()
         
-        apply_btn = QPushButton("✅ Uygula")
+        apply_btn = QPushButton("Uygula")
         apply_btn.setObjectName("primaryButton")
         apply_btn.clicked.connect(self._apply_config)
         btn_row.addWidget(apply_btn)
         
         layout.addLayout(btn_row)
+        
+        # Manuel Backtest bölümü
+        backtest_group = QGroupBox("Manuel Backtest")
+        backtest_layout = QVBoxLayout(backtest_group)
+        
+        # Backtest butonu
+        backtest_btn_row = QHBoxLayout()
+        self.backtest_btn = QPushButton("Backtest Calistir")
+        self.backtest_btn.clicked.connect(self._run_manual_backtest)
+        backtest_btn_row.addWidget(self.backtest_btn)
+        backtest_btn_row.addStretch()
+        backtest_layout.addLayout(backtest_btn_row)
+        
+        # Sonuç etiketi
+        self.backtest_result_label = QLabel("Veri yukleyip parametreleri ayarladiktan sonra backtest calistirin.")
+        self.backtest_result_label.setWordWrap(True)
+        self.backtest_result_label.setStyleSheet("padding: 10px; background-color: #1e1e2e; border-radius: 5px;")
+        backtest_layout.addWidget(self.backtest_result_label)
+        
+        layout.addWidget(backtest_group)
         
         # Varsayılan stratejiyi yükle
         self._on_strategy_changed(0)
@@ -295,3 +315,114 @@ class StrategyPanel(QWidget):
     def set_data(self, df):
         """Veri set et (DataPanel'den sinyal)"""
         self.df = df
+    
+    def _run_manual_backtest(self):
+        """Manuel backtest calistir"""
+        if self.df is None or len(self.df) == 0:
+            QMessageBox.warning(self, "Uyari", "Lutfen once veri yukleyin.")
+            return
+        
+        try:
+            config = self.get_config()
+            strategy_idx = config['strategy']
+            
+            self.backtest_result_label.setText("Backtest calisiyor...")
+            self.backtest_btn.setEnabled(False)
+            
+            # Gerekli verileri hazirla
+            df = self.df
+            opens = df['Acilis'].tolist() if 'Acilis' in df.columns else df['Open'].tolist()
+            highs = df['Yuksek'].tolist() if 'Yuksek' in df.columns else df['High'].tolist()
+            lows = df['Dusuk'].tolist() if 'Dusuk' in df.columns else df['Low'].tolist()
+            closes = df['Kapanis'].tolist() if 'Kapanis' in df.columns else df['Close'].tolist()
+            typical = df['Tipik'].tolist() if 'Tipik' in df.columns else [(h+l+c)/3 for h,l,c in zip(highs,lows,closes)]
+            dates = df['DateTime'].tolist() if 'DateTime' in df.columns else None
+            
+            if strategy_idx == 1:
+                from src.strategies.score_based import ScoreBasedStrategy
+                strategy = ScoreBasedStrategy.from_config_dict(
+                    {'opens': opens, 'highs': highs, 'lows': lows, 'closes': closes, 'typical': typical, 'dates': dates},
+                    config,
+                    dates
+                )
+            else:
+                from src.strategies.ars_trend_v2 import ARSTrendStrategyV2
+                strategy = ARSTrendStrategyV2.from_config_dict(
+                    {'opens': opens, 'highs': highs, 'lows': lows, 'closes': closes, 'typical': typical, 'dates': dates},
+                    config,
+                    dates
+                )
+            
+            # Sinyalleri uret
+            signals, exits_long, exits_short = strategy.generate_all_signals()
+            
+            # Basit backtest
+            import numpy as np
+            position = 0  # 0=flat, 1=long, -1=short
+            entry_price = 0
+            trades = []
+            
+            for i in range(len(closes)):
+                if position == 0:
+                    if signals[i] == 1:
+                        position = 1
+                        entry_price = closes[i]
+                    elif signals[i] == -1:
+                        position = -1
+                        entry_price = closes[i]
+                elif position == 1:
+                    if exits_long[i] or signals[i] == -1:
+                        pnl = closes[i] - entry_price
+                        trades.append(pnl)
+                        position = 0 if exits_long[i] else -1
+                        entry_price = closes[i] if signals[i] == -1 else 0
+                elif position == -1:
+                    if exits_short[i] or signals[i] == 1:
+                        pnl = entry_price - closes[i]
+                        trades.append(pnl)
+                        position = 0 if exits_short[i] else 1
+                        entry_price = closes[i] if signals[i] == 1 else 0
+            
+            # Metrikleri hesapla
+            if len(trades) == 0:
+                self.backtest_result_label.setText("Hic islem bulunamadi.")
+                self.backtest_btn.setEnabled(True)
+                return
+            
+            trades_arr = np.array(trades)
+            total_profit = np.sum(trades_arr)
+            win_count = np.sum(trades_arr > 0)
+            loss_count = np.sum(trades_arr < 0)
+            win_rate = win_count / len(trades_arr) * 100
+            
+            gross_profit = np.sum(trades_arr[trades_arr > 0]) if win_count > 0 else 0
+            gross_loss = abs(np.sum(trades_arr[trades_arr < 0])) if loss_count > 0 else 0
+            profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+            
+            # Max drawdown
+            equity = np.cumsum(trades_arr)
+            peak = np.maximum.accumulate(equity)
+            drawdown = peak - equity
+            max_dd = np.max(drawdown) if len(drawdown) > 0 else 0
+            
+            result_text = f"""
+BACKTEST SONUCLARI
+==================
+Toplam Islem: {len(trades)}
+Kazanan: {win_count} | Kaybeden: {loss_count}
+Win Rate: {win_rate:.1f}%
+
+Net Kar: {total_profit:.0f} puan
+Profit Factor: {profit_factor:.2f}
+Max Drawdown: {max_dd:.0f} puan
+
+Ortalama Kar: {np.mean(trades_arr):.1f} puan/islem
+"""
+            
+            self.backtest_result_label.setText(result_text.strip())
+            self.backtest_btn.setEnabled(True)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Hata", f"Backtest hatasi: {str(e)}")
+            self.backtest_btn.setEnabled(True)
+
