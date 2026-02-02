@@ -182,8 +182,16 @@ class ParameterGroupWidget(QGroupBox):
                 'type': param_config['type']
             }
         
-        table.setMaximumHeight(len(params) * 40 + 30)
+        # Satır yüksekliğini azalt
+        for row in range(len(params)):
+            table.setRowHeight(row, 25)
+        
+        # Tablo yüksekliğini kompakt yap
+        table.setMaximumHeight(len(params) * 26 + 26)
+        table.setMinimumHeight(len(params) * 26 + 26)
         layout.addWidget(table)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(3)
     
     def get_ranges(self) -> Dict[str, List[Any]]:
         """Parametre aralıklarını döndür"""
