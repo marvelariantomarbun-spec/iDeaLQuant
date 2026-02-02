@@ -2,7 +2,7 @@
 """
 IdealData Binary Parser
 -----------------------
-IdealData .01 dosyalarını okur ve pandas DataFrame'e çevirir.
+IdealData dosyalarını okur ve pandas DataFrame'e çevirir.
 
 Format (32 byte per record):
 - int32: dakika sayısı (base date'den itibaren)
@@ -20,23 +20,37 @@ Base Date: 1988-02-28
 import struct
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict
 import pandas as pd
 
 
 BASE_DATE = datetime(1988, 2, 28)
 RECORD_SIZE = 32
 
+# Periyot → Klasör ve Uzantı Mapping
+PERIOD_MAP: Dict[str, dict] = {
+    '1':   {'folder': '01', 'ext': '.01', 'label': '1 Dakika'},
+    '5':   {'folder': '05', 'ext': '.05', 'label': '5 Dakika'},
+    '15':  {'folder': '15', 'ext': '.15', 'label': '15 Dakika'},
+    '60':  {'folder': '60', 'ext': '.60', 'label': '60 Dakika'},
+    '240': {'folder': '240', 'ext': '.240', 'label': '4 Saat'},
+    'G':   {'folder': 'G', 'ext': '.G', 'label': 'Günlük'},
+    'H':   {'folder': 'B', 'ext': '.B', 'label': 'Haftalık'},
+}
+
+# Pazar listesi
+MARKETS = ['VIP', 'IMKBH', 'IMKBX', 'FX', 'DOVIZ', 'CRP']
+
 
 def read_ideal_data(file_path: str) -> pd.DataFrame:
     """
-    IdealData .01 dosyasını okur.
+    IdealData dosyasını okur.
     
     Args:
-        file_path: .01 dosya yolu
+        file_path: dosya yolu (.01, .05, .60, .G vb.)
         
     Returns:
-        pandas DataFrame with columns: Date, Open, High, Low, Close, Volume, Amount, Flags
+        pandas DataFrame with columns: DateTime, Open, High, Low, Close, Volume, Amount
     """
     path = Path(file_path)
     if not path.exists():
@@ -60,73 +74,186 @@ def read_ideal_data(file_path: str) -> pd.DataFrame:
             # Little-endian: int32, float32 x6, int32
             time_minutes, o, h, l, c, volume, amount, flags = struct.unpack('<i6fi', chunk)
             
-            # Calculate date from minutes since base date
-            bar_date = BASE_DATE + timedelta(minutes=time_minutes)
+            # Calculate datetime from minutes since base date
+            bar_datetime = BASE_DATE + timedelta(minutes=time_minutes)
             
             records.append({
-                'Date': bar_date,
+                'DateTime': bar_datetime,
                 'Open': o,
                 'High': h,
                 'Low': l,
                 'Close': c,
                 'Volume': volume,  # Lot
                 'Amount': amount,  # TL
-                'Flags': flags
             })
         except struct.error:
             continue
     
     df = pd.DataFrame(records)
+    
+    # Tipik fiyat hesapla
+    if len(df) > 0:
+        df['Tipik'] = (df['High'] + df['Low'] + df['Close']) / 3
+    
     return df
 
 
-def list_ideal_symbols(chart_data_path: str, market: str = "VIP", period: str = "01") -> List[str]:
+def get_file_path(chart_data_path: str, market: str, symbol: str, period: str) -> Optional[Path]:
     """
-    ChartData klasöründeki sembolleri listeler.
+    Sembol ve periyot için dosya yolunu döndür.
     
     Args:
         chart_data_path: ChartData klasör yolu (örn: D:\\iDeal\\ChartData)
-        market: Pazar (VIP, IMKBH, FX vb.)
-        period: Periyot (01=1dk, 05=5dk, G=günlük vb.)
+        market: Pazar (VIP, IMKBH vb.)
+        symbol: Sembol (X030, GARAN vb.)
+        period: Periyot ('1', '5', '60', 'G' vb.)
+        
+    Returns:
+        Dosya yolu veya None
+    """
+    if period not in PERIOD_MAP:
+        return None
+    
+    mapping = PERIOD_MAP[period]
+    folder = mapping['folder']
+    ext = mapping['ext']
+    
+    base_path = Path(chart_data_path) / market / folder
+    
+    if not base_path.exists():
+        return None
+    
+    # Dosya adı pattern'leri dene
+    patterns = [
+        f"{market}'{market}-{symbol}{ext}",           # VIP'VIP-X030.01
+        f"{market}'F_{symbol}{ext}",                   # VIP'F_X030.01
+        f"{market}'{symbol}{ext}",                     # VIP'X030.01
+    ]
+    
+    for pattern in patterns:
+        file_path = base_path / pattern
+        if file_path.exists():
+            return file_path
+    
+    # Glob ile ara
+    for f in base_path.glob(f"*{symbol}*{ext}"):
+        return f
+    
+    return None
+
+
+def list_symbols(chart_data_path: str, market: str = "VIP", period: str = "1") -> List[str]:
+    """
+    Belirtilen pazar ve periyot için mevcut sembolleri listeler.
+    
+    Args:
+        chart_data_path: ChartData klasör yolu
+        market: Pazar
+        period: Periyot
         
     Returns:
         Sembol listesi
     """
-    path = Path(chart_data_path) / market / period
+    if period not in PERIOD_MAP:
+        return []
+    
+    mapping = PERIOD_MAP[period]
+    folder = mapping['folder']
+    ext = mapping['ext']
+    
+    path = Path(chart_data_path) / market / folder
     if not path.exists():
         return []
     
-    symbols = []
-    for f in path.glob("*.01"):
-        # VIP'VIP-X030.01 -> X030
+    symbols = set()
+    for f in path.glob(f"*{ext}"):
         name = f.stem
+        # VIP'VIP-X030 -> X030
+        # VIP'F_GARAN0226 -> GARAN0226
         if "'" in name:
             parts = name.split("'")
             if len(parts) >= 2:
-                symbol = parts[1].replace("VIP-", "").replace("F_", "")
-                symbols.append(symbol)
+                symbol = parts[1]
+                symbol = symbol.replace(f"{market}-", "")
+                symbol = symbol.replace("F_", "")
+                symbols.add(symbol)
     
-    return sorted(set(symbols))
+    return sorted(symbols)
+
+
+def list_available_periods(chart_data_path: str, market: str = "VIP") -> List[str]:
+    """
+    Belirtilen pazar için mevcut periyotları listeler.
+    
+    Args:
+        chart_data_path: ChartData klasör yolu
+        market: Pazar
+        
+    Returns:
+        Periyot listesi
+    """
+    base_path = Path(chart_data_path) / market
+    if not base_path.exists():
+        return []
+    
+    available = []
+    for period, mapping in PERIOD_MAP.items():
+        folder_path = base_path / mapping['folder']
+        if folder_path.exists() and any(folder_path.iterdir()):
+            available.append(period)
+    
+    return available
+
+
+def load_ideal_data(chart_data_path: str, market: str, symbol: str, period: str) -> Optional[pd.DataFrame]:
+    """
+    IdealData'dan veri yükle (convenience function).
+    
+    Args:
+        chart_data_path: ChartData klasör yolu
+        market: Pazar
+        symbol: Sembol
+        period: Periyot
+        
+    Returns:
+        DataFrame veya None
+    """
+    file_path = get_file_path(chart_data_path, market, symbol, period)
+    if file_path is None:
+        return None
+    
+    return read_ideal_data(str(file_path))
 
 
 if __name__ == "__main__":
     # Test
-    import sys
+    chart_data = r"D:\iDeal\ChartData"
     
-    # Test file path
-    test_file = r"D:\iDeal\ChartData\VIP\01\VIP'VIP-X030.01"
+    print("=" * 60)
+    print("IdealData Parser Test")
+    print("=" * 60)
     
-    print(f"Reading: {test_file}")
-    df = read_ideal_data(test_file)
+    # Mevcut periyotlari listele
+    print("\nVIP icin mevcut periyotlar:")
+    periods = list_available_periods(chart_data, "VIP")
+    for p in periods:
+        print(f"  - {p}: {PERIOD_MAP.get(p, {}).get('label', p)}")
     
-    print(f"\nTotal bars: {len(df)}")
-    print(f"\nDate range: {df['Date'].min()} -> {df['Date'].max()}")
-    print(f"\nFirst 5 bars:")
-    print(df.head())
-    print(f"\nLast 5 bars:")
-    print(df.tail())
+    # 1dk sembolleri listele
+    print("\nVIP 1dk sembolleri (ilk 10):")
+    symbols = list_symbols(chart_data, "VIP", "1")
+    for s in symbols[:10]:
+        print(f"  - {s}")
     
-    # Test symbol listing
-    print(f"\n\nAvailable symbols:")
-    symbols = list_ideal_symbols(r"D:\iDeal\ChartData")
-    print(symbols[:20])
+    # X030 verisini yukle
+    print("\nX030 1dk verisi:")
+    df = load_ideal_data(chart_data, "VIP", "X030", "1")
+    if df is not None:
+        print(f"  Toplam bar: {len(df):,}")
+        print(f"  Tarih araligi: {df['DateTime'].min()} -> {df['DateTime'].max()}")
+        print(f"\n  Ilk 3 bar:")
+        print(df.head(3).to_string())
+    else:
+        print("  Veri bulunamadi!")
+
+

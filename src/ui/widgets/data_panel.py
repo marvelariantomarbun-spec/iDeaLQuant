@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 IdealQuant - Data Panel
-Veri yönetimi paneli
+Veri yönetimi paneli (CSV + IdealData Binary)
 """
 
 from pathlib import Path
@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QPushButton, QLineEdit, QLabel, QFileDialog,
     QTableWidget, QTableWidgetItem, QHeaderView,
-    QDateEdit, QSpinBox, QMessageBox
+    QDateEdit, QSpinBox, QMessageBox, QComboBox,
+    QRadioButton, QButtonGroup, QTabWidget
 )
 from PySide6.QtCore import Signal, Qt, QDate
 import pandas as pd
@@ -21,6 +22,9 @@ class DataPanel(QWidget):
     # Signals
     data_loaded = Signal(object)  # DataFrame gönderir
     
+    # IdealData default path
+    IDEAL_DATA_PATH = r"D:\iDeal\ChartData"
+    
     def __init__(self):
         super().__init__()
         self.df = None
@@ -31,9 +35,18 @@ class DataPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
         
-        # Dosya seçimi grubu
-        file_group = self._create_file_group()
-        layout.addWidget(file_group)
+        # Veri kaynağı seçimi (Tab)
+        source_tabs = QTabWidget()
+        
+        # Tab 1: IdealData Binary
+        ideal_tab = self._create_ideal_tab()
+        source_tabs.addTab(ideal_tab, "IdealData")
+        
+        # Tab 2: CSV
+        csv_tab = self._create_csv_tab()
+        source_tabs.addTab(csv_tab, "CSV Dosyası")
+        
+        layout.addWidget(source_tabs)
         
         # Filtre grubu
         filter_group = self._create_filter_group()
@@ -43,10 +56,73 @@ class DataPanel(QWidget):
         preview_group = self._create_preview_group()
         layout.addWidget(preview_group, 1)  # Stretch
     
-    def _create_file_group(self) -> QGroupBox:
-        """Dosya seçimi grubu"""
-        group = QGroupBox("📁 Veri Kaynağı")
-        layout = QVBoxLayout(group)
+    def _create_ideal_tab(self) -> QWidget:
+        """IdealData veri kaynağı tab'ı"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # ChartData Path
+        path_row = QHBoxLayout()
+        path_row.addWidget(QLabel("ChartData Yolu:"))
+        self.ideal_path_edit = QLineEdit(self.IDEAL_DATA_PATH)
+        path_row.addWidget(self.ideal_path_edit, 1)
+        browse_btn = QPushButton("...")
+        browse_btn.setMaximumWidth(40)
+        browse_btn.clicked.connect(self._browse_ideal_path)
+        path_row.addWidget(browse_btn)
+        layout.addLayout(path_row)
+        
+        # Seçiciler
+        select_row = QHBoxLayout()
+        
+        # Pazar
+        select_row.addWidget(QLabel("Pazar:"))
+        self.market_combo = QComboBox()
+        self.market_combo.addItems(['VIP', 'IMKBH', 'IMKBX', 'FX', 'DOVIZ'])
+        self.market_combo.currentTextChanged.connect(self._on_market_changed)
+        select_row.addWidget(self.market_combo)
+        
+        # Periyot
+        select_row.addWidget(QLabel("Periyot:"))
+        self.period_combo = QComboBox()
+        self.period_combo.addItems(['1', '5', '15', '60', 'G'])
+        self.period_combo.currentTextChanged.connect(self._on_period_changed)
+        select_row.addWidget(self.period_combo)
+        
+        # Sembol
+        select_row.addWidget(QLabel("Sembol:"))
+        self.symbol_combo = QComboBox()
+        self.symbol_combo.setEditable(True)
+        self.symbol_combo.setMinimumWidth(150)
+        select_row.addWidget(self.symbol_combo)
+        
+        select_row.addStretch()
+        
+        # Sembolleri yükle butonu
+        refresh_btn = QPushButton("Yenile")
+        refresh_btn.clicked.connect(self._refresh_symbols)
+        select_row.addWidget(refresh_btn)
+        
+        layout.addLayout(select_row)
+        
+        # Yükle butonu
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        load_btn = QPushButton("IdealData'dan Yükle")
+        load_btn.setObjectName("primaryButton")
+        load_btn.clicked.connect(self._load_ideal_data)
+        btn_row.addWidget(load_btn)
+        layout.addLayout(btn_row)
+        
+        # İlk yükleme
+        self._refresh_symbols()
+        
+        return widget
+    
+    def _create_csv_tab(self) -> QWidget:
+        """CSV veri kaynağı tab'ı"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
         
         # CSV dosya seçimi
         csv_row = QHBoxLayout()
@@ -62,17 +138,19 @@ class DataPanel(QWidget):
         # Yükle butonu
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        load_btn = QPushButton("📥 Veriyi Yükle")
+        load_btn = QPushButton("CSV'den Yükle")
         load_btn.setObjectName("primaryButton")
-        load_btn.clicked.connect(self._load_data)
+        load_btn.clicked.connect(self._load_csv_data)
         btn_row.addWidget(load_btn)
         layout.addLayout(btn_row)
         
-        return group
+        layout.addStretch()
+        
+        return widget
     
     def _create_filter_group(self) -> QGroupBox:
         """Filtre grubu"""
-        group = QGroupBox("🔍 Filtreler")
+        group = QGroupBox("Filtreler")
         layout = QHBoxLayout(group)
         
         # Tarih aralığı
@@ -101,7 +179,7 @@ class DataPanel(QWidget):
         layout.addStretch()
         
         # Filtrele butonu
-        filter_btn = QPushButton("🔄 Filtrele")
+        filter_btn = QPushButton("Filtrele")
         filter_btn.clicked.connect(self._apply_filter)
         layout.addWidget(filter_btn)
         
@@ -109,7 +187,7 @@ class DataPanel(QWidget):
     
     def _create_preview_group(self) -> QGroupBox:
         """Önizleme tablosu grubu"""
-        group = QGroupBox("📋 Veri Önizleme")
+        group = QGroupBox("Veri Önizleme")
         layout = QVBoxLayout(group)
         
         # İstatistikler
@@ -127,6 +205,17 @@ class DataPanel(QWidget):
         
         return group
     
+    def _browse_ideal_path(self):
+        """IdealData klasörü seç"""
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "ChartData Klasörü Seç",
+            self.ideal_path_edit.text()
+        )
+        if folder:
+            self.ideal_path_edit.setText(folder)
+            self._refresh_symbols()
+    
     def _browse_csv(self):
         """CSV dosyası seç"""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -138,8 +227,83 @@ class DataPanel(QWidget):
         if file_path:
             self.csv_path_edit.setText(file_path)
     
-    def _load_data(self):
-        """Veriyi yükle"""
+    def _on_market_changed(self, market: str):
+        """Pazar değiştiğinde"""
+        self._refresh_symbols()
+    
+    def _on_period_changed(self, period: str):
+        """Periyot değiştiğinde"""
+        self._refresh_symbols()
+    
+    def _refresh_symbols(self):
+        """Sembolleri yenile"""
+        try:
+            from src.data.ideal_parser import list_symbols
+            
+            chart_data = self.ideal_path_edit.text()
+            market = self.market_combo.currentText()
+            period = self.period_combo.currentText()
+            
+            symbols = list_symbols(chart_data, market, period)
+            
+            self.symbol_combo.clear()
+            self.symbol_combo.addItems(symbols)
+            
+            # Varsayılan olarak X030 seç (varsa)
+            if 'X030' in symbols:
+                self.symbol_combo.setCurrentText('X030')
+            
+        except Exception as e:
+            print(f"Sembol yükleme hatası: {e}")
+    
+    def _load_ideal_data(self):
+        """IdealData'dan veri yükle"""
+        try:
+            from src.data.ideal_parser import load_ideal_data
+            
+            chart_data = self.ideal_path_edit.text()
+            market = self.market_combo.currentText()
+            symbol = self.symbol_combo.currentText()
+            period = self.period_combo.currentText()
+            
+            if not symbol:
+                QMessageBox.warning(self, "Uyarı", "Lütfen bir sembol seçin.")
+                return
+            
+            df = load_ideal_data(chart_data, market, symbol, period)
+            
+            if df is None or len(df) == 0:
+                QMessageBox.warning(self, "Uyarı", f"{symbol} için veri bulunamadı.")
+                return
+            
+            # Kolon isimlerini standartlaştır
+            df = df.rename(columns={
+                'Open': 'Acilis',
+                'High': 'Yuksek',
+                'Low': 'Dusuk',
+                'Close': 'Kapanis',
+                'Volume': 'Lot',
+                'Amount': 'Hacim'
+            })
+            
+            self.df = df
+            self._update_preview()
+            
+            # Signal gönder
+            self.data_loaded.emit(self.df)
+            
+            QMessageBox.information(
+                self, 
+                "Başarılı", 
+                f"{len(df):,} bar yüklendi.\n"
+                f"Tarih: {df['DateTime'].min()} - {df['DateTime'].max()}"
+            )
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Hata", f"Veri yüklenirken hata: {str(e)}")
+    
+    def _load_csv_data(self):
+        """CSV'den veri yükle"""
         csv_path = self.csv_path_edit.text().strip()
         
         if not csv_path:
@@ -186,8 +350,8 @@ class DataPanel(QWidget):
             QMessageBox.information(
                 self, 
                 "Başarılı", 
-                f"✅ {len(df):,} satır yüklendi.\n"
-                f"Tarih aralığı: {df['DateTime'].min()} - {df['DateTime'].max()}"
+                f"{len(df):,} satır yüklendi.\n"
+                f"Tarih: {df['DateTime'].min()} - {df['DateTime'].max()}"
             )
             
         except Exception as e:
@@ -224,20 +388,23 @@ class DataPanel(QWidget):
         
         # İstatistikler
         self.stats_label.setText(
-            f"📊 Toplam: {len(df):,} satır | "
-            f"📅 {df['DateTime'].min().strftime('%Y-%m-%d')} → {df['DateTime'].max().strftime('%Y-%m-%d')}"
+            f"Toplam: {len(df):,} bar | "
+            f"{df['DateTime'].min().strftime('%Y-%m-%d')} -> {df['DateTime'].max().strftime('%Y-%m-%d')}"
         )
         
         # Tablo (son 100 satır)
         preview_df = df.tail(100)
         cols = ['DateTime', 'Acilis', 'Yuksek', 'Dusuk', 'Kapanis', 'Lot']
         
+        # Mevcut kolonları kullan
+        available_cols = [c for c in cols if c in preview_df.columns]
+        
         self.preview_table.setRowCount(len(preview_df))
-        self.preview_table.setColumnCount(len(cols))
-        self.preview_table.setHorizontalHeaderLabels(cols)
+        self.preview_table.setColumnCount(len(available_cols))
+        self.preview_table.setHorizontalHeaderLabels(available_cols)
         
         for row_idx, (_, row) in enumerate(preview_df.iterrows()):
-            for col_idx, col in enumerate(cols):
+            for col_idx, col in enumerate(available_cols):
                 value = row[col]
                 if col == 'DateTime':
                     text = str(value)[:19]

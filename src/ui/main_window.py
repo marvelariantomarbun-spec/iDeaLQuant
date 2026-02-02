@@ -16,6 +16,7 @@ from PySide6.QtGui import QIcon
 from .widgets.data_panel import DataPanel
 from .widgets.strategy_panel import StrategyPanel
 from .widgets.optimizer_panel import OptimizerPanel
+from .widgets.validation_panel import ValidationPanel
 from .widgets.export_panel import ExportPanel
 
 
@@ -67,13 +68,15 @@ class MainWindow(QMainWindow):
         self.data_panel = DataPanel()
         self.strategy_panel = StrategyPanel()
         self.optimizer_panel = OptimizerPanel()
+        self.validation_panel = ValidationPanel()
         self.export_panel = ExportPanel()
         
         # Tab'ları ekle
-        self.tab_widget.addTab(self.data_panel, "📊 Veri")
-        self.tab_widget.addTab(self.strategy_panel, "⚙️ Strateji")
-        self.tab_widget.addTab(self.optimizer_panel, "🔬 Optimizer")
-        self.tab_widget.addTab(self.export_panel, "📤 Export")
+        self.tab_widget.addTab(self.data_panel, "Veri")
+        self.tab_widget.addTab(self.strategy_panel, "Strateji")
+        self.tab_widget.addTab(self.optimizer_panel, "Optimizer")
+        self.tab_widget.addTab(self.validation_panel, "Validasyon")
+        self.tab_widget.addTab(self.export_panel, "Export")
         
         main_layout.addWidget(self.tab_widget)
         
