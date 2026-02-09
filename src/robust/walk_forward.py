@@ -19,7 +19,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 # Proje kök dizini
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, PROJECT_ROOT)
 
 from src.optimization.genetic_optimizer import GeneticOptimizer, GeneticConfig, FitnessEvaluator
 from src.optimization.strategy2_optimizer import load_data, IndicatorCache, fast_backtest_strategy2
@@ -142,9 +143,24 @@ class WalkForwardAnalysis:
         print(f"Ortalama Test PF: {avg_pf:.2f}")
         print(f"Kazançlı Pencereler: {win_windows}/{total_windows} (%{win_windows/total_windows*100:.1f})")
         
-        # Stability Ratio (Test Profit / Train Profit normalized)
-        # Basitçe kararlılık kontrolü
-        
+        # Walk-Forward Efficiency Ratio (WFE)
+        # WFE = OOS Toplam Kar / IS Toplam Kar
+        # %50+ geçerli kabul edilir, %100+ mükemmel
+        total_train_profit = sum(r['train_metrics']['net_profit'] for r in self.results)
+        if total_train_profit > 0:
+            wfe = (total_profit / total_train_profit) * 100
+            print(f"Walk-Forward Efficiency: %{wfe:.1f}")
+            if wfe >= 50:
+                print(f"  → Strateji robust görünüyor (WFE >= %50)")
+            else:
+                print(f"  ⚠ Overfit riski yüksek (WFE < %50)")
+        else:
+            print(f"Walk-Forward Efficiency: N/A (Train karı <= 0)")
+            wfe = 0.0
+
+        # Genel özet satırı ekle
+        print(f"\nStability Ratio: {win_windows}/{total_windows} = %{win_windows/total_windows*100:.1f}")
+
         # CSV Kaydet
         summary_data = []
         for r in self.results:
@@ -156,14 +172,19 @@ class WalkForwardAnalysis:
                 'Test_NP': r['test_metrics']['net_profit'],
                 'Test_PF': r['test_metrics']['pf'],
                 'Test_DD': r['test_metrics']['max_dd'],
+                'WFE': wfe,
                 **r['params']
             }
             summary_data.append(row)
             
         df_res = pd.DataFrame(summary_data)
-        os.makedirs("d:/Projects/IdealQuant/results", exist_ok=True)
-        df_res.to_csv("d:/Projects/IdealQuant/results/walk_forward_results.csv", index=False)
-        print("Detaylı sonuçlar kaydedildi: results/walk_forward_results.csv")
+        
+        results_dir = os.path.join(PROJECT_ROOT, "results")
+        os.makedirs(results_dir, exist_ok=True)
+        
+        output_path = os.path.join(results_dir, "walk_forward_results.csv")
+        df_res.to_csv(output_path, index=False)
+        print(f"Detaylı sonuçlar kaydedildi: {output_path}")
 
 if __name__ == "__main__":
     # Test çalıştırması

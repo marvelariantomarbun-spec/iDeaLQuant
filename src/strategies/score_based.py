@@ -18,9 +18,10 @@ from .holidays import BAYRAM_TARIHLERI, RESMI_TATILLER, is_holiday_eve, vade_son
 @dataclass
 class ScoreConfig:
     """Skor Strateji Konfigürasyonu (Global Optimized v4.1 - 20 Parametre)"""
-    # 1. Grup: Skor Ayarları (2)
+    # 1. Grup: Skor Ayarları (3)
     min_score: int = 3
     exit_score: int = 3
+    contrary_score_max: int = 2   # Karşıt yön skoru bu değerden küçük olmalı (giriş filtresi)
     
     # 2. Grup: ARS (2)
     ars_period: int = 3
@@ -292,12 +293,12 @@ class ScoreBasedStrategy:
         # Giriş Mantığı (Strateji 2'ye yol verme)
         if current_position == "FLAT":
             if self.yatay_filtre[i] == 1:
-                if l_score >= cfg.min_score and s_score < 2:
+                if l_score >= cfg.min_score and s_score < cfg.contrary_score_max:
                     if return_flat_reason:
                         return (Signal.LONG, None)
                     return Signal.LONG
                     
-                if s_score >= cfg.min_score and l_score < 2:
+                if s_score >= cfg.min_score and l_score < cfg.contrary_score_max:
                     if return_flat_reason:
                         return (Signal.SHORT, None)
                     return Signal.SHORT
@@ -322,6 +323,7 @@ class ScoreBasedStrategy:
         config = ScoreConfig(
             min_score=int(config_dict.get('min_score', 3)),
             exit_score=int(config_dict.get('exit_score', 3)),
+            contrary_score_max=int(config_dict.get('contrary_score_max', 2)),
             ars_period=int(config_dict.get('ars_period', 3)),
             ars_k=float(config_dict.get('ars_k', 0.01)),
             adx_period=int(config_dict.get('adx_period', 17)),

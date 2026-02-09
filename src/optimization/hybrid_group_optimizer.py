@@ -43,6 +43,9 @@ PARAM_TYPE_CONFIG = {
     'threshold_int': (1, 10, 1, 1),     # min_score, exit_score
     'threshold_float': (10.0, 50.0, 5.0, 1.0),  # adx_threshold, netlot_threshold
     'multiplier': (0.5, 3.0, 0.5, 0.1),  # bb_std, atr_sl_mult
+    'threshold_momentum': (50.0, 200.0, 10.0, 5.0),   # Momentum scale (0-200 arası)
+    'multiplier_wide': (1.0, 10.0, 1.0, 0.25),         # Geniş çarpanlar (TP mult gibi)
+    'period_short_wide': (5, 20, 2, 1),                 # Kısa-orta arası periyotlar
 }
 
 # Hangi parametrenin hangi tipte olduğunu belirler
@@ -55,12 +58,13 @@ PARAM_TYPES = {
     'bb_period': 'period_medium', 'bb_std': 'multiplier', 'bb_avg_period': 'period_long', 'bb_width_multiplier': 'multiplier',
     'ars_mesafe_threshold': 'k_factor', 'yatay_ars_bars': 'period_short', 'yatay_adx_threshold': 'threshold_float',
     'filter_score_threshold': 'threshold_int', 'min_score': 'threshold_int', 'exit_score': 'threshold_int',
+    'contrary_score_max': 'threshold_int',
     # Strateji 2
     'ars_ema_period': 'period_short', 'ars_atr_period': 'period_short', 'ars_atr_mult': 'multiplier',
     'ars_min_band': 'k_factor', 'ars_max_band': 'k_factor',
-    'momentum_period': 'period_short', 'momentum_threshold': 'threshold_float', 'breakout_period': 'period_medium',
+    'momentum_period': 'period_short', 'momentum_threshold': 'threshold_momentum', 'breakout_period': 'period_short_wide',
     'mfi_period': 'period_medium', 'mfi_hhv_period': 'period_medium', 'mfi_llv_period': 'period_medium', 'volume_hhv_period': 'period_medium',
-    'atr_exit_period': 'period_medium', 'atr_sl_mult': 'multiplier', 'atr_tp_mult': 'multiplier', 'atr_trail_mult': 'multiplier',
+    'atr_exit_period': 'period_medium', 'atr_sl_mult': 'multiplier', 'atr_tp_mult': 'multiplier_wide', 'atr_trail_mult': 'multiplier',
     'exit_confirm_bars': 'threshold_int', 'exit_confirm_mult': 'multiplier', 'volume_mult': 'multiplier', 'volume_llv_period': 'period_medium',
 }
 
@@ -187,23 +191,22 @@ STRATEGY1_GROUPS = [
         }
     ),
     ParameterGroup(
+        name="Skor_Ayarlari",
+        params={'min_score': [2, 3, 4], 'exit_score': [2, 3, 4], 'contrary_score_max': [1, 2, 3]},
+        is_independent=True,
+        default_values={'min_score': 3, 'exit_score': 3, 'contrary_score_max': 2}
+    ),
+    ParameterGroup(
         name="Yatay_Onay",
         params={
             'ars_mesafe_threshold': [0.20, 0.25, 0.30], 'yatay_ars_bars': [5, 10, 15],
             'yatay_adx_threshold': [15.0, 20.0, 25.0], 'filter_score_threshold': [1, 2, 3],
         },
-        is_independent=True,
+        is_independent=False,
         default_values={
             'ars_mesafe_threshold': 0.25, 'yatay_ars_bars': 10,
             'yatay_adx_threshold': 20.0, 'filter_score_threshold': 2
         }
-    ),
-
-    ParameterGroup(
-        name="Skor_Ayarlari",
-        params={'min_score': [2, 3, 4], 'exit_score': [2, 3, 4]},
-        is_independent=False,
-        default_values={'min_score': 3, 'exit_score': 3}
     ),
 ]
 
@@ -219,22 +222,47 @@ STRATEGY2_GROUPS = [
         default_values={'ars_ema_period': 3, 'ars_atr_period': 10, 'ars_atr_mult': 0.5, 'ars_min_band': 0.002, 'ars_max_band': 0.015}
     ),
     ParameterGroup(
-        name="Giris_Filtreleri",
+        name="Giris_Momentum",
         params={
-            'momentum_period': [5, 7, 10], 'momentum_threshold': [100.0, 150.0], 'breakout_period': [10, 15],
-            'mfi_period': [14, 17], 'mfi_hhv_period': [14], 'mfi_llv_period': [14], 'volume_hhv_period': [14],
+            'momentum_period': [5, 7, 10],
+            'momentum_threshold': [90.0, 100.0, 120.0, 150.0],
+            'breakout_period': [8, 10, 15],
         },
         is_independent=True,
-        default_values={'momentum_period': 5, 'momentum_threshold': 100.0, 'breakout_period': 10, 'mfi_period': 14, 'mfi_hhv_period': 14, 'mfi_llv_period': 14, 'volume_hhv_period': 14}
+        default_values={
+            'momentum_period': 5, 'momentum_threshold': 100.0,
+            'breakout_period': 10,
+        }
+    ),
+    ParameterGroup(
+        name="Giris_MFI_Volume",
+        params={
+            'mfi_period': [10, 14, 17],
+            'mfi_hhv_period': [10, 14, 20],
+            'mfi_llv_period': [10, 14, 20],
+            'volume_hhv_period': [10, 14, 20],
+        },
+        is_independent=True,
+        default_values={
+            'mfi_period': 14, 'mfi_hhv_period': 14,
+            'mfi_llv_period': 14, 'volume_hhv_period': 14
+        }
     ),
     ParameterGroup(
         name="Cikis_Risk",
         params={
-            'atr_exit_period': [14, 17], 'atr_sl_mult': [2.0, 2.5], 'atr_tp_mult': [4.0, 5.0, 6.0],
-            'atr_trail_mult': [2.0, 3.0], 'exit_confirm_bars': [2, 3], 'exit_confirm_mult': [0.75, 1.0, 1.25],
+            'atr_exit_period': [14, 17],
+            'atr_sl_mult': [1.5, 2.0, 2.5],
+            'atr_tp_mult': [3.0, 4.0, 5.0, 6.0],
+            'atr_trail_mult': [1.5, 2.0, 3.0],
+            'exit_confirm_bars': [2, 3],
+            'exit_confirm_mult': [0.75, 1.0, 1.25],
         },
-        is_independent=False,
-        default_values={'atr_exit_period': 14, 'atr_sl_mult': 2.0, 'atr_tp_mult': 5.0, 'atr_trail_mult': 2.0, 'exit_confirm_bars': 2, 'exit_confirm_mult': 1.0}
+        is_independent=True,
+        default_values={
+            'atr_exit_period': 14, 'atr_sl_mult': 2.0, 'atr_tp_mult': 5.0,
+            'atr_trail_mult': 2.0, 'exit_confirm_bars': 2, 'exit_confirm_mult': 1.0
+        }
     ),
     ParameterGroup(
         name="Ince_Ayar",
@@ -375,21 +403,38 @@ def _evaluate_params_static(params: Dict[str, Any], strategy_index: int, commiss
         strategy = ARSTrendStrategyV2.from_config_dict(g_cache, params)
     
     signals, exits_long, exits_short = strategy.generate_all_signals()
-    np_val, trades, pf, dd, sharpe = fast_backtest(g_cache.closes, signals, exits_long, exits_short, commission, slippage)
+    
+    # Trading days calculation
+    trading_days = 252.0
+    if g_cache.dates and len(g_cache.dates) > 1:
+        try:
+            # g_cache.dates is a list of datetime or strings? 
+            # IndicatorCache converts them to list in __init__
+            # Let's assume they are comparable or convertable
+            start_date = g_cache.dates[0]
+            end_date = g_cache.dates[-1]
+            if hasattr(start_date, 'date'):
+                delta = end_date - start_date
+                trading_days = delta.days
+            else:
+                 # String format fallback if needed, but IndicatorCache usually has datetime objects if parsed correctly
+                 pass
+        except:
+            pass
+            
+    np_val, trades, pf, dd, sharpe = fast_backtest(g_cache.closes, signals, exits_long, exits_short, commission, slippage, trading_days=trading_days)
     
     # Fitness hesapla
-    fit = quick_fitness(np_val, pf, dd, trades, commission=commission, slippage=slippage)
+    fit = quick_fitness(np_val, pf, dd, trades, sharpe=sharpe, commission=commission, slippage=slippage)
     
     return {'net_profit': np_val, 'trades': trades, 'pf': pf, 'max_dd': dd, 'sharpe': sharpe, 'fitness': fit}
 
-def fast_backtest(closes, signals, exits_long, exits_short, commission: float = 0.0, slippage: float = 0.0) -> Tuple[float, int, float, float, float]:
+def fast_backtest(closes, signals, exits_long, exits_short, commission: float = 0.0, slippage: float = 0.0, trading_days: float = 252.0) -> Tuple[float, int, float, float, float]:
     pos, entry_price, gross_profit, gross_loss, trades, max_dd, peak_equity, current_equity = 0, 0.0, 0.0, 0.0, 0, 0.0, 0.0, 0.0
     
     # Sharpe hesabı için (Welford's algorithm benzeri kümülatif m2)
     # R: Toplam pnl of trade, N: trade count, M2: Sum of squares of differences from the current mean
-    # Yıllık Sharpe = (Mean / Std) * Sqrt(252 * GünlükİşlemSayısı)
-    # Burada basitçe Trade Sharpe * Sqrt(TradeSayısı) yaklaşık bir metrik verecektir.
-    # Ancak doğrusu equity curve üzerinden gitmek. Hız için trade pnl array'i toplayalım.
+    # Yıllık Sharpe = (Mean / Std) * Sqrt(Yıllık Trade Sayısı)
     trade_pnls = []
 
     cost_per_trade = commission + slippage
@@ -427,15 +472,16 @@ def fast_backtest(closes, signals, exits_long, exits_short, commission: float = 
     
     # Basit Sharpe (Trade-based)
     sharpe = 0.0
-    n_trades = len(trade_pnls)
-    if n_trades > 1:
-        avg_pnl = sum(trade_pnls) / n_trades
-        # Variance calc (sample variance)
-        variance = sum([(p - avg_pnl)**2 for p in trade_pnls]) / (n_trades - 1)
-        std_dev = variance ** 0.5
-        if std_dev > 1e-9:  # Sifira bolmekten kacin
-            # Trade-based Sharpe, normalize edilmis
-            sharpe = (avg_pnl / std_dev) * (n_trades ** 0.5) 
+    if len(trade_pnls) > 1:
+        # Gerçek yıllık trade sayısını hesapla
+        # Eğer trading_days 0 veya çok küçükse default 252 kullan
+        if trading_days < 1: trading_days = 252.0
+        
+        # Yıllık trade frekansı = Toplam Trade / (Toplam Gün / 252)
+        # Yani: trades * (252 / trading_days)
+        trades_per_year_metric = len(trade_pnls) * (252.0 / trading_days)
+        
+        sharpe = calculate_sharpe(np.array(trade_pnls), trades_per_year=trades_per_year_metric)
 
     return net_profit, trades, pf, max_dd, sharpe
 

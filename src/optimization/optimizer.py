@@ -6,6 +6,7 @@ Ryzen 9 9950X (32 thread) için optimize edilmiş paralel motor.
 
 import itertools
 import time
+import inspect  # Moved to top for optimization
 from typing import List, Dict, Any, Callable, Type
 from concurrent.futures import ProcessPoolExecutor
 import pandas as pd
@@ -80,15 +81,18 @@ class GridOptimizer:
             extreme_price = 0.0
             trades = []
             
+            # Döngüden ÖNCE — bir kez kontrol et
+            has_entry_price_param = False
+            if hasattr(strategy, 'get_signal'):
+                sig_params = inspect.signature(strategy.get_signal).parameters
+                has_entry_price_param = 'entry_price' in sig_params
+            
             n = len(closes)
             for i in range(1, n):
                 # Sinyal al
                 # V2 stratejisi entry_price ve extreme_price bekliyor
                 if hasattr(strategy, 'get_signal'):
-                    # Strateji tipine göre dinamik çağrı
-                    import inspect
-                    sig = inspect.signature(strategy.get_signal)
-                    if 'entry_price' in sig.parameters:
+                    if has_entry_price_param:
                         signal = strategy.get_signal(i, current_position, entry_price, extreme_price)
                     else:
                         signal = strategy.get_signal(i, current_position)

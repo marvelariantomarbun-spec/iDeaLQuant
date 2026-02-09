@@ -42,7 +42,6 @@ class MonteCarloSimulator:
             
         final_equities = []
         max_drawdowns = []
-        ruin_probabilities = [] # Sermayenin %X'ini kaybetme ihtimali
         
         n_trades = len(self.trades)
         
@@ -82,6 +81,14 @@ class MonteCarloSimulator:
         median_dd = np.median(max_drawdowns)
         median_profit = np.median(final_equities) - self.initial_capital
         
+        # Çoklu percentil analizi
+        percentiles = {
+            'p1': 1, 'p5': 5, 'p10': 10, 'p25': 25,
+            'p50': 50, 'p75': 75, 'p90': 90, 'p95': 95, 'p99': 99
+        }
+        equity_percentiles = {k: np.percentile(final_equities, v) - self.initial_capital for k, v in percentiles.items()}
+        dd_percentiles = {k: np.percentile(max_drawdowns, v) for k, v in percentiles.items()}
+
         result = {
             'simulations': num_simulations,
             'original_profit': np.sum(self.trades),
@@ -89,7 +96,9 @@ class MonteCarloSimulator:
             'worst_case_profit': worst_case_equity - self.initial_capital,
             'median_max_dd': median_dd,
             'worst_case_max_dd': worst_case_dd, # %95 güvenle MaxDD bundan kötü olmaz
-            'risk_of_ruin_20pct': p_ruin
+            'risk_of_ruin_20pct': p_ruin,
+            'equity_percentiles': equity_percentiles,
+            'dd_percentiles': dd_percentiles,
         }
         
         return result
@@ -110,6 +119,17 @@ class MonteCarloSimulator:
         print(f"Medyan MaxDD     : {result['median_max_dd']:,.2f} TL")
         print(f"Kötü Senaryo DD  : {result['worst_case_max_dd']:,.2f} TL (%95 ihtimal)")
         print(f"Batış Riski (%20): %{result['risk_of_ruin_20pct']:.1f}")
+        
+        # Detaylı Percentil Tablosu
+        if 'equity_percentiles' in result:
+            print(f"\n{'Percentil':<12} {'Kar (TL)':>12} {'Max DD (TL)':>12}")
+            print("-" * 38)
+            ep = result['equity_percentiles']
+            dp = result['dd_percentiles']
+            for key in ['p1', 'p5', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95', 'p99']:
+                label = key.replace('p', '%')
+                print(f"{label:<12} {ep[key]:>12,.2f} {dp[key]:>12,.2f}")
+        
         print("=======================================")
 
 if __name__ == "__main__":
