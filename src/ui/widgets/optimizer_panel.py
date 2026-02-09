@@ -597,8 +597,14 @@ class OptimizationWorker(QThread):
             signals, ex_long, ex_short = strategy.generate_all_signals()
             
             # Backtest
+            trading_days = 252.0
+            if test_cache.dates and len(test_cache.dates) > 1:
+                try:
+                    trading_days = (test_cache.dates[-1] - test_cache.dates[0]).days
+                except: pass
+
             net, trades, pf, dd, sharpe = self._simple_backtest(
-                test_cache.closes, signals, ex_long, ex_short
+                test_cache.closes, signals, ex_long, ex_short, trading_days=trading_days
             )
             
             return {
@@ -612,7 +618,7 @@ class OptimizationWorker(QThread):
             print(f"Validasyon hatasi: {e}")
             return {}
 
-    def _simple_backtest(self, closes, signals, ex_long, ex_short):
+    def _simple_backtest(self, closes, signals, ex_long, ex_short, trading_days: float = 252.0):
         """Basit backtest ve Sharpe hesabi"""
         pos, entry_price = 0, 0.0
         gross_profit, gross_loss, trades = 0.0, 0.0, 0
@@ -656,7 +662,9 @@ class OptimizationWorker(QThread):
         from src.optimization.fitness import calculate_sharpe
         sharpe = 0.0
         if len(trade_returns) > 1:
-            sharpe = calculate_sharpe(np.array(trade_returns))
+            if trading_days < 1: trading_days = 252.0
+            trades_per_year_metric = len(trade_returns) * (252.0 / trading_days)
+            sharpe = calculate_sharpe(np.array(trade_returns), trades_per_year=trades_per_year_metric)
             
         return net, trades, pf, max_dd, sharpe
 

@@ -1,0 +1,75 @@
+// IdealQuant Master Robot (Strateji Birleştirici)
+// Strateji 1 (Yatay/Score) ve Strateji 2 (Trend/ARS) Sinyalleri Birleştirilir.
+// Kural: Strateji 2 (Trend) sadece Strateji 1 (Yatay/Score) de aynı yöndeyse işlem açar.
+
+// --- AYARLAR ---
+var Sembol = Sistem.Sembol;
+var Periyot = Sistem.Periyot;
+
+// Alt Sistem İsimleri (Export edilen dosyalar buraya girilmeli)
+var SistemAdi1 = "VIP_X030-T_1DK_Gatekeeper"; // Strateji 1 (Score Based)
+var SistemAdi2 = "VIP_X030-T_1DK_Trend";      // Strateji 2 (ARS Trend)
+
+// --- SİSTEMLERİ GETİR ---
+// Sistem.SistemGetir("SistemAdı", "Sembol", "Periyot")
+var S1 = Sistem.SistemGetir(SistemAdi1, Sembol, Periyot);
+var S2 = Sistem.SistemGetir(SistemAdi2, Sembol, Periyot);
+
+if (S1 == null || S2 == null) 
+{
+    Sistem.Mesaj("Alt sistemlerden biri bulunamadı! İsimleri kontrol edin.");
+    return;
+}
+
+// --- VERİ HAZIRLIĞI ---
+var V = Sistem.GrafikVerileri;
+var Yon1 = S1.Yon; // Strateji 1 Yön Dizisi
+var Yon2 = S2.Yon; // Strateji 2 Yön Dizisi
+var SonYon = "";
+
+// --- KARAR MEKANİZMASI (GATEKEEPER) ---
+for (int i = 0; i < V.Count; i++)
+{
+    // Varsayılan: Eğer bir sinyal yoksa önceki yönü koru veya Flat kal
+    // Ancak referans mantığında açıkça "Uyumsuzsa Flat" denmiş.
+
+    // Durum 1: İkisi de AL diyorsa -> AL
+    if (Yon2[i] == "A" && (Yon1[i] == "A")) 
+    {
+        if (SonYon != "A") 
+        {
+            Sistem.Yon[i] = "A";
+            SonYon = "A";
+        }
+    }
+    // Durum 2: İkisi de SAT diyorsa -> SAT
+    else if (Yon2[i] == "S" && (Yon1[i] == "S"))
+    {
+        if (SonYon != "S") 
+        {
+            Sistem.Yon[i] = "S";
+            SonYon = "S";
+        }
+    }
+    // Durum 3: Uyumsuzluk -> FLAT
+    // (Trend AL dedi ama Yatay SAT diyor -> Çelişki -> Nakitte Kal)
+    else if (SonYon != "F")
+    {
+         Sistem.Yon[i] = "F";
+         SonYon = "F";
+    }
+}
+
+// --- GÖRSELLEŞTİRME (Opsiyonel) ---
+// Alt sistemlerin son durumunu ekrana yaz
+var SonY1 = Yon1[V.Count-1];
+var SonY2 = Yon2[V.Count-1];
+var Renk = Color.Gold;
+
+Sistem.ZeminYazisiEkle("Ana Sistem: " + SonYon, 1, 20, 20, Renk, "Tahoma", 15);
+Sistem.ZeminYazisiEkle("S1 (Gatekeeper): " + SonY1, 1, 20, 50, Color.Silver, "Tahoma", 10);
+Sistem.ZeminYazisiEkle("S2 (Trend): " + SonY2, 1, 20, 70, Color.Silver, "Tahoma", 10);
+
+// Emir Gönder (Canlı işlem için gerekli)
+Sistem.EmirSembol = Sembol;
+Sistem.EmirMiktari = 1;

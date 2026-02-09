@@ -53,6 +53,10 @@ class StrategyConfigV2:
     
     # Vade Yönetimi
     vade_tipi: str = "ENDEKS" # "ENDEKS" veya "SPOT"
+
+    # Legacy/Fallback (use_atr_exit=False için)
+    kar_al_pct: float = 1.5        # Yüzde bazlı kar alma (ör: %1.5)
+    iz_stop_pct: float = 0.8       # Yüzde bazlı izleyen stop (ör: %0.8)
     
     def get_max_period(self) -> int:
         """En uzun indikatör periyodunu hesapla - Isınma periyodu için"""
@@ -586,6 +590,8 @@ class ARSTrendStrategyV2:
             volume_llv_period=config_dict.get('volume_llv_period', 14),
             use_atr_exit=config_dict.get('use_atr_exit', True),
             vade_tipi=config_dict.get('vade_tipi', 'ENDEKS'),
+            kar_al_pct=float(config_dict.get('kar_al_pct', 1.5)),
+            iz_stop_pct=float(config_dict.get('iz_stop_pct', 0.8)),
         )
         
         # Data cache'den değerleri al

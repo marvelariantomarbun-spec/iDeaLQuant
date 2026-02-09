@@ -310,11 +310,22 @@ class FitnessEvaluator:
         # Actually, ARSPulseStrategy returns position signals (1, -1, 0).
         # We need to adapt it for the core backtest engine.
         
+        # Trading days calculation
+        trading_days = 252.0
+        if self.dates and len(self.dates) > 1:
+            try:
+                start_date = self.dates[0]
+                end_date = self.dates[-1]
+                if hasattr(start_date, 'date'):
+                    trading_days = (end_date - start_date).days
+            except:
+                pass
+
         # Position-to-Trade calculation logic
-        np_val, trades, pf, dd, sharpe = fast_backtest(closes, signals, (signals == 0), (signals == 0), self.commission, self.slippage)
+        np_val, trades, pf, dd, sharpe = fast_backtest(closes, signals, (signals == 0), (signals == 0), self.commission, self.slippage, trading_days=trading_days)
         
         fitness = quick_fitness(
-            np_val, pf, dd, trades,
+            np_val, trades, pf, dd, sharpe=sharpe,
             initial_capital=10000.0,
             commission=self.commission,
             slippage=self.slippage
@@ -355,12 +366,20 @@ class FitnessEvaluator:
         strategy = ScoreBasedStrategy.from_config_dict(cache, params)
         signals, exits_long, exits_short = strategy.generate_all_signals()
         
+        # Trading days calculation
+        trading_days = 252.0
+        if self.dates and len(self.dates) > 1:
+            try:
+                trading_days = (self.dates[-1] - self.dates[0]).days
+            except:
+                pass
+        
         # Backtest
-        np_val, trades, pf, dd, sharpe = fast_backtest(self.closes, signals, exits_long, exits_short, self.commission, self.slippage)
+        np_val, trades, pf, dd, sharpe = fast_backtest(self.closes, signals, exits_long, exits_short, self.commission, self.slippage, trading_days=trading_days)
         
         # Fitness hesapla (fitness.py'deki standart mantık)
         fitness = quick_fitness(
-            np_val, pf, dd, trades, 
+            np_val, trades, pf, dd, sharpe=sharpe,
             initial_capital=10000.0,
             commission=self.commission,
             slippage=self.slippage
@@ -629,7 +648,16 @@ class FitnessEvaluator:
         from src.optimization.fitness import quick_fitness, calculate_sharpe
         sharpe = 0.0
         if len(trade_returns) > 1:
-            sharpe = calculate_sharpe(np.array(trade_returns))
+            trading_days = 252.0
+            if self.dates and len(self.dates) > 1:
+                try:
+                   trading_days = (self.dates[-1] - self.dates[0]).days
+                except: pass
+            
+            if trading_days < 1: trading_days = 252.0
+            trades_per_year_metric = len(trade_returns) * (252.0 / trading_days)
+            
+            sharpe = calculate_sharpe(np.array(trade_returns), trades_per_year=trades_per_year_metric)
 
         fitness = quick_fitness(
             net_profit + (trades * cost_per_trade), # quick_fitness'a brüt karı veriyoruz, o maliyeti düşecek

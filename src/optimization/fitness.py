@@ -59,55 +59,6 @@ def calculate_fitness(
     pf = metrics.get('pf', 0)
     max_dd = metrics.get('max_dd', 0)
     trades = metrics.get('trades', 0)
-    
-    # 0. Maliyet Düşümü
-    total_cost = trades * (config.commission + config.slippage)
-    adjusted_profit = net_profit - total_cost
-    
-    if adjusted_profit <= 0:
-        return adjusted_profit - 1000 # Zarar edenler dipte kalsın
-    
-    fitness = adjusted_profit
-    
-    # 1. Profit Factor "Sweet Spot" (Kullanıcı Talebi)
-    # 1.5 altı -> Ciddi ceza
-    # 1.5 - 2.5 -> Bonus
-    # 2.5 üzeri -> Azalan getiri (Overfit şüphesi)
-    if pf < 1.25:
-        fitness *= 0.1 # Çöp
-    elif pf < 1.5:
-        fitness *= 0.5 # Kabul edilebilir sınırın altı
-    elif 1.5 <= pf <= 2.5:
-        fitness *= (1 + (pf - 1.5)) # Bonus: Örn PF 2.0 -> %50 bonus
-    elif pf > 3.0:
-        fitness *= 0.8 # Overfit cezası (Şüphe)
-        
-    # 2. Max DD Limit
-    dd_ratio = max_dd / config.initial_capital
-    if dd_ratio > config.max_dd_ratio:
-        fitness *= (0.2 / dd_ratio) # Limit aşıldıkça puan erir
-        
-    # 3. İşlem Sayısı (İstatistiksel Güvenilirlik)
-    if trades < 50:
-        fitness *= (trades / 50) # Yetersiz veri cezası
-    elif trades > 1000:
-        fitness *= (1000 / trades) ** 2 # Overtrading - Sert Ceza
-        
-    # 4. İşlem Başı Ortalama Kar
-    avg_profit = adjusted_profit / trades if trades > 0 else 0
-    if avg_profit < config.min_avg_profit:
-        fitness *= (avg_profit / config.min_avg_profit) ** 2
-
-    # 5. Sharpe Ratio Bonusu (Yeni)
-    sharpe = metrics.get('sharpe', 0)
-    if sharpe > 2.0:
-        fitness *= 1.1 # %10 Bonus
-    elif sharpe < 0.5:
-        fitness *= 0.8 # Riskli
-
-    return fitness
-
-
 def quick_fitness(
     net_profit: float,
     pf: float,
@@ -166,20 +117,29 @@ def quick_fitness(
 
     return score
 
-def calculate_sharpe(returns: np.array, risk_free=0.0) -> float:
-    """Sharpe Oranı hesapla (Yıllıklandırılmış)"""
+def calculate_sharpe(returns: np.array, risk_free=0.0, trades_per_year=252.0) -> float:
+    """
+    Yıllıklandırılmış Sharpe Ratio hesapla.
+
+    Args:
+        returns: İşlem bazlı getiri listesi (PnL veya % return)
+        risk_free: Risksiz getiri oranı (varsayılan 0)
+        trades_per_year: Yıllık ortalama işlem sayısı (varsayılan 252)
+                         Günlük getiri için 252, trade bazlı için gerçek yıllık trade sayısı kullanın.
+
+    Returns:
+        float: Yıllıklandırılmış Sharpe Ratio
+    """
     if len(returns) < 2: return 0.0
     
-    excess_returns = returns - risk_free/252
+    excess_returns = returns - risk_free/trades_per_year
     mean_excess = np.mean(excess_returns)
     std_excess = np.std(excess_returns, ddof=1)
     
     if std_excess == 0: return 0.0
     
-    # Günlük veriden yıllık Sharpe (karekök 252)
-    # Eğer trade bazlı ise trade sayısı üzerinden normalize edilmeli
-    # Biz burada basitçe mean/std * sqrt(N) kullanıyoruz
-    return (mean_excess / std_excess) * np.sqrt(len(returns))
+    # Yıllıklandırma: Trade başına ortalama getiri / std * sqrt(yıllık trade sayısı)
+    return (mean_excess / std_excess) * np.sqrt(trades_per_year)
 
 
 # Test

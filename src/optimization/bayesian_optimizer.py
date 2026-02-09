@@ -192,14 +192,22 @@ class BayesianObjective:
             strat = ARSPulseStrategy(**params)
             signals, _ = strat.run(df)
             
+            # Trading days calculation
+            trading_days = 252.0
+            if self.cache.dates and len(self.cache.dates) > 1:
+                try:
+                    trading_days = (self.cache.dates[-1] - self.cache.dates[0]).days
+                except: pass
+            
             # Backtest
-            np_val, trades, pf, dd, sharpe = fast_backtest(self.cache.closes, signals, (signals == 0), (signals == 0), self.commission, self.slippage)
+            np_val, trades, pf, dd, sharpe = fast_backtest(self.cache.closes, signals, (signals == 0), (signals == 0), self.commission, self.slippage, trading_days=trading_days)
             
             return {
                 'net_profit': np_val,
                 'trades': trades,
                 'pf': pf,
                 'max_dd': dd,
+                'fitness': np_val, # Simple fitness
                 'win_count': trades // 2
             }
         except Exception as e:
@@ -215,11 +223,18 @@ class BayesianObjective:
             strategy = ScoreBasedStrategy.from_config_dict(self.cache, params)
             signals, exits_long, exits_short = strategy.generate_all_signals()
             
+            # Trading days calculation
+            trading_days = 252.0
+            if self.cache.dates and len(self.cache.dates) > 1:
+                try:
+                    trading_days = (self.cache.dates[-1] - self.cache.dates[0]).days
+                except: pass
+            
             # Backtest
-            np_val, trades, pf, dd, sharpe = fast_backtest(self.cache.closes, signals, exits_long, exits_short, self.commission, self.slippage)
+            np_val, trades, pf, dd, sharpe = fast_backtest(self.cache.closes, signals, exits_long, exits_short, self.commission, self.slippage, trading_days=trading_days)
             
             # Fitness hesapla
-            fit = quick_fitness(np_val, pf, dd, trades, commission=self.commission, slippage=self.slippage)
+            fit = quick_fitness(np_val, pf, dd, trades, sharpe=sharpe, commission=self.commission, slippage=self.slippage)
             
             return {
                 'net_profit': np_val,
@@ -231,6 +246,41 @@ class BayesianObjective:
             }
         except Exception as e:
             return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'win_count': 0}
+
+    # ... (skipping _evaluate_strategy2 wrapper) ...
+
+    def _run_backtest(self, params: Dict[str, Any], commission: float = 0.0, slippage: float = 0.0) -> Dict[str, float]:
+        # ... (initial part of _run_backtest remains same until end) ...
+        # ... (skipping to the end where sharpe is calculated) ...
+        
+        # Fitness hesapla
+        from src.optimization.fitness import quick_fitness
+        
+        sharpe = 0.0
+        if len(trade_returns) > 1:
+            trading_days = 252.0
+            if self.cache.dates and len(self.cache.dates) > 1:
+                try:
+                   trading_days = (self.cache.dates[-1] - self.cache.dates[0]).days
+                except: pass
+            
+            if trading_days < 1: trading_days = 252.0
+            trades_per_year_metric = len(trade_returns) * (252.0 / trading_days)
+            
+            sharpe = calculate_sharpe(np.array(trade_returns), trades_per_year=trades_per_year_metric)
+            
+        fit = quick_fitness(net_profit + (trades * cost_per_trade), pf, max_dd, trades, 
+                           sharpe=sharpe,
+                           commission=commission, slippage=slippage)
+        
+        return {
+            'net_profit': net_profit,
+            'trades': trades,
+            'pf': pf,
+            'max_dd': max_dd,
+            'fitness': fit,
+            'win_count': 0 # TODO: Gerçek win_count
+        }
     
     def _evaluate_strategy2(self, params: Dict[str, Any]) -> Dict[str, float]:
         """Strateji 2 için fitness hesapla - inline backtest"""
