@@ -1,0 +1,724 @@
+//************* ROBOT: DİPTEN & ZİRVEDEN DÖNÜŞ TARAMA V2 *************
+
+// AYARLAR
+// SSL/TLS Fix
+System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls12;
+var ApiToken = "8581068218:AAEcQ7_-Bl38JeIs1ifpvZusm4QXBz_uFBY"; 
+var ChatIdMain = "-1003038562147";
+
+// Dosya Yolları
+string BaseDir = "C:\\iDeal\\TARAMA_LOG\\DIP\\";
+string DosyaDebug = BaseDir + "Debug.txt";
+
+// Klasör Kontrolü
+if (!System.IO.Directory.Exists("C:\\iDeal\\TARAMA_LOG")) System.IO.Directory.CreateDirectory("C:\\iDeal\\TARAMA_LOG");
+if (!System.IO.Directory.Exists(BaseDir)) System.IO.Directory.CreateDirectory(BaseDir);
+    
+// Helper: Dosyaya Güvenli Yazma
+Action<string, string, bool> DosyayaYaz = (dosya, icerik, append) => {
+    for (int i = 0; i < 5; i++) {
+        try {
+            if (append) System.IO.File.AppendAllText(dosya, icerik);
+            else System.IO.File.WriteAllText(dosya, icerik);
+            break;
+        } catch { System.Threading.Thread.Sleep(50); }
+    }
+};
+
+var Periyotlar = new List<string> { "60", "240", "G" };
+var TumSinyalSembolleri = new System.Collections.Generic.HashSet<string>();
+
+foreach (var Periyot in Periyotlar)
+{
+    var Now = DateTime.Now;
+    var TimeStart = new TimeSpan(09, 55, 00);
+    var TimeEnd = new TimeSpan(18, 20, 00);
+    bool InSession = (Now.TimeOfDay >= TimeStart && Now.TimeOfDay <= TimeEnd);
+    
+    var KeyLastScan = "LastScanTime_Clock_" + Periyot;
+    var LastScanObj = Sistem.NesneGetir(KeyLastScan);
+    DateTime LastScan = LastScanObj == null ? DateTime.MinValue : (DateTime)LastScanObj;
+    
+    int modDakika = 30; // 60, 240, G icin 30dk
+    if (Periyot == "5" || Periyot == "15") modDakika = 15; // 5 ve 15 icin 15dk
+    
+    int currentBlock = Now.Minute / modDakika;
+    int lastBlock = LastScan.Minute / modDakika;
+    
+    // OZEL DURUM: 18:15 Kapanis Taramasi
+    if (Now.Hour == 18 && Now.Minute >= 15) currentBlock = 99; // Force new block
+
+    bool NewBlock = (LastScan.Date != Now.Date) || (LastScan.Hour != Now.Hour) || (currentBlock != lastBlock);
+    bool IsInWindow = (Now.Minute % modDakika <= 3); 
+    
+    // 18:15 Penceresi
+    if (Now.Hour == 18 && Now.Minute >= 15) IsInWindow = (Now.Minute >= 15 && Now.Minute <= 19); 
+    
+    bool TimeTrigger = InSession && NewBlock && IsInWindow;
+    
+    if (TimeTrigger) 
+    {
+        Sistem.NesneKaydet(KeyLastScan, Now);
+        DosyayaYaz(DosyaDebug, DateTime.Now + " DEBUG: Tarama Basliyor (" + Periyot + ")\r\n", true);
+        
+        bool periyottaSinyalVar = false; 
+        string DosyaDip = BaseDir + "Sinyal_Dip_" + Periyot + ".txt";
+        string DosyaZirve = BaseDir + "Sinyal_Zirve_" + Periyot + ".txt";
+        string DosyaZaman = BaseDir + "Sinyal_Zaman_" + Periyot + ".txt";
+        
+        DosyayaYaz(DosyaDip, "", false);
+        DosyayaYaz(DosyaZirve, "", false);
+
+        // --- Aktif Sinyalleri Oku (Tekrar kontrolü için) ---
+        var aktifSinyaller = new HashSet<string>();
+        string dbFile = "C:\\iDeal\\Sinyal_Log_Database.txt";
+        if (System.IO.File.Exists(dbFile)) {
+            var lines = System.IO.File.ReadAllLines(dbFile);
+            foreach (var line in lines) {
+                var c = line.Split('|');
+                // Format: Sembol|Strateji|Periyot|...|DURUM
+                if (c.Length > 5 && c[5] == "AKTIF") {
+                    aktifSinyaller.Add(c[0] + "|" + c[2]); // "Sembol|Periyot" anahtarı
+                }
+            }
+        }
+
+        var DosyaYolu = "C:\\iDeal\\SembolListeleri\\TeFo.txt";
+        var CacheKey = "TeFo_Listesi_" + Sistem.Tarih;
+        var SembollerListesi = Sistem.NesneGetir(CacheKey) as List<string>;
+
+        if (SembollerListesi == null)
+        {
+            if (System.IO.File.Exists(DosyaYolu)) {
+                SembollerListesi = System.IO.File.ReadAllLines(DosyaYolu)
+                                    .Select(x => x.Trim())
+                                    .Where(x => !string.IsNullOrEmpty(x))
+                                    .ToList();
+                Sistem.NesneKaydet(CacheKey, SembollerListesi);
+                DosyayaYaz(DosyaDebug, Now + " INFO: Sembol listesi dosyadan okundu (" + SembollerListesi.Count + " adet).\r\n", true);
+            }
+            else {
+                SembollerListesi = Sistem.SembolAdListesi("BIST100", "E");
+                DosyayaYaz(DosyaDebug, Now + " WARN: TeFo.txt bulunamadi, BIST100 kullaniliyor.\r\n", true);
+            }
+        }
+        
+        if (SembollerListesi == null || SembollerListesi.Count == 0) {
+             DosyayaYaz(DosyaDebug, DateTime.Now + " ERROR: Sembol listesi BOS!\r\n", true);
+             continue;
+        }
+
+        Action<string, string, string, float> VeritabaninaYaz = (semb, strat, per, fyt) => {
+            try {
+                if (!System.IO.File.Exists(dbFile)) {
+                    System.IO.File.WriteAllText(dbFile, "Sembol|Strateji|Periyot|Tarih|GirisFiyat|DURUM|CikisTarih|CikisFiyat|PnL%|Sebep\r\n");
+                }
+                
+                bool kayitVar = false;
+                if (System.IO.File.Exists(dbFile)) {
+                    var lines = System.IO.File.ReadAllLines(dbFile).ToList();
+                    for (int k=lines.Count-1; k>=0; k--) { 
+                        var c = lines[k].Split('|');
+                        if (c.Length > 3 && c[0] == semb && c[1] == strat && c[2] == per) {
+                            DateTime dt;
+                            if (DateTime.TryParse(c[3], out dt) && dt.Date == DateTime.Now.Date) {
+                                kayitVar = true; break;
+                            }
+                        }
+                    }
+                }
+                
+                if (!kayitVar) {
+                    string newLine = semb + "|" + strat + "|" + per + "|" + DateTime.Now.ToString() + "|" + fyt + "|AKTIF||0";
+                    System.IO.File.AppendAllText(dbFile, newLine + "\r\n");
+                }
+            } catch {}
+        };
+
+        // --- PIYASA PUANI (MARKET SCORE) HESAPLAMA (XU100 & XU030) ---
+        Func<string, Tuple<int, int, int>> HesaplaPiyasaPuani = (sembolEndeks) => {
+            var V_G = Sistem.GrafikVerileriniOku("IMKBH'" + sembolEndeks, "G");
+            var V_60 = Sistem.GrafikVerileriniOku("IMKBH'" + sembolEndeks, "60");
+            
+            int score = 0;
+            int dipMod = 0;
+            int zirveMod = 0;
+
+            if (V_G != null && V_G.Count > 50 && V_60 != null && V_60.Count > 50) {
+                var C_G = Sistem.GrafikFiyatOku(V_G, "Kapanis");
+                var EMA50_G = Sistem.MA(C_G, "Exp", 50);
+                var RSI_G = Sistem.RSI(V_G, 14);
+                var MACD_G = Sistem.MACD(V_G, 12, 26);
+                var MACD_Sig_G = Sistem.MA(MACD_G, "Exp", 9);
+                
+                var C_60 = Sistem.GrafikFiyatOku(V_60, "Kapanis");
+                var EMA20_60 = Sistem.MA(C_60, "Exp", 20);
+                var SuperTrend_60 = Sistem.SuperTrend(V_60, 10, 3);
+
+                int bi_G = V_G.Count - 1;
+                int bi_60 = V_60.Count - 1;
+
+                if (C_G[bi_G] > EMA50_G[bi_G]) score += 20;
+                if (C_60[bi_60] > EMA20_60[bi_60]) score += 20;
+                if (RSI_G[bi_G] > 50) score += 20;
+                if (MACD_G[bi_G] > MACD_Sig_G[bi_G]) score += 20;
+                if (C_60[bi_60] > SuperTrend_60[bi_60]) score += 20;
+                
+                // MOD BELIRLEME (DIP ve ZIRVE icin ters mantik)
+                if (score < 40) { 
+                    // AYI PIYASASI
+                    dipMod = 3; // Dip bulmak zorlassin (Dusen bicak riski)
+                    zirveMod = -2; // Zirve (Short) bulmak kolaylassin
+                }
+                else if (score > 60) {
+                    // BOGA PIYASASI
+                    dipMod = 0; // Normal
+                    zirveMod = 3; // Zirve (Short) bulmak zorlassin (Trend tersi islem)
+                }
+                else {
+                    // YATAY
+                    dipMod = 1;
+                    zirveMod = 1;
+                }
+            }
+            return Tuple.Create(score, dipMod, zirveMod);
+        };
+
+        var MarketXU100 = HesaplaPiyasaPuani("XU100");
+        var MarketXU030 = HesaplaPiyasaPuani("XU030");
+
+        DosyayaYaz(DosyaDebug, string.Format("{0} INFO: XU100 Score={1} (Dip+{2}/Zirve+{3}) | XU030 Score={4} (Dip+{5}/Zirve+{6})\r\n", 
+            DateTime.Now, MarketXU100.Item1, MarketXU100.Item2, MarketXU100.Item3, 
+            MarketXU030.Item1, MarketXU030.Item2, MarketXU030.Item3), true);
+
+        int tarandiCount = 0;
+        for (var i = 0; i < SembollerListesi.Count; i++)
+        {
+            var Sembol = SembollerListesi[i];
+            
+            // --- VIOP vs HISSE AYRIMI ---
+            bool isViop = Sembol.Contains("VIP") || Sembol.StartsWith("F_");
+            int currentDipMod = isViop ? MarketXU030.Item2 : MarketXU100.Item2;
+            int currentZirveMod = isViop ? MarketXU030.Item3 : MarketXU100.Item3;
+            try 
+            {
+                Sistem.GrafikVerileri = null;
+                Sistem.BarSayisi = 0;
+                
+                var V_Raw = Sistem.GrafikVerileriniOku(Sembol, Periyot);
+                if (V_Raw == null || V_Raw.Count < 200) {
+                     if (i < 5) DosyayaYaz(DosyaDebug, DateTime.Now + " WARN: " + Sembol + " verisi eksik!\r\n", true);
+                     continue;
+                }
+                var V = V_Raw.Count > 400 ? V_Raw.GetRange(V_Raw.Count - 400, 400) : V_Raw;
+                
+                Sistem.GrafikVerileri = V;
+                Sistem.BarSayisi = V.Count;
+                
+                if (i % 50 == 0) DosyayaYaz(DosyaDebug, DateTime.Now + " DEBUG: Isleniyor... " + i + "/" + SembollerListesi.Count + "\r\n", true);
+                
+                tarandiCount++;
+
+                var C = Sistem.GrafikFiyatOku(V, "Kapanis");
+                var H = Sistem.GrafikFiyatOku(V, "Yuksek");
+                var L = Sistem.GrafikFiyatOku(V, "Dusuk");
+                var O = Sistem.GrafikFiyatOku(V, "Acilis");
+                var Vol = Sistem.GrafikFiyatOku(V, "Hacim");
+                var barIndex = V.Count - 1; 
+
+                var RSI = Sistem.RSI(V, 14);
+                
+                // Stochastic
+                var StochK = Sistem.StochasticFast(V, 14, 3);
+                var StochD = Sistem.StochasticSlow(V, 14, 3);
+                
+                var MFI = Sistem.MoneyFlowIndex(V, 14);
+                var Mom = Sistem.Momentum(V, 10);
+                var Pivot = Sistem.PivotMid(V);  // Pivot Point list
+                var MA5 = Sistem.MA(C, "Simple", 5);
+                var MA10 = Sistem.MA(C, "Simple", 10);
+                var ADX = Sistem.ADX(V, 14);
+                
+                // Bollinger Bands (Zirve icin)
+                var BB_Up = Sistem.BollingerUp(C, 20, 2);
+                var BB_Down = Sistem.BollingerDown(C, 20, 2);
+                var BB_Mid = Sistem.MA(C, "Simple", 20);
+
+                // --- DIP PUANLAMA (Dipten Donus) ---
+                int ratingDip = 0;
+
+                // 1. ASIRI SATIM (Temel Sart)
+                if (RSI[barIndex] < 30) ratingDip += 1;
+                if (RSI[barIndex] < 25) ratingDip += 1; // 20 yerine 25 yaptik
+                if (StochK[barIndex] < 20) ratingDip += 1;
+                if (MFI[barIndex] < 20) ratingDip += 1;
+
+                // 2. DONUS SINYALLERI (Reversal Signals)
+                // RSI Pozitif Uyumsuzluk Benzeri (Fiyat duserken RSI artiyor/yatay)
+                if (barIndex > 2) {
+                    if (L[barIndex] <= L[barIndex-2] && RSI[barIndex] > RSI[barIndex-2]) ratingDip += 3;
+                }
+                
+                // Mum Formasyonu (Yutan Boga / Hammer Benzeri)
+                bool yesilMum = C[barIndex] > O[barIndex];
+                bool yuksekKapanis = C[barIndex] > C[barIndex-1];
+                if (yesilMum && yuksekKapanis) ratingDip += 2;
+                
+                // Stoch Cross
+                if (StochK[barIndex] > StochD[barIndex]) ratingDip += 2;
+
+                // 3. TREND TEYIDI (Erken)
+                if (C[barIndex] > MA5[barIndex]) ratingDip += 1;
+                if (Mom[barIndex] > 100) ratingDip += 1;
+
+                // FILTER: ADX (Trend cok gucluyse donus zordur)
+                if (ADX[barIndex] > 40) ratingDip -= 2; // Cok guclu dusus trendi varsa girme
+
+                if (i < 5) {
+                    DosyayaYaz(DosyaDebug, "DEBUG " + Sembol + ": RSI=" + RSI[barIndex].ToString("0.0") + 
+                               " ScoreDip=" + ratingDip + "\r\n", true);
+                }
+
+                // Eşik: 10 Puan + Mod
+                bool dip_ok = (ratingDip >= (10 + currentDipMod));
+                
+                if (dip_ok) {
+                     DosyayaYaz(DosyaDebug, "SINYAL DIP: " + Sembol + " Score=" + ratingDip + "\r\n", true);
+                }
+
+                // --- ZIRVE PUANLAMA (Tepeden Donus / Short) ---
+                int ratingZirve = 0;
+                
+                // 1. ASIRI ALIM (Temel Sart)
+                if (RSI[barIndex] > 70) ratingZirve += 1;
+                if (RSI[barIndex] > 75) ratingZirve += 1;
+                if (StochK[barIndex] > 80) ratingZirve += 1;
+                if (MFI[barIndex] > 80) ratingZirve += 1;
+
+                // 2. DONUS SINYALLERI
+                // RSI Negatif Uyumsuzluk Benzeri
+                if (barIndex > 2) {
+                    if (H[barIndex] >= H[barIndex-2] && RSI[barIndex] < RSI[barIndex-2]) ratingZirve += 3;
+                }
+                
+                // Bollinger Band Re-entry (Band disina cikip iceri giren)
+                if (H[barIndex] > BB_Up[barIndex] && C[barIndex] < BB_Up[barIndex]) ratingZirve += 3;
+
+                // Mum Formasyonu (Kirmizi Mum)
+                if (C[barIndex] < O[barIndex] && C[barIndex] < C[barIndex-1]) ratingZirve += 2;
+
+                // Stoch Cross Down
+                if (StochK[barIndex] < StochD[barIndex]) ratingZirve += 2;
+
+                // 3. TREND ZAYIFLAMA
+                if (C[barIndex] < MA5[barIndex]) ratingZirve += 1;
+
+                // FILTER: ADX
+                if (ADX[barIndex] > 40) ratingZirve -= 2; // Cok guclu yukselis varsa shortlama
+
+                if (i < 5) {
+                    DosyayaYaz(DosyaDebug, "DEBUG " + Sembol + ": ScoreZirve=" + ratingZirve + "\r\n", true);
+                }
+
+                // Eşik: 10 Puan + Mod (Eskiden 12 idi, sinyal gelmediği için 10'a çekildi)
+                bool zirve_ok = (ratingZirve >= (10 + currentZirveMod));
+
+                if (zirve_ok) {
+                     DosyayaYaz(DosyaDebug, "SINYAL ZIRVE: " + Sembol + " Score=" + ratingZirve + "\r\n", true);
+                }
+
+                // DOSYAYA YAZMA
+                if (dip_ok) 
+                {
+                    periyottaSinyalVar = true;
+                    TumSinyalSembolleri.Add(Sembol);
+                    
+                    var sembolTemiz = Sembol.Replace("VIP'VIP-", "VIP-").Replace("IMKBH'", "").Trim();
+                    
+                    // Tekrar eden sinyal mi kontrolü
+                    bool isTekrar = aktifSinyaller.Contains(sembolTemiz + "|" + Periyot);
+
+                    // Günlük değişim hesaplama (Tablo için)
+                    float gunlukDegisim = 0;
+                    float gunlukHacimDegisim = 0;
+                    
+                    try {
+                        var V_Gunluk = Sistem.GrafikVerileriniOku(Sembol, "G");
+                        if (V_Gunluk != null && V_Gunluk.Count >= 2) {
+                            var C_G = Sistem.GrafikFiyatOku(V_Gunluk, "Kapanis");
+                            var Vol_G = Sistem.GrafikFiyatOku(V_Gunluk, "Hacim");
+                            int gi = V_Gunluk.Count - 1;
+                            
+                            gunlukDegisim = ((C_G[gi] - C_G[gi-1]) / C_G[gi-1]) * 100;
+                            gunlukHacimDegisim = ((Vol_G[gi] - Vol_G[gi-1]) / Vol_G[gi-1]) * 100;
+                        }
+                    } catch { }
+                    
+                    // Format: Sembol|Periyot|Fiyat|Hacim%|Fiyat%|Skor|Tekrar|Open|High|Low|Close|Vol|XU100
+                    string ohlc = O[barIndex].ToString("0.00") + "|" + H[barIndex].ToString("0.00") + "|" + L[barIndex].ToString("0.00") + "|" + C[barIndex].ToString("0.00") + "|" + Vol[barIndex].ToString("0");
+                    string xu100Val = "0";
+                    try { 
+                        var xu100V = Sistem.GrafikVerileriniOku("IMKBH'XU100", "G");
+                        if(xu100V != null && xu100V.Count > 0) xu100Val = xu100V[xu100V.Count-1].Close.ToString("0.00");
+                    } catch {}
+
+                    string satir = string.Format("{0}|{1}|{2}|{3}|{4}|{5}/15|{6}|{7}|{8}",
+                        sembolTemiz, Periyot, C[barIndex].ToString("0.00"), 
+                        "%" + gunlukHacimDegisim.ToString("0.0"), "%" + gunlukDegisim.ToString("0.0"), ratingDip, isTekrar ? "T" : "",
+                        ohlc, xu100Val);
+                    DosyayaYaz(DosyaDip, satir + "|||", true);
+                    
+                    VeritabaninaYaz(sembolTemiz, "DIP_V2", Periyot, C[barIndex]);
+                }
+
+                if (zirve_ok) 
+                {
+                    periyottaSinyalVar = true;
+                    TumSinyalSembolleri.Add(Sembol);
+                    
+                    var sembolTemiz = Sembol.Replace("VIP'VIP-", "VIP-").Replace("IMKBH'", "").Trim();
+
+                    // Tekrar eden sinyal mı kontrolü
+                    bool isTekrar = aktifSinyaller.Contains(sembolTemiz + "|" + Periyot);
+
+                    // Günlük değişim hesaplama (Tablo için)
+                    float gunlukDegisim = 0;
+                    float gunlukHacimDegisim = 0;
+                    
+                    try {
+                        var V_Gunluk = Sistem.GrafikVerileriniOku(Sembol, "G");
+                        if (V_Gunluk != null && V_Gunluk.Count >= 2) {
+                            var C_G = Sistem.GrafikFiyatOku(V_Gunluk, "Kapanis");
+                            var Vol_G = Sistem.GrafikFiyatOku(V_Gunluk, "Hacim");
+                            int gi = V_Gunluk.Count - 1;
+                            
+                            gunlukDegisim = ((C_G[gi] - C_G[gi-1]) / C_G[gi-1]) * 100;
+                            gunlukHacimDegisim = ((Vol_G[gi] - Vol_G[gi-1]) / Vol_G[gi-1]) * 100;
+                        }
+                    } catch { }
+
+                    // Format: Sembol|Periyot|Fiyat|Hacim%|Fiyat%|Skor|Tekrar|Open|High|Low|Close|Vol|XU100
+                    string ohlc = O[barIndex].ToString("0.00") + "|" + H[barIndex].ToString("0.00") + "|" + L[barIndex].ToString("0.00") + "|" + C[barIndex].ToString("0.00") + "|" + Vol[barIndex].ToString("0");
+                    string xu100Val = "0";
+                    try { 
+                        var xu100V = Sistem.GrafikVerileriniOku("IMKBH'XU100", "G");
+                        if(xu100V != null && xu100V.Count > 0) xu100Val = xu100V[xu100V.Count-1].Close.ToString("0.00");
+                    } catch {}
+                    
+                    string satir = string.Format("{0}|{1}|{2}|{3}|{4}|{5}/15|{6}|{7}|{8}",
+                        sembolTemiz, Periyot, C[barIndex].ToString("0.00"),
+                        "%" + gunlukHacimDegisim.ToString("0.0"), "%" + gunlukDegisim.ToString("0.0"), ratingZirve, isTekrar ? "T" : "",
+                         ohlc, xu100Val);
+                    DosyayaYaz(DosyaZirve, satir + "|||", true);
+                    
+                    VeritabaninaYaz(sembolTemiz, "ZIRVE_V2", Periyot, C[barIndex]);
+                }
+
+            } catch (Exception ex) { 
+                DosyayaYaz(DosyaDebug, "ERROR: " + Sembol + " " + ex.Message + "\r\n", true); 
+            }
+        }
+        
+        DosyayaYaz(DosyaDebug, DateTime.Now + " OZET - Taranan:" + tarandiCount + ", Sinyal:" + periyottaSinyalVar + "\r\n", true);
+
+        if (periyottaSinyalVar)
+        {
+            DosyayaYaz(DosyaZaman, DateTime.Now.ToString("o"), false);
+            try 
+            {
+                string mesajGovde = "";
+                bool veriVar = false;
+
+                if (System.IO.File.Exists(DosyaDip)) 
+                {
+                    var ham = System.IO.File.ReadAllText(DosyaDip);
+                    if (!string.IsNullOrEmpty(ham)) 
+                    {
+                        var satirlar = new System.Collections.Generic.List<string>(ham.ToString().Split(new[] { "|||" }, StringSplitOptions.RemoveEmptyEntries));
+                        var uniqueSatirlar = new System.Collections.Generic.HashSet<string>(satirlar);
+                        var finalListe = new System.Collections.Generic.List<string>(uniqueSatirlar);
+
+                        // CLEANUP: Remove invalid lines (Count mismatch fix)
+                        finalListe.RemoveAll(x => x.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray().Length < 6);
+
+                        // ROBUST SORTING
+                        finalListe.Sort((a, b) => { 
+                            try {
+                                var partsA = a.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                                var partsB = b.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                                
+                                if (partsA.Length >= 6 && partsB.Length >= 6) {
+                                    int scoreA = int.Parse(partsA[5].Split('/')[0].Trim());
+                                    int scoreB = int.Parse(partsB[5].Split('/')[0].Trim());
+                                    return scoreB.CompareTo(scoreA);
+                                }
+                            } catch { }
+                            return 0;
+                        });
+                        
+                        // En yüksek 2 farklı skoru bul
+                        var topScoresDip = finalListe.Select(x => {
+                            try { 
+                                var parts = x.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                                return int.Parse(parts[5].Split('/')[0].Trim()); 
+                            } catch { return 0; }
+                        }).Distinct().OrderByDescending(s => s).Take(2).ToHashSet();
+
+                        string perLabel = Periyot == "G" ? "Günlük" : Periyot + "dk";
+                        string baslik = "DİPTEN DÖNÜŞ (AL) - " + perLabel;
+                        
+                        string t = "<b>" + baslik + " (" + finalListe.Count + " Adet)</b>\n";
+                        t += "<pre>";
+                        t += "Sembol    |Per|Fiyat   |Hacim%  |Fiyat%  |Skor  \n";
+                        t += "----------|---|--------|--------|--------|------\n";
+                        
+                        for (int i = 0; i < finalListe.Count; i++)
+                        {
+                            // ROBUST PARSING
+                            var parts = finalListe[i].Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries)
+                                                    .Select(p => p.Trim()).ToArray();
+
+                            // Format: Sembol|Periyot|Fiyat|Hacim%|Fiyat%|Skor|Tekrar
+                            if (parts.Length >= 6) {
+                                string p_sembol = parts[0];
+                                string p_per = parts[1];
+                                string p_fiyat = parts[2];
+                                string p_hacim = parts[3];
+                                string p_fiyatDeg = parts[4];
+                                string p_skor = parts[5];
+                                string p_tekrar = parts.Length > 6 ? parts[6] : "";
+                                
+                                int scoreVal = 0;
+                                try { scoreVal = int.Parse(p_skor.Split('/')[0].Trim()); } catch {}
+
+                                string tekrarIsareti = (p_tekrar == "T") ? " (T)" : "";
+                                // Padding Fix
+                                string sembol = (p_sembol + tekrarIsareti).PadRight(10).Substring(0,10);
+                                string per = p_per.PadRight(3).Substring(0,3);
+                                string fiyat = p_fiyat.PadRight(8).Substring(0,8);
+                                string hacim = p_hacim.PadRight(8).Substring(0,8);
+                                string fiyatDeg = p_fiyatDeg.PadRight(8).Substring(0,8);
+                                string skorPadded = p_skor.PadRight(6);
+                                string line = sembol + "|" + per + "|" + fiyat + "|" + hacim + "|" + fiyatDeg + "|" + skorPadded;
+                                
+                                string star = topScoresDip.Contains(scoreVal) ? "⭐" : "  ";
+                                t += star + line + "\n";
+                            }
+                        }
+                        t += "</pre>\n\n";
+                        
+                        mesajGovde += t;
+                        veriVar = true;
+                    }
+                }
+
+                if (System.IO.File.Exists(DosyaZirve)) 
+                {
+                    var ham = System.IO.File.ReadAllText(DosyaZirve);
+                    if (!string.IsNullOrEmpty(ham)) 
+                    {
+                        var satirlar = new System.Collections.Generic.List<string>(ham.ToString().Split(new[] { "|||" }, StringSplitOptions.RemoveEmptyEntries));
+                        var uniqueSatirlar = new System.Collections.Generic.HashSet<string>(satirlar);
+                        var finalListe = new System.Collections.Generic.List<string>(uniqueSatirlar);
+
+                        // CLEANUP: Remove invalid lines (Count mismatch fix)
+                        finalListe.RemoveAll(x => x.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray().Length < 6);
+
+                        // ROBUST SORTING
+                        finalListe.Sort((a, b) => { 
+                            try {
+                                var partsA = a.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                                var partsB = b.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                                
+                                if (partsA.Length >= 6 && partsB.Length >= 6) {
+                                    int scoreA = int.Parse(partsA[5].Split('/')[0].Trim());
+                                    int scoreB = int.Parse(partsB[5].Split('/')[0].Trim());
+                                    return scoreB.CompareTo(scoreA);
+                                }
+                            } catch { }
+                            return 0;
+                        });
+                        
+                        var topScoresZirve = finalListe.Select(x => {
+                            try { 
+                                var parts = x.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                                return int.Parse(parts[5].Split('/')[0].Trim()); 
+                            } catch { return 0; }
+                        }).Distinct().OrderByDescending(s => s).Take(2).ToHashSet();
+
+                        string perLabel = Periyot == "G" ? "Günlük" : Periyot + "dk";
+                        string baslik = "ZİRVEDEN DÖNÜŞ (SAT) - " + perLabel;
+                        
+                        string t = "<b>" + baslik + " (" + finalListe.Count + " Adet)</b>\n";
+                        t += "<pre>";
+                        t += "Sembol    |Per|Fiyat   |Hacim%  |Fiyat%  |Skor  \n";
+                        t += "----------|---|--------|--------|--------|------\n";
+                        
+                        for (int i = 0; i < finalListe.Count; i++)
+                        {
+                            // ROBUST PARSING
+                            var parts = finalListe[i].Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries)
+                                                    .Select(p => p.Trim()).ToArray();
+
+                            if (parts.Length >= 6) {
+                                string p_sembol = parts[0];
+                                string p_per = parts[1];
+                                string p_fiyat = parts[2];
+                                string p_hacim = parts[3];
+                                string p_fiyatDeg = parts[4];
+                                string p_skor = parts[5];
+                                string p_tekrar = parts.Length > 6 ? parts[6] : "";
+                                
+                                int scoreVal = 0;
+                                try { scoreVal = int.Parse(p_skor.Split('/')[0].Trim()); } catch {}
+
+                                string tekrarIsareti = (p_tekrar == "T") ? " (T)" : "";
+                                // Padding Fix
+                                string sembol = (p_sembol + tekrarIsareti).PadRight(10).Substring(0,10);
+                                string per = p_per.PadRight(3).Substring(0,3);
+                                string fiyat = p_fiyat.PadRight(8).Substring(0,8);
+                                string hacim = p_hacim.PadRight(8).Substring(0,8);
+                                string fiyatDeg = p_fiyatDeg.PadRight(8).Substring(0,8);
+                                string skorPadded = p_skor.PadRight(6);
+                                string line = sembol + "|" + per + "|" + fiyat + "|" + hacim + "|" + fiyatDeg + "|" + skorPadded;
+
+                                string star = topScoresZirve.Contains(scoreVal) ? "⭐" : "  ";
+                                t += star + line + "\n";
+                            }
+                        }
+                        t += "</pre>\n\n";
+                        
+                        mesajGovde += t;
+                        veriVar = true;
+                    }
+                }
+
+                if (veriVar)
+                {
+                    System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls12;
+
+                    int maxLen = 4000;
+                    if (mesajGovde.Length <= maxLen)
+                    {
+                        string urlString = "https://api.telegram.org/bot" + ApiToken + "/sendMessage?chat_id=" + ChatIdMain + "&text=" + System.Uri.EscapeDataString(mesajGovde) + "&parse_mode=HTML";
+                        var request = System.Net.WebRequest.Create(urlString);
+                        request.Timeout = 15000;
+                        using (var response = request.GetResponse()) { }
+                        DosyayaYaz(DosyaDebug, DateTime.Now + " SUCCESS: Mesaj gonderildi.\r\n", true);
+                    }
+                    else
+                    {
+                        DosyayaYaz(DosyaDebug, DateTime.Now + " INFO: Mesaj parcalaniyor...\r\n", true);
+                        
+                        Action<List<string>, string> ParcaliGonder = (liste, baslik) => {
+                            int chunkSize = 40;
+                            for (int i = 0; i < liste.Count; i += chunkSize)
+                            {
+                                var parca = liste.GetRange(i, Math.Min(chunkSize, liste.Count - i));
+                                string t = "<b>" + baslik + " (Parça " + (i/chunkSize + 1) + ")</b>\n";
+                                t += "<pre>";
+                                t += "Sembol    |Per|Fiyat   |Hacim%  |Fiyat%  \n";
+                                t += "----------|---|--------|--------|--------\n";
+                                t += string.Join("\n", parca); // WARNING: Parcali gonderim detayli parsing gerektirir
+                                // FIXED PARCALI GONDERIM LOOP
+                                foreach(var satir in parca) {
+                                     // ROBUST PARSING REPEATED FOR FRAGMENTS
+                                     var parts = satir.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                                     if (parts.Length >= 6) {
+                                        string p_sembol = parts[0];
+                                        string p_per = parts[1];
+                                        string p_fiyat = parts[2];
+                                        string p_hacim = parts[3];
+                                        string p_fiyatDeg = parts[4];
+                                        string p_skor = parts[5];
+                                        string p_tekrar = parts.Length > 6 ? parts[6] : "";
+                                        string tekrarIsareti = (p_tekrar == "T") ? " (T)" : "";
+                                        
+                                        string sembol = (p_sembol + tekrarIsareti).PadRight(10).Substring(0,10);
+                                        string per = p_per.PadRight(3).Substring(0,3);
+                                        string fiyat = p_fiyat.PadRight(8).Substring(0,8);
+                                        string hacim = p_hacim.PadRight(8).Substring(0,8);
+                                        string fiyatDeg = p_fiyatDeg.PadRight(8).Substring(0,8);
+
+                                        t += sembol + "|" + per + "|" + fiyat + "|" + hacim + "|" + fiyatDeg + "\n";
+                                     }
+                                }
+                                t += "</pre>\n\n";
+                                
+                                string url = "https://api.telegram.org/bot" + ApiToken + "/sendMessage?chat_id=" + ChatIdMain + "&text=" + System.Uri.EscapeDataString(t) + "&parse_mode=HTML";
+                                var req = System.Net.WebRequest.Create(url);
+                                req.Timeout = 15000;
+                                using (var res = req.GetResponse()) { }
+                                System.Threading.Thread.Sleep(1000);
+                            }
+                        };
+
+                        if (System.IO.File.Exists(DosyaDip)) {
+                            var ham = System.IO.File.ReadAllText(DosyaDip);
+                            if (!string.IsNullOrEmpty(ham)) {
+                                var satirlar = new System.Collections.Generic.List<string>(ham.ToString().Split(new[] { "|||" }, StringSplitOptions.RemoveEmptyEntries));
+                                var uniqueSatirlar = new System.Collections.Generic.HashSet<string>(satirlar);
+                                var finalListe = new System.Collections.Generic.List<string>(uniqueSatirlar);
+                                
+                                // CLEANUP: Remove invalid lines (Count mismatch fix)
+                                finalListe.RemoveAll(x => x.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray().Length < 6);
+                                
+                                finalListe.Sort((a, b) => { 
+                                    try {
+                                        var partsA = a.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                                        var partsB = b.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                                        if (partsA.Length >= 6 && partsB.Length >= 6) {
+                                            int scoreA = int.Parse(partsA[5].Split('/')[0].Trim());
+                                            int scoreB = int.Parse(partsB[5].Split('/')[0].Trim());
+                                            return scoreB.CompareTo(scoreA);
+                                        }
+                                    } catch { }
+                                    return 0;
+                                });
+                                
+                                string perLabel = Periyot == "G" ? "Günlük" : Periyot + "dk";
+                                ParcaliGonder(finalListe, "DİPTEN DÖNÜŞ (AL) - " + perLabel);
+                            }
+                        }
+
+                        if (System.IO.File.Exists(DosyaZirve)) {
+                            var ham = System.IO.File.ReadAllText(DosyaZirve);
+                            if (!string.IsNullOrEmpty(ham)) {
+                                var satirlar = new System.Collections.Generic.List<string>(ham.ToString().Split(new[] { "|||" }, StringSplitOptions.RemoveEmptyEntries));
+                                var uniqueSatirlar = new System.Collections.Generic.HashSet<string>(satirlar);
+                                var finalListe = new System.Collections.Generic.List<string>(uniqueSatirlar);
+
+                                // CLEANUP: Remove invalid lines (Count mismatch fix)
+                                finalListe.RemoveAll(x => x.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray().Length < 6);
+
+                                finalListe.Sort((a, b) => { 
+                                    try {
+                                        var partsA = a.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                                        var partsB = b.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                                        if (partsA.Length >= 6 && partsB.Length >= 6) {
+                                            int scoreA = int.Parse(partsA[5].Split('/')[0].Trim());
+                                            int scoreB = int.Parse(partsB[5].Split('/')[0].Trim());
+                                            return scoreB.CompareTo(scoreA);
+                                        }
+                                    } catch { }
+                                    return 0;
+                                });
+                                
+                                string perLabel = Periyot == "G" ? "Günlük" : Periyot + "dk";
+                                ParcaliGonder(finalListe, "ZİRVEDEN DÖNÜŞ (SAT) - " + perLabel);
+                            }
+                        }
+                        
+                        DosyayaYaz(DosyaDebug, DateTime.Now + " SUCCESS: Parcali gonderildi.\r\n", true);
+                    }
+
+                    DosyayaYaz(DosyaDip, "", false);
+                    DosyayaYaz(DosyaZirve, "", false);
+                }
+            }
+            catch (Exception ex) { 
+                DosyayaYaz(DosyaDebug, DateTime.Now + " ERROR Telegram: " + ex.Message + "\r\n", true); 
+            }
+        }
+    }
+}

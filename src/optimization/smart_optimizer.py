@@ -29,7 +29,7 @@ def load_data():
     csv_path = "d:/Projects/IdealQuant/data/VIP_X030T_1dk_.csv"
     try:
         if current_process().name == 'MainProcess':
-            print("Veri Yükleniyor...")
+            print("Veri yukleniyor...")
             
         df = pd.read_csv(csv_path, sep=';', decimal=',', encoding='cp1254', header=None, low_memory=False)
         df.columns = ['Tarih', 'Saat', 'Acilis', 'Yuksek', 'Dusuk', 'Kapanis', 'Ortalama', 'Hacim', 'Lot']
@@ -40,7 +40,7 @@ def load_data():
         df.dropna(inplace=True)
         
         if current_process().name == 'MainProcess':
-            print(f"Veri Hazır: {len(df)} Bar")
+            print(f"Veri Hazir: {len(df)} Bar")
             
         return df
     except Exception as e:
@@ -234,7 +234,7 @@ def solve_chunk(args):
 
 # --- OPTIMIZATION MANAGER ---
 def run_parallel_stage(stage_name, params_grid, thresholds):
-    print(f"\\n--- {stage_name} (PARALLEL) BAŞLIYOR ---")
+    print(f"\n--- {stage_name} (PARALLEL) BASLIYOR ---")
     
     ars_emas = params_grid['ars_emas']
     ars_ks = params_grid['ars_ks']
@@ -251,7 +251,7 @@ def run_parallel_stage(stage_name, params_grid, thresholds):
             tasks.append((ars_p, ars_k, params_grid, thresholds))
             
     total_combs = inner_combs * len(tasks)
-    print(f"Toplam Görev: {len(tasks)} | Toplam Kombinasyon: {total_combs:,}")
+    print(f"Toplam Gorev: {len(tasks)} | Toplam Kombinasyon: {total_combs:,}")
     print(f"Kullanılan CPU: {cpu_count()}")
 
     final_results = []
@@ -263,7 +263,7 @@ def run_parallel_stage(stage_name, params_grid, thresholds):
             
     elapsed = time() - start_time
     if elapsed > 0:
-        print(f"\\n{stage_name} Bitti. Süre: {elapsed:.1f}sn. Hız: {total_combs/elapsed:.0f} comb/s. Bulunan: {len(final_results)}")
+        print(f"\n{stage_name} Bitti. Sure: {elapsed:.1f}sn. Hiz: {total_combs/elapsed:.0f} comb/s. Bulunan: {len(final_results)}")
     
     return final_results
 
@@ -297,7 +297,7 @@ def run_3_stage_process():
     results1 = run_parallel_stage("STAGE 1 (UYDU)", stage1_grid, stage1_th)
     
     if not results1: 
-        print("Stage 1 sonuç döndürmedi.")
+        print("Stage 1 sonuc dondurmedi.")
         return
 
     # --- ANALIZ ---
@@ -305,7 +305,7 @@ def run_3_stage_process():
     df_res1['Score'] = df_res1['NP'] * df_res1['PF'] / (1 + df_res1['DD']/5000)
     top_results = df_res1.nlargest(20, 'Score') # Top 20 for Stage 2
     best_row = top_results.iloc[0]
-    print(f"\\n--- STAGE 1 LİDERİ ---\\n{best_row.to_string()}")
+    print(f"\n--- STAGE 1 LIDERI ---\n{best_row.to_string()}")
     
     # --- STAGE 2: LOCAL ZOOM ---
     # Take the best params and scan neighbors
@@ -346,7 +346,7 @@ def run_3_stage_process():
     
     # --- STAGE 3: STABILITY ---
     # Analyze the Stage 2 results to find the most stable cluster
-    print("\\n--- STAGE 3: STABILITY ANALIZI ---")
+    print("\n--- STAGE 3: STABILITE ANALIZI ---")
     df_res2 = pd.DataFrame(results2)
     df_res2['Score'] = df_res2['NP'] * df_res2['PF'] / (1 + df_res2['DD']/5000)
     df_res2 = df_res2.sort_values('Score', ascending=False)
@@ -360,7 +360,7 @@ def run_3_stage_process():
     
     # Save top candidates for analysis
     df_res2.head(50).to_csv("d:/Projects/IdealQuant/results/strategy1_top50.csv", index=False)
-    print(f"\\nSonuçlar kaydedildi: d:/Projects/IdealQuant/results/strategy1_final_results.csv")
+    print(f"\nSonuclar kaydedildi: d:/Projects/IdealQuant/results/strategy1_final_results.csv")
 
 if __name__ == "__main__":
     import multiprocessing
@@ -368,4 +368,4 @@ if __name__ == "__main__":
     try:
         run_3_stage_process()
     except KeyboardInterrupt:
-        print("İşlem kullanıcı tarafından durduruldu.")
+        print("Islem kullanici tarafindan durduruldu.")

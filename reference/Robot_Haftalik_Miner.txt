@@ -1,0 +1,254 @@
+//************* ROBOT: HAFTALIK MADENCİ (WEEKLY MINER) - HIBRIT PUANLAMA *************
+// KURULUM:
+// 1. Bu kodu Robot olarak kaydedin.
+// 2. Herhangi bir grafiği açın ve robotu üzerine sürükleyin.
+// 3. "Bar Kapanışında Çalış" seçeneğini MUTLAKA işaretleyin.
+
+// AYARLAR
+System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls12;
+// Telegram Ayarlari (Eger direkt robot gonderecekse, yoksa C# uygulamasi okuyacak)
+var ApiToken = "8581068218:AAEcQ7_-Bl38JeIs1ifpvZusm4QXBz_uFBY"; 
+var ChatIdMain = "-1003038562147";
+
+// Dosya Yolları
+string BaseDir = "C:\\iDeal\\TARAMA_LOG\\HAFTALIK\\";
+string DosyaDebug = BaseDir + "Debug.txt";
+string DosyaSinyal = BaseDir + "Sinyal_Haftalik.txt";
+
+// Klasör Kontrolü
+if (!System.IO.Directory.Exists("C:\\iDeal\\TARAMA_LOG")) System.IO.Directory.CreateDirectory("C:\\iDeal\\TARAMA_LOG");
+if (!System.IO.Directory.Exists(BaseDir)) System.IO.Directory.CreateDirectory(BaseDir);
+
+// Helper: Dosyaya Güvenli Yazma
+Action<string, string, bool> DosyayaYaz = (dosya, icerik, append) => {
+    for (int i = 0; i < 5; i++) {
+        try {
+            if (append) System.IO.File.AppendAllText(dosya, icerik);
+            else System.IO.File.WriteAllText(dosya, icerik);
+            break;
+        } catch { System.Threading.Thread.Sleep(50); }
+    }
+};
+
+// --- ZAMAN KONTROLÜ (Sadece Pazar aksami 18:00 - 23:59 arasi) ---
+var Now = DateTime.Now;
+bool IsSunday = (Now.DayOfWeek == DayOfWeek.Sunday);
+bool IsTime = (Now.Hour >= 18); // Pazar aksami 18:00'den sonra
+
+var KeyLastScan = "LastScanTime_WeeklyMiner";
+var LastScanObj = Sistem.NesneGetir(KeyLastScan);
+DateTime LastScan = LastScanObj == null ? DateTime.MinValue : (DateTime)LastScanObj;
+
+// Haftada 1 kere calissin
+bool NewWeek = (Now.Date > LastScan.Date && IsSunday); 
+
+// TEST MODU (Simdilik her zaman calissin debug icin, gercekte acilmali)
+// if (!IsSunday || !IsTime || !NewWeek) return; 
+
+if (NewWeek && IsSunday && IsTime)
+{
+    Sistem.NesneKaydet(KeyLastScan, Now);
+    DosyayaYaz(DosyaDebug, DateTime.Now + " DEBUG: HAFTALIK MADENCI Tarama Basliyor...\r\n", true);
+    DosyayaYaz(DosyaSinyal, "", false); // Dosyayi temizle
+    
+    var SembollerListesi = Sistem.SembolAdListesi("BIST100", "E"); // Sadece BIST100 (Kalite icin)
+    
+    // XU100 Verisi (Benchmark)
+    var V_XU100_H = Sistem.GrafikVerileriniOku("IMKBH'XU100", "H");
+    var C_XU100_H = Sistem.GrafikFiyatOku(V_XU100_H, "Kapanis");
+    
+    int taranan = 0;
+    int sinyalSayisi = 0;
+    
+    for (int i = 0; i < SembollerListesi.Count; i++)
+    {
+        var Sembol = SembollerListesi[i];
+        try 
+        {
+            // Haftalik Veri
+            var V_H = Sistem.GrafikVerileriniOku(Sembol, "H");
+            if (V_H == null || V_H.Count < 50) continue;
+            
+            // Gunluk Veri (Fibo ve Akumulasyon icin)
+            var V_G = Sistem.GrafikVerileriniOku(Sembol, "G");
+            if (V_G == null || V_G.Count < 200) continue;
+            
+            taranan++;
+            
+            // --- VERILER ---
+            var C_H = Sistem.GrafikFiyatOku(V_H, "Kapanis");
+            var H_H = Sistem.GrafikFiyatOku(V_H, "Yuksek");
+            var L_H = Sistem.GrafikFiyatOku(V_H, "Dusuk");
+            var O_H = Sistem.GrafikFiyatOku(V_H, "Acilis");
+            var Vol_H = Sistem.GrafikFiyatOku(V_H, "Hacim");
+            int bi_H = V_H.Count - 1;
+            
+            var C_G = Sistem.GrafikFiyatOku(V_G, "Kapanis");
+            var H_G = Sistem.GrafikFiyatOku(V_G, "Yuksek");
+            var L_G = Sistem.GrafikFiyatOku(V_G, "Dusuk");
+            var Vol_G = Sistem.GrafikFiyatOku(V_G, "Hacim"); // Gunluk Hacim Eklendi
+            int bi_G = V_G.Count - 1;
+            
+            // --- INDIKATORLER ---
+            
+            // 1. Haftalik MACD
+            var MACD_H = Sistem.MACD(V_H, 12, 26);
+            var MACD_Sig_H = Sistem.MA(MACD_H, "Exp", 9);
+            
+            // 2. Haftalik RSI
+            var RSI_H = Sistem.RSI(V_H, 14);
+            
+            // 3. Haftalik Hacim
+            var VolMA10_H = Sistem.MA(Vol_H, "Simple", 10);
+            
+            // 4. MFI (Akilli Para)
+            var MFI_H = Sistem.MoneyFlowIndex(V_H, 14);
+            
+            // 5. Gunluk Bollinger Bandwidth (Akumulasyon icin)
+            var BB_Up = Sistem.BollingerUp(C_G, 20, 2);
+            var BB_Down = Sistem.BollingerDown(C_G, 20, 2);
+            // Bandwidth = (Upper - Lower) / Middle
+            // Manuel hesap: (Up - Down)
+            
+            // 6. Fibo Düzeltmesi Tespiti (Gunlukte son 3 ayin zirve ve dibi)
+            // Son 60 bar (yaklasik 3 ay)
+            float maxPrice = 0;
+            float minPrice = 999999;
+            for(int k=0; k<60; k++) {
+                if (bi_G-k < 0) break;
+                if (H_G[bi_G-k] > maxPrice) maxPrice = H_G[bi_G-k];
+                if (L_G[bi_G-k] < minPrice) minPrice = L_G[bi_G-k];
+            }
+            float fibo382 = maxPrice - (maxPrice - minPrice) * 0.382f;
+            float fibo618 = maxPrice - (maxPrice - minPrice) * 0.618f;
+            
+            // --- PUANLAMA (100 Puan Uzerinden) ---
+            int Score = 0;
+            List<string> Reasons = new List<string>();
+            
+            // A. FORMASYON (30p)
+            // --------------------
+            bool isFiboSupport = (C_G[bi_G] >= fibo618 * 0.98f && C_G[bi_G] <= fibo382 * 1.02f); // Fibo bolgesinde mi?
+            bool isAccumulation = false;
+            
+            // Akumulasyon: Son 20 barin Band genisligi dar mi?
+            float currentBandWidth = (BB_Up[bi_G] - BB_Down[bi_G]) / BB_Up[bi_G];
+            if (currentBandWidth < 0.10f) isAccumulation = true; // %10'dan dar bant
+            
+            // Kirilim var mi? (Bugun bandin ustune atti mi?)
+            bool isBreakout = (C_G[bi_G] > BB_Up[bi_G-1] && C_G[bi_G] > C_G[bi_G-1]*1.02f);
+            
+            if (isFiboSupport) { Score += 30; Reasons.Add("FiboDestek"); }
+            else if (isAccumulation && isBreakout) { Score += 30; Reasons.Add("AkumulasyonKirilim"); }
+            
+            // B. TREND & MOMENTUM (25p)
+            // --------------------------
+            if (MACD_H[bi_H] > MACD_Sig_H[bi_H]) { Score += 15; Reasons.Add("MACD_Al"); }
+            if (RSI_H[bi_H] >= 50 && RSI_H[bi_H] <= 75) { Score += 10; Reasons.Add("RSI_Guc"); }
+            
+            // C. AKILLI PARA (20p)
+            // ---------------------
+            if (MFI_H[bi_H] > 50 && MFI_H[bi_H] > MFI_H[bi_H-1]) { Score += 20; Reasons.Add("MFI_Giris"); }
+            
+            // D. ONAY & ALPHA (25p)
+            // ---------------------
+            // Hacim Patlamasi
+            if (Vol_H[bi_H] > VolMA10_H[bi_H] * 1.5f) { Score += 15; Reasons.Add("HacimPatlamasi"); }
+            
+            // Alpha (Endeks goreceli guc)
+            float symbolPerfWan = (C_H[bi_H] - C_H[bi_H-1]) / C_H[bi_H-1];
+            float indexPerfWan = (C_XU100_H[bi_H] - C_XU100_H[bi_H-1]) / C_XU100_H[bi_H-1];
+            if (symbolPerfWan > indexPerfWan) { Score += 10; Reasons.Add("AlphaPozitif"); }
+            
+            
+            // --- FILTRE (ELEMELER) ---
+            // Likidite filtresi
+            float weeklyVolTL = Vol_H[bi_H] * ((H_H[bi_H]+L_H[bi_H])/2);
+            if (weeklyVolTL < 10000000) Score = 0; // 10 Milyon TL alti hacim iptal
+            
+            // --- METRICS ---
+            float chgDay = (C_G[bi_G] - C_G[bi_G-1]) / C_G[bi_G-1] * 100;
+            float chgWeek = (C_H[bi_H] - C_H[bi_H-1]) / C_H[bi_H-1] * 100;
+            float volChgDay = (Vol_G[bi_G] - Vol_G[bi_G-1]) / Vol_G[bi_G-1] * 100;
+            float volChgWeek = (Vol_H[bi_H] - Vol_H[bi_H-1]) / Vol_H[bi_H-1] * 100;
+
+            // ESIK DEGER
+            if (Score >= 60)
+            {
+                sinyalSayisi++;
+                string reasonStr = string.Join(",", Reasons);
+                
+                // Format: Sembol|Strateji|Periyot|Fiyat|Skor/100|Detay|Tekrar|Open|High|Low|Close|Vol|XU100|ChgD|ChgW|VolChgD|VolChgW
+                
+                string ohlc = O_H[bi_H].ToString("0.00") + "|" + H_H[bi_H].ToString("0.00") + "|" + L_H[bi_H].ToString("0.00") + "|" + C_H[bi_H].ToString("0.00") + "|" + Vol_H[bi_H].ToString("0");
+                string xu100Val = C_XU100_H[bi_H].ToString("0.00");
+                
+                // Ekstra Metrikler (Dosyaya yazalim ki signal parser okusun gerekirse)
+                string extra = chgDay.ToString("0.0") + "|" + chgWeek.ToString("0.0") + "|" + volChgDay.ToString("0.0") + "|" + volChgWeek.ToString("0.0");
+
+                string satir = string.Format("{0}|MINER|H|{1}|{2}/100|{3}|{4}|{5}|{6}|{7}",
+                    Sembol, C_H[bi_H].ToString("0.00"), Score, reasonStr, "", // Tekrar
+                    ohlc, xu100Val, extra);
+                    
+                DosyayaYaz(DosyaSinyal, satir + "|||", true);
+                DosyayaYaz(DosyaDebug, "BULUNDU: " + Sembol + " Score=" + Score + " (" + reasonStr + ")\r\n", true);
+            }
+            
+        } catch (Exception ex) {
+            DosyayaYaz(DosyaDebug, "HATA " + Sembol + ": " + ex.Message + "\r\n", true);
+        }
+    }
+    DosyayaYaz(DosyaDebug, "TARAMA BITTI. Toplam Sinyal: " + sinyalSayisi + "\r\n", true);
+    
+    // --- TELEGRAM NOTIFICATION ---
+    if (sinyalSayisi > 0)
+    {
+        try {
+            // Sinyal dosyasini oku (Son sinyaller)
+            string[] lines = System.IO.File.ReadAllLines(DosyaSinyal);
+            if (lines.Length > 0)
+            {
+                string msg = "⛏️ *WEEKLY MINER* (Haftalık Tarama)\\n" + 
+                             "📅 " + DateTime.Now.ToString("dd.MM.yyyy") + "\\n\\n";
+                
+                foreach(string line in lines)
+                {
+                    if (string.IsNullOrEmpty(line)) continue;
+                    var p = line.Split('|');
+                    // p indeksleri: 
+                    // 0:Sembol, 1:Tip, 2:Per, 3:Fiyat, 4:Skor, 5:Detay, 6:Tekrar, 
+                    // 7-11:OHLCV, 12:XU100, 13:ChgD, 14:ChgW, 15:VolChgD, 16:VolChgW
+                    
+                    if (p.Length >= 16) {
+                        string symbol = p[0];
+                        string price = p[3];
+                        string score = p[4];
+                        string reason = p[5];
+                        string chgD = p[13];
+                        string chgW = p[14];
+                        string volD = p[15];
+                        string volW = p[16];
+
+                        msg += "🔹 *" + symbol + "* (" + price + " TL)\\n" + 
+                               "   📈 Fiyat: G%" + chgD + " | H%" + chgW + "\\n" +
+                               "   📊 Hacim: G%" + volD + " | H%" + volW + "\\n" +
+                               "   🎯 Puan: " + score + " (" + reason + ")\\n\\n";
+                    }
+                }
+                
+                // Telegram URL Encode
+                msg = System.Uri.EscapeDataString(msg);
+                string url = "https://api.telegram.org/bot" + ApiToken + "/sendMessage?chat_id=" + ChatIdMain + "&text=" + msg + "&parse_mode=Markdown";
+                
+                // Send
+                System.Net.WebRequest request = System.Net.WebRequest.Create(url);
+                System.Net.WebResponse response = request.GetResponse();
+                response.Close();
+                
+                DosyayaYaz(DosyaDebug, "TELEGRAM GONDERILDI.\\r\\n", true);
+            }
+        } catch (Exception ex) {
+             DosyayaYaz(DosyaDebug, "TELEGRAM HATA: " + ex.Message + "\\r\\n", true);
+        }
+    }
+}

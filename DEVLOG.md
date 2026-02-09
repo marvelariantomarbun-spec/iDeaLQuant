@@ -2,6 +2,26 @@
 
 ---
 
+## 2026-02-06 (Cuma Gece - Gelişmiş Fitness)
+
+### ✅ Yapılanlar
+- **Advanced Fitness & Anti-Overtrading:**
+  - **Smart Selection:** Sadece net kâr değil, strateji kalitesine odaklanan puanlama sistemi.
+  - **PF Limitleri:** Min 1.50 zorunluluğu, PF > 3.0 için "aşırı uyum" cezası.
+  - **Sweet Spot:** 1.50 - 2.50 arası Profit Factor için özel bonus puanı.
+  - **Equity Smoothness (R²):** İstikrarlı büyüyen eğrilere ödül puanı.
+  
+- **UI Transparency (Şeffaflık):**
+  - Optimizer ve Validasyon panellerine **"Fitness"** sütunu eklendi.
+  - Renkli puanlama (Yeşil/Kırmızı) ile strateji kalitesi görselleştirildi.
+  - Validasyon seçim butonları yeni tablo yapısına uyarlandı.
+
+### 📌 Mevcut Durum
+- **Aktif Faz:** Faz 6 - Desktop UI Testi & İyileştirme
+- **Sıradaki Adım:** PyInstaller Build & Son Kullanıcı Testi
+
+---
+
 ## 2026-02-03 (Pazartesi Gece - Geç Seans 01:00-02:30)
 
 ### ✅ Yapılanlar

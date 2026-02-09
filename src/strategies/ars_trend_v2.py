@@ -115,6 +115,14 @@ class ARSTrendStrategyV2:
         # Vade geçişi barlarını tespit et (GAP/Isınma için)
         self.vade_gecis_barlari = self._detect_vade_transitions() if times else set()
         self.warmup_period = self.config.get_max_period()
+        self.atr_val_cache = {} # ATR değerlerini cachelemek için (get_signal içinde)
+        
+        # Warmup State (Strateji 1 ile uyumlu)
+        self.vade_cooldown_bar = self.warmup_period
+        self.warmup_bars = max(50, self.vade_cooldown_bar)
+        self.warmup_aktif = False
+        self.warmup_baslangic_bar = -999
+        self.arefe_flat = False
         
     def _calculate_indicators(self):
         cfg = self.config
@@ -281,44 +289,92 @@ class ARSTrendStrategyV2:
                    extreme_price: float = 0,
                    return_flat_reason: bool = False) -> Signal:
         
-        if i < 50: 
-            return (Signal.NONE, None) if return_flat_reason else Signal.NONE
+        # Warmup bars kontrolü
+        if i < self.warmup_bars: 
+             return (Signal.NONE, None) if return_flat_reason else Signal.NONE
         
         cfg = self.config
         current_time = self.times[i]
+        dt = current_time # Strateji 1 ile uyum için alias
         current_date = current_time.date()
         current_t = current_time.time()
         
-        flat_reason = None  # 'vade_sonu', 'arefe', 'arefe_vade_sonu'
+        flat_reason = None
         
-        # --- SEANS KONTROLÜ (09:30-18:15, 19:00-23:00) ---
-        if not is_seans_icinde(current_t):
-            return (Signal.NONE, None) if return_flat_reason else Signal.NONE  # Seans dışında sinyal yok
+        # ===== VADE/TATİL YÖNETİMİ (Strateji 1 ile Birebir) =====
+        prev_dt = self.times[i-1] if i > 0 else None
         
-        # --- VADE/TATİL YÖNETİMİ ---
-        # Not: Warmup kontrolü backtest döngüsünde yapılmalı (state tracking gerektirir)
-        # Burada sadece FLAT sinyalleri üretiyoruz
+        # Seans kontrolü (09:30-18:15, 19:00-23:00)
+        gun_seansi = time(9, 30) <= current_t < time(18, 15)
+        aksam_seansi = time(19, 0) <= current_t < time(23, 0)
         
-        is_vade_sonu = current_date in self.vade_sonu_gunleri
-        is_arefe_gunu = is_arefe(current_date)
+        if not (gun_seansi or aksam_seansi):
+             return (Signal.NONE, None) if return_flat_reason else Signal.NONE
         
-        # ===== SENARYO 1: Arefe + Vade Sonu (11:30'da flat) =====
-        if is_arefe_gunu and is_vade_sonu and current_t > time(11, 30):
+        # Vade sonu ve Arefe kontrolü
+        # Strategy 2 zaten vade_sonu_gunleri setine sahip, onu kullanalım (daha hızlı)
+        vade_sonu_gun = current_date in self.vade_sonu_gunleri
+        arefe = is_arefe(current_date)
+        
+        # SENARYO 1: Arefe + Vade Sonu → 11:30 flat + warmup aktif
+        if arefe and vade_sonu_gun and current_t > time(11, 30):
+            self.warmup_aktif = True
+            self.warmup_baslangic_bar = -999
+            self.arefe_flat = False
             if current_position != "FLAT":
-                flat_reason = 'arefe_vade_sonu'
-                return (Signal.FLAT, flat_reason) if return_flat_reason else Signal.FLAT
-                
-        # ===== SENARYO 2: Sadece Arefe (11:30'da flat, ertesi gün warmup YOK) =====
-        elif is_arefe_gunu and not is_vade_sonu and current_t > time(11, 30):
+                if return_flat_reason:
+                    return (Signal.FLAT, "arefe_vade_sonu")
+                return Signal.FLAT
+        
+        # SENARYO 2: Sadece Arefe → 11:30 flat
+        elif arefe and not vade_sonu_gun and current_t > time(11, 30):
+            self.arefe_flat = True
             if current_position != "FLAT":
-                flat_reason = 'arefe'
-                return (Signal.FLAT, flat_reason) if return_flat_reason else Signal.FLAT
-                
-        # ===== SENARYO 3: Normal Vade Sonu (17:40'da flat) =====
-        elif is_vade_sonu and current_t >= time(17, 40):
+                if return_flat_reason:
+                    return (Signal.FLAT, "arefe")
+                return Signal.FLAT
+        
+        # SENARYO 3: Normal Vade Sonu → 17:40 flat + warmup aktif
+        elif vade_sonu_gun and current_t > time(17, 40):
+            self.warmup_aktif = True
+            self.warmup_baslangic_bar = -999
+            self.arefe_flat = False
             if current_position != "FLAT":
-                flat_reason = 'vade_sonu'
-                return (Signal.FLAT, flat_reason) if return_flat_reason else Signal.FLAT
+                if return_flat_reason:
+                    return (Signal.FLAT, "vade_sonu")
+                return Signal.FLAT
+        
+        # Arefe/Vade günlerinde flat saatlerinde işlem yapma
+        if (arefe and current_t > time(11, 30)) or (vade_sonu_gun and not arefe and current_t > time(17, 40)):
+            if return_flat_reason:
+                return (Signal.NONE, None)
+            return Signal.NONE
+        
+        # Warmup başlangıç barını tespit et (yeni seans başlangıcı)
+        if self.warmup_aktif and self.warmup_baslangic_bar == -999:
+            yeni_seans_baslangici = False
+            if prev_dt:
+                prev_t = prev_dt.time()
+                # Akşam seansı başlangıcı
+                if aksam_seansi and prev_t < time(19, 0):
+                    yeni_seans_baslangici = True
+                # Gün seansı başlangıcı (yeni gün)
+                if gun_seansi and time(9, 30) <= current_t < time(9, 35):
+                    if current_date != prev_dt.date():
+                        yeni_seans_baslangici = True
+            if yeni_seans_baslangici:
+                self.warmup_baslangic_bar = i
+        
+        # Warmup cooldown kontrolü
+        if self.warmup_aktif and self.warmup_baslangic_bar > 0:
+            if (i - self.warmup_baslangic_bar) < self.vade_cooldown_bar:
+                return (Signal.NONE, None) if return_flat_reason else Signal.NONE
+            else:
+                self.warmup_aktif = False
+        
+        # Arefe flat günü bitimi
+        if self.arefe_flat and prev_dt and current_date != prev_dt.date():
+            self.arefe_flat = False
         
         # --- ÇIKIŞ MANTIĞI ---
         # --- ÇIKIŞ MANTIĞI ---

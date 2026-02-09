@@ -1,0 +1,309 @@
+// ===============================================================================================
+// STRATEJİ: ARS TREND TAKİP SİSTEMİ
+// ===============================================================================================
+// Konsept: ARS temel trend filtresi olarak kullanılır
+// - Fiyat > ARS: Sadece LONG işlem
+// - Fiyat < ARS: Sadece SHORT işlem
+// - Giriş sinyalleri: Momentum + Kırılma onayı
+// 
+// Versiyon: 1.0
+// Tarih: 2026-01-24
+// ===============================================================================================
+
+// --- TIMEFRAME SEÇİMİ ---
+// "1DK", "5DK", "15DK", "60DK" seçeneklerinden birini yazın
+string Timeframe = "5DK";
+
+// --- GENEL PARAMETRELER ---
+var P_KAR_AL = 3.0;      // Kar Al Yüzdesi
+var P_IZ_STOP = 1.5;     // İzleyen Stop Yüzdesi
+var P_ATR_MULT = 2.0;    // ATR çarpanı (dinamik stop için)
+
+// --- ARS PARAMETRELER (Timeframe'e göre otomatik ayarlanır) ---
+int ARS_EMA_Period;
+int ARS_ATR_Period;
+double ARS_ATR_Mult;
+double ARS_Min_Band;
+double ARS_Max_Band;
+
+// --- GİRİŞ SİNYALİ PARAMETRELER ---
+int MOMENTUM_Period;
+int BREAKOUT_Period;
+
+// Timeframe'e göre parametre ayarla
+if (Timeframe == "1DK") {
+    ARS_EMA_Period = 3;
+    ARS_ATR_Period = 10;
+    ARS_ATR_Mult = 0.5;
+    ARS_Min_Band = 0.002;
+    ARS_Max_Band = 0.015;
+    MOMENTUM_Period = 5;
+    BREAKOUT_Period = 10;
+}
+else if (Timeframe == "5DK") {
+    ARS_EMA_Period = 5;
+    ARS_ATR_Period = 14;
+    ARS_ATR_Mult = 0.7;
+    ARS_Min_Band = 0.003;
+    ARS_Max_Band = 0.020;
+    MOMENTUM_Period = 8;
+    BREAKOUT_Period = 15;
+}
+else if (Timeframe == "15DK") {
+    ARS_EMA_Period = 3;
+    ARS_ATR_Period = 14;
+    ARS_ATR_Mult = 0.0;  // Classic mode (sabit %)
+    ARS_Min_Band = 0.0123;
+    ARS_Max_Band = 0.0123;
+    MOMENTUM_Period = 10;
+    BREAKOUT_Period = 20;
+}
+else { // 60DK
+    ARS_EMA_Period = 3;
+    ARS_ATR_Period = 14;
+    ARS_ATR_Mult = 0.0;  // Classic mode
+    ARS_Min_Band = 0.0123;
+    ARS_Max_Band = 0.0123;
+    MOMENTUM_Period = 14;
+    BREAKOUT_Period = 30;
+}
+
+// ===============================================================================================
+// VERİ HAZIRLIĞI
+// ===============================================================================================
+var V = Sistem.GrafikVerileri;
+var O = Sistem.GrafikFiyatSec("Acilis");
+var H = Sistem.GrafikFiyatSec("Yuksek");
+var L = Sistem.GrafikFiyatSec("Dusuk");
+var C = Sistem.GrafikFiyatSec("Kapanis");
+var T = Sistem.GrafikFiyatSec("Tipik");
+
+// ===============================================================================================
+// ARS HESAPLAMA (Dinamik veya Classic)
+// ===============================================================================================
+var ATR = Sistem.AverageTrueRange(ARS_ATR_Period);
+var ARS_EMA = Sistem.MA(T, "Exp", ARS_EMA_Period);
+var ARS = Sistem.Liste(0);
+var ARS_BandWidth = Sistem.Liste(0);
+
+for (int i = 1; i < Sistem.BarSayisi; i++)
+{
+    float dinamikK;
+    
+    if (ARS_ATR_Mult > 0) {
+        // Dinamik mod (1dk, 5dk)
+        dinamikK = (ATR[i] / ARS_EMA[i]) * (float)ARS_ATR_Mult;
+        dinamikK = Math.Max((float)ARS_Min_Band, Math.Min((float)ARS_Max_Band, dinamikK));
+    } else {
+        // Classic mod (15dk, 60dk)
+        dinamikK = (float)ARS_Min_Band;
+    }
+    
+    ARS_BandWidth[i] = dinamikK * 100;
+    
+    float altBand = ARS_EMA[i] * (1 - dinamikK);
+    float ustBand = ARS_EMA[i] * (1 + dinamikK);
+    
+    if (altBand > ARS[i - 1])
+        ARS[i] = altBand;
+    else if (ustBand < ARS[i - 1])
+        ARS[i] = ustBand;
+    else
+        ARS[i] = ARS[i - 1];
+    
+    // Yuvarlama
+    float roundStep = ARS_ATR_Mult > 0 ? Math.Max(0.01f, ATR[i] * 0.1f) : 0.025f;
+    ARS[i] = Sistem.SayiYuvarla(ARS[i], roundStep);
+}
+
+// ===============================================================================================
+// TREND BELİRLEME (ARS Bazlı)
+// ===============================================================================================
+var TrendYonu = Sistem.Liste(0);  // 1 = Boğa, -1 = Ayı
+
+for (int i = 1; i < Sistem.BarSayisi; i++)
+{
+    if (C[i] > ARS[i])
+        TrendYonu[i] = 1;   // Boğa trendi
+    else if (C[i] < ARS[i])
+        TrendYonu[i] = -1;  // Ayı trendi
+    else
+        TrendYonu[i] = TrendYonu[i-1];  // Önceki trendi koru
+}
+
+// ===============================================================================================
+// GİRİŞ SİNYALLERİ
+// ===============================================================================================
+// Momentum: Fiyat değişim hızı
+var Momentum = Sistem.Momentum(MOMENTUM_Period);
+
+// Kırılma: HHV/LLV breakout
+var HHV = Sistem.HHV(BREAKOUT_Period);
+var LLV = Sistem.LLV(BREAKOUT_Period);
+
+// RSI: Aşırı alım/satım filtresi
+var RSI = Sistem.RSI(14);
+
+// ===============================================================================================
+// SİNYAL ÜRETİM DÖNGÜSÜ
+// ===============================================================================================
+for (int i = 1; i < V.Count; i++) Sistem.Yon[i] = "";
+
+var Sinyal = "";
+var SonYon = "";
+int warmupBars = Math.Max(BREAKOUT_Period, Math.Max(ARS_ATR_Period, MOMENTUM_Period)) + 5;
+
+for (int i = warmupBars; i < V.Count; i++)
+{
+    Sinyal = "";
+    var dt = V[i].Date;
+    var t = dt.TimeOfDay;
+    
+    // Seans dışı = işlem yok
+    // VİOP seansları: 09:30-18:15, 19:00-23:00
+    bool gunSeansi = t >= new TimeSpan(9,30,0) && t < new TimeSpan(18,15,0);
+    bool aksamSeansi = t >= new TimeSpan(19,0,0) && t < new TimeSpan(23,0,0);
+    if (!(gunSeansi || aksamSeansi))
+        continue;
+    
+    // === ÇIKIŞ MANTIĞI ===
+    if (SonYon == "A")  // Long pozisyonda
+    {
+        // Trend tersine döndü
+        if (TrendYonu[i] == -1 && TrendYonu[i-1] == 1)
+            Sinyal = "F";
+        
+        // Kar al
+        if (C[i] >= Sistem.KarAlYuzde(P_KAR_AL, i))
+            Sinyal = "F";
+        
+        // İzleyen stop
+        if (C[i] < Sistem.IzleyenStopYuzde(P_IZ_STOP, i))
+            Sinyal = "F";
+    }
+    else if (SonYon == "S")  // Short pozisyonda
+    {
+        // Trend tersine döndü
+        if (TrendYonu[i] == 1 && TrendYonu[i-1] == -1)
+            Sinyal = "F";
+        
+        // Kar al
+        if (C[i] <= Sistem.KarAlYuzde(P_KAR_AL, i))
+            Sinyal = "F";
+        
+        // İzleyen stop
+        if (C[i] > Sistem.IzleyenStopYuzde(P_IZ_STOP, i))
+            Sinyal = "F";
+    }
+    
+    // === GİRİŞ MANTIĞI ===
+    if (Sinyal == "" && SonYon != "A" && SonYon != "S")
+    {
+        // --- LONG GİRİŞ ---
+        // Koşul 1: ARS Boğa Trendinde
+        // Koşul 2: Yeni zirve kırılımı (HHV breakout)
+        // Koşul 3: Pozitif momentum
+        // Koşul 4: RSI aşırı alım değil (<70)
+        
+        if (TrendYonu[i] == 1)  // ARS Boğa
+        {
+            bool yeniZirve = H[i] >= HHV[i-1] && HHV[i] > HHV[i-1];
+            bool pozitifMomentum = Momentum[i] > 100;  // %0'ın üstünde
+            bool rsiUygun = RSI[i] < 70;
+            
+            if (yeniZirve && pozitifMomentum && rsiUygun)
+                Sinyal = "A";
+        }
+        
+        // --- SHORT GİRİŞ ---
+        // Koşul 1: ARS Ayı Trendinde
+        // Koşul 2: Yeni dip kırılımı (LLV breakout)
+        // Koşul 3: Negatif momentum
+        // Koşul 4: RSI aşırı satım değil (>30)
+        
+        else if (TrendYonu[i] == -1)  // ARS Ayı
+        {
+            bool yeniDip = L[i] <= LLV[i-1] && LLV[i] < LLV[i-1];
+            bool negatifMomentum = Momentum[i] < 100;  // %0'ın altında
+            bool rsiUygun = RSI[i] > 30;
+            
+            if (yeniDip && negatifMomentum && rsiUygun)
+                Sinyal = "S";
+        }
+    }
+    
+    // Sinyal kaydet
+    if (Sinyal != "" && SonYon != Sinyal)
+    {
+        SonYon = Sinyal;
+        Sistem.Yon[i] = SonYon;
+    }
+}
+
+// ===============================================================================================
+// ÇİZİMLER
+// ===============================================================================================
+Sistem.Cizgiler[3].Deger = ARS;
+Sistem.Cizgiler[3].Aciklama = "ARS_" + Timeframe;
+
+Sistem.Cizgiler[4].Deger = HHV;
+Sistem.Cizgiler[4].Aciklama = "HHV_" + BREAKOUT_Period;
+
+Sistem.Cizgiler[5].Deger = LLV;
+Sistem.Cizgiler[5].Aciklama = "LLV_" + BREAKOUT_Period;
+
+// ===============================================================================================
+// PERFORMANS PANELİ
+// ===============================================================================================
+string GetiriTarih = "01.01.2024";
+float GetiriKayma = 0.0f;
+
+DateTime dateBaslangicTarih = DateTime.ParseExact(GetiriTarih, "dd.MM.yyyy", 
+    System.Globalization.CultureInfo.CurrentCulture);
+if (dateBaslangicTarih < V[0].Date) dateBaslangicTarih = V[0].Date;
+
+Sistem.GetiriHesapla(dateBaslangicTarih.ToString("dd.MM.yyyy"), GetiriKayma);
+
+// Getiri çizgisi
+Sistem.Cizgiler[0].Deger = Sistem.GetiriKZGun;
+Sistem.Cizgiler[0].Aciklama = "KZ_Gün";
+Sistem.Cizgiler[0].ActiveBool = true;
+
+Sistem.Cizgiler[1].Deger = Sistem.GetiriKZGunSonu;
+Sistem.Cizgiler[1].Aciklama = "KZ_GünSonu";
+Sistem.Cizgiler[1].ActiveBool = true;
+
+Sistem.DolguEkle(0, 1, Color.Red, Color.Green);
+
+// Bilgi paneli
+var sonBar = V.Count - 1;
+var sonTrend = TrendYonu[sonBar] == 1 ? "↑ LONG" : "↓ SHORT";
+var sonARS = ARS[sonBar].ToString("0.00");
+var sonFiyat = C[sonBar].ToString("0.00");
+var uzaklik = ((C[sonBar] - ARS[sonBar]) / ARS[sonBar] * 100).ToString("0.00");
+var kzToplam = Sistem.GetiriKZGunSonu[sonBar].ToString("0.0");
+
+string panel = "═══ ARS TREND SİSTEMİ ═══" + Environment.NewLine +
+               "Timeframe: " + Timeframe + Environment.NewLine +
+               "─────────────────────" + Environment.NewLine +
+               "Fiyat: " + sonFiyat + Environment.NewLine +
+               "ARS: " + sonARS + Environment.NewLine +
+               "Uzaklık: %" + uzaklik + Environment.NewLine +
+               "─────────────────────" + Environment.NewLine +
+               "TREND: " + sonTrend + Environment.NewLine +
+               "─────────────────────" + Environment.NewLine +
+               "Toplam KZ: " + kzToplam;
+
+Color panelRenk = TrendYonu[sonBar] == 1 ? Color.DarkGreen : Color.DarkRed;
+Sistem.Dortgen(1, 10, 30, 180, 160, panelRenk, Color.Black, Color.White);
+Sistem.GradientYaziEkle(panel, 1, 15, 35, Color.White, Color.LightGray, "Consolas", 9);
+
+// ===============================================================================================
+// OPTİMİZASYON PARAMETRELERİ:
+// ===============================================================================================
+// ARS_ATR_Mult: 0.3 - 1.2 (adım: 0.1)
+// BREAKOUT_Period: 8 - 30 (adım: 2)
+// MOMENTUM_Period: 5 - 15 (adım: 1)
+// P_KAR_AL: 1.5 - 5.0 (adım: 0.5)
+// P_IZ_STOP: 1.0 - 3.0 (adım: 0.25)
+// ===============================================================================================

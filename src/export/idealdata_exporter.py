@@ -140,19 +140,34 @@ class IdealDataExporter:
     def _generate_strategy1_code(self, params: Dict[str, Any], vade_tipi: str) -> str:
         """Strateji 1 IdealData kodu oluşturur (v4.1 - Bayram/Vade Yönetimi dahil)."""
         
-        # Varsayılan parametreler (v4.1)
+        # Varsayılan parametreler (v4.1) - TÜM parametreler dahil
+        # Period parametreleri int() ile sarmalanarak integer olmaları garanti edilir
         p = {
-            'min_score': params.get('min_score', 3),
-            'exit_score': params.get('exit_score', 3),
-            'ars_period': params.get('ars_period', 3),
+            'min_score': int(params.get('min_score', 3)),
+            'exit_score': int(params.get('exit_score', 3)),
+            'ars_period': int(params.get('ars_period', 3)),
             'ars_k': params.get('ars_k', 0.01),
-            'adx_period': params.get('adx_period', 17),
+            'adx_period': int(params.get('adx_period', 17)),
+            'adx_threshold': params.get('adx_threshold', 25.0),
             'netlot_threshold': params.get('netlot_threshold', 20),
-            'macdv_short': params.get('macdv_short', 13),
-            'macdv_long': params.get('macdv_long', 28),
-            'macdv_signal': params.get('macdv_signal', 8),
+            'netlot_period': int(params.get('netlot_period', 5)),
+            'macdv_short': int(params.get('macdv_short', 13)),
+            'macdv_long': int(params.get('macdv_long', 28)),
+            'macdv_signal': int(params.get('macdv_signal', 8)),
+            'macdv_threshold': params.get('macdv_threshold', 0),
+            # Yatay Filtre parametreleri
+            'yatay_ars_bars': int(params.get('yatay_ars_bars', 10)),
+            'ars_mesafe_threshold': params.get('ars_mesafe_threshold', 0.25),
+            'yatay_adx_threshold': params.get('yatay_adx_threshold', 20.0),
+            'bb_period': int(params.get('bb_period', 20)),
+            'bb_std': params.get('bb_std', 2.0),
+            'bb_width_multiplier': params.get('bb_width_multiplier', 0.8),
+            'bb_avg_period': int(params.get('bb_avg_period', 50)),
+            'filter_score_threshold': int(params.get('filter_score_threshold', 2)),
         }
+
         
+
         code = f'''// ===============================================================================================
 // STRATEJI 1: GATEKEEPER (MACDV + ARS + ADX + NETLOT)
 // ===============================================================================================
@@ -168,13 +183,27 @@ var CIKIS_HASSASIYETI = {p['exit_score']};
 var ARS_PERIYOT = {p['ars_period']};
 var ARS_K = {p['ars_k']};
 var ADX_PERIOD = {p['adx_period']};
-var NETLOT_ESIK = {p['netlot_threshold']};
+var ADX_ESIK = {p['adx_threshold']}f;
+var NETLOT_ESIK = {p['netlot_threshold']}f;
+var NETLOT_PERIOD = {p['netlot_period']};
 var MACDV_K = {p['macdv_short']};
 var MACDV_U = {p['macdv_long']};
 var MACDV_SIG = {p['macdv_signal']};
+var MACDV_ESIK = {p['macdv_threshold']}f;
+
+// --- YATAY FİLTRE PARAMETRELERİ ---
+var YATAY_ARS_BARS = {p['yatay_ars_bars']};
+var ARS_MESAFE_ESIK = {p['ars_mesafe_threshold']}f;
+var YATAY_ADX_ESIK = {p['yatay_adx_threshold']}f;
+var BB_PERIOD = {p['bb_period']};
+var BB_STD = {p['bb_std']}f;
+var BB_WIDTH_MULT = {p['bb_width_multiplier']}f;
+var BB_AVG_PERIOD = {p['bb_avg_period']};
+var FILTRE_SKOR_ESIK = {p['filter_score_threshold']};
 
 // --- VADE TİPİ ---
 string VadeTipi = "{vade_tipi}";
+
 
 // ===============================================================================================
 // DİNAMİK BAYRAM TARİHLERİ (2024-2030)
@@ -272,10 +301,9 @@ var MACDV_Sinyal = Sistem.MA(MACDV, "Exp", MACDV_SIG);
 
 // --- 3. YATAY FILTRE ---
 var ARS_Degisim = Sistem.Liste(0);
-int yatayEsik = 10;
-for (int i = yatayEsik; i < Sistem.BarSayisi; i++) {{
+for (int i = YATAY_ARS_BARS; i < Sistem.BarSayisi; i++) {{
     bool arsAyni = true;
-    for (int j = 1; j <= yatayEsik; j++)
+    for (int j = 1; j <= YATAY_ARS_BARS; j++)
         if (ARS[i] != ARS[i - j]) {{ arsAyni = false; break; }}
     ARS_Degisim[i] = arsAyni ? 0 : 1;
 }}
@@ -286,22 +314,22 @@ for (int i = 1; i < Sistem.BarSayisi; i++)
 
 var ADX14 = Sistem.ADX(ADX_PERIOD);
 
-var BBUp = Sistem.BollingerUp("Simple", 20, 2);
-var BBDown = Sistem.BollingerDown("Simple", 20, 2);
-var BBMid = Sistem.BollingerMid("Simple", 20, 2);
+var BBUp = Sistem.BollingerUp("Simple", BB_PERIOD, BB_STD);
+var BBDown = Sistem.BollingerDown("Simple", BB_PERIOD, BB_STD);
+var BBMid = Sistem.BollingerMid("Simple", BB_PERIOD, BB_STD);
 var BBWidth = Sistem.Liste(0);
 for (int i = 1; i < Sistem.BarSayisi; i++)
     if (BBMid[i] != 0) BBWidth[i] = ((BBUp[i] - BBDown[i]) / BBMid[i]) * 100;
-var BBWidth_Avg = Sistem.MA(BBWidth, "Simple", 50);
+var BBWidth_Avg = Sistem.MA(BBWidth, "Simple", BB_AVG_PERIOD);
 
 var YatayFiltre = Sistem.Liste(0);
-for (int i = 50; i < Sistem.BarSayisi; i++) {{
+for (int i = BB_AVG_PERIOD; i < Sistem.BarSayisi; i++) {{
     int skor = 0;
     if (ARS_Degisim[i] == 1) skor++;
-    if (ARS_Mesafe[i] > 0.25f) skor++;
-    if (ADX14[i] > 20.0f) skor++;
-    if (BBWidth[i] > BBWidth_Avg[i] * 0.8f) skor++;
-    YatayFiltre[i] = (skor >= 2) ? 1 : 0;
+    if (ARS_Mesafe[i] > ARS_MESAFE_ESIK) skor++;
+    if (ADX14[i] > YATAY_ADX_ESIK) skor++;
+    if (BBWidth[i] > BBWidth_Avg[i] * BB_WIDTH_MULT) skor++;
+    YatayFiltre[i] = (skor >= FILTRE_SKOR_ESIK) ? 1 : 0;
 }}
 
 // --- 4. NET HACİM ---
@@ -310,7 +338,8 @@ for (int i = 1; i < Sistem.BarSayisi; i++) {{
     float barHacim = (H[i] - L[i]) > 0 ? (C[i] - O[i]) / (H[i] - L[i]) : 0;
     NetLot[i] = barHacim * 100;
 }}
-var NetLot_MA = Sistem.MA(NetLot, "Simple", 5);
+var NetLot_MA = Sistem.MA(NetLot, "Simple", NETLOT_PERIOD);
+
 
 // --- SINYAL ---
 for (int i = 1; i < V.Count; i++) Sistem.Yon[i] = "";
@@ -394,9 +423,10 @@ for (int i = warmupBars; i < Sistem.BarSayisi; i++)
     int shortScore = 0;
 
     if (C[i] > ARS[i]) longScore++; else if (C[i] < ARS[i]) shortScore++;
-    if (MACDV[i] > MACDV_Sinyal[i]) longScore++; else if (MACDV[i] < MACDV_Sinyal[i]) shortScore++;
+    if (MACDV[i] > (MACDV_Sinyal[i] + MACDV_ESIK)) longScore++; else if (MACDV[i] < (MACDV_Sinyal[i] - MACDV_ESIK)) shortScore++;
     if (NetLot_MA[i] > NETLOT_ESIK) longScore++; else if (NetLot_MA[i] < -NETLOT_ESIK) shortScore++;
-    if (ADX14[i] > 25.0f) {{ longScore++; shortScore++; }}
+    if (ADX14[i] > ADX_ESIK) {{ longScore++; shortScore++; }}
+
 
     // --- ÇIKIŞ MANTIĞI ---
     if (SonYon == "A") {{
@@ -444,20 +474,20 @@ Sistem.YaziEkle(info, 1, 15, 35, Color.Yellow, "Tahoma", 10);
         """Strateji 2 IdealData kodu oluşturur (v4.1 - Bayram/Vade/Volume/DC Exit dahil)."""
         
         p = {
-            'ars_ema': params.get('ars_ema_period', 3),
-            'ars_atr_p': params.get('ars_atr_period', 10),
+            'ars_ema': int(params.get('ars_ema_period', 3)),
+            'ars_atr_p': int(params.get('ars_atr_period', 10)),
             'ars_atr_m': params.get('ars_atr_mult', 0.5),
             'ars_min_band': params.get('ars_min_band', 0.002),
             'ars_max_band': params.get('ars_max_band', 0.015),
-            'momentum_p': params.get('momentum_period', 5),
-            'breakout_p': params.get('breakout_period', 10),
-            'mfi_p': params.get('mfi_period', 14),
-            'mfi_hhv_p': params.get('mfi_hhv_period', 14),
-            'atr_exit_p': params.get('atr_exit_period', 14),
+            'momentum_p': int(params.get('momentum_period', 5)),
+            'breakout_p': int(params.get('breakout_period', 10)),
+            'mfi_p': int(params.get('mfi_period', 14)),
+            'mfi_hhv_p': int(params.get('mfi_hhv_period', 14)),
+            'atr_exit_p': int(params.get('atr_exit_period', 14)),
             'atr_sl_mult': params.get('atr_sl_mult', 2.0),
             'atr_tp_mult': params.get('atr_tp_mult', 5.0),
             'atr_trail_mult': params.get('atr_trail_mult', 2.0),
-            'exit_confirm_bars': params.get('exit_confirm_bars', 2),
+            'exit_confirm_bars': int(params.get('exit_confirm_bars', 2)),
             'exit_confirm_mult': params.get('exit_confirm_mult', 1.0),
             'volume_mult': params.get('volume_mult', 0.8),
         }

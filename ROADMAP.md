@@ -43,7 +43,12 @@ IdealData backtest sonuçları ile **%100 uyumlu** harici backtest + optimizasyo
 - [x] Hibrit Grid Optimizer
 - [x] Genetik Algoritma
 - [x] **Bayesian Optimizer (Optuna)** ← YENİ
-- [x] **Extended Fitness (7 faktör)** ← YENİ
+- [x] **Bayesian Optimizer (Optuna)** ← YENİ
+- [x] **Advanced Fitness Modeling** ← YENİ
+  - Stricter Selection (Min PF 1.5)
+  - "Sweet Spot" Bonus (PF 1.5-2.5)
+  - Equity Smoothness (R²) Reward
+  - Anti-Overtrading Logic
 
 ### Kalibrasyon (✅ TAMAMLANDI)
 | Gösterge | Max Fark |

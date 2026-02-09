@@ -1,0 +1,329 @@
+//************* SORGULAMA: KING & BOMBA & TeFo V2 (Telegramlı) *************
+// BU KOD "SISTEM SORGULARI" PENCERESINDE CALISTIRILMALIDIR.
+// Strateji: V2 Versiyon (Puanlama Sistemi)
+// Telegram: Havuz Mantığı (Task.Delay ile toplu gönderim)
+
+// --- AYARLAR ---
+var ApiToken = "8581068218:AAEcQ7_-Bl38JeIs1ifpvZusm4QXBz_uFBY"; 
+var ChatIdMain = "-1003038562147";      // Tabloların Gideceği Grup
+var ChatIdTwitter = "-1003352024161";   // Özet/Twitter Kanalı (Opsiyonel)
+
+// SSL Fix
+System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls12;
+
+// --- TELEGRAM HAVUZ ANAHTARLARI (PERİYOT BAZLI FIX) ---
+// Her periyot için unique key olusturuyoruz ki 60dk calisirken günlük verisi karismasin.
+var PeriyotStr = Sistem.Periyot;
+var AnahtarKing = "SorguSinyal_King_V2_" + PeriyotStr; 
+var AnahtarBomba = "SorguSinyal_Bomba_V2_" + PeriyotStr;
+var AnahtarTeFo = "SorguSinyal_TeFo_V2_" + PeriyotStr;
+var ZamanAnahtari = "SorguSonZaman_V2_" + PeriyotStr; 
+
+// --- VERILER ---
+var V = Sistem.GrafikVerileri;
+var C = Sistem.GrafikFiyatSec("Kapanis");
+var H = Sistem.GrafikFiyatSec("Yuksek");
+var L = Sistem.GrafikFiyatSec("Dusuk");
+var O = Sistem.GrafikFiyatSec("Acilis");
+var Vol = Sistem.GrafikFiyatSec("Hacim");
+var i = Sistem.BarSayisi - 1; // Sorgu son bar için çalışır
+
+// --- MARKET SCORE CHECK (PIYASA PUANI) ---
+int currentThresholdMod = 0; 
+try {
+    var V_XU100 = Sistem.GrafikVerileriniOku("IMKBH'XU100", "G");
+    if (V_XU100 != null && V_XU100.Count > 50) {
+        var C_XU100 = Sistem.GrafikFiyatOku(V_XU100, "Kapanis");
+        var EMA50_XU100 = Sistem.MA(C_XU100, "Exp", 50);
+        if (C_XU100[C_XU100.Count-1] < EMA50_XU100[C_XU100.Count-1]) currentThresholdMod = 3; 
+    }
+} catch {}
+
+// --- ORTAK İNDİKATÖRLER ---
+var RSI14 = Sistem.RSI(14);
+var PDI = Sistem.DirectionalIndicatorPlus(14);
+var MDI = Sistem.DirectionalIndicatorMinus(14);
+var ADX = Sistem.ADX(14);
+var ATR = Sistem.AverageTrueRange(14);
+var EMA50 = Sistem.MA(C, "Exp", 50);
+var EMA20 = Sistem.MA(C, "Exp", 20);
+var VolMA20 = Sistem.MA(Vol, "Simple", 20);
+var VolMA5 = Sistem.MA(Vol, "Simple", 5);
+
+// --- GLOBAL FİLTRELER ---
+bool filter_Trend = (C[i] > EMA50[i]); 
+bool filter_VolQuality = (Vol[i] > VolMA20[i] * 1.5f) && (C[i] > (H[i] + L[i]) / 2.0f);
+float atrRatio = (C[i] > 0) ? (ATR[i] / C[i]) : 0;
+bool filter_Volatility = (atrRatio < 0.03f); 
+float distFromMA = (EMA20[i] > 0) ? ((C[i] - EMA20[i]) / EMA20[i]) : 0;
+bool filter_Overextended = (distFromMA < 0.05f);
+
+bool GLOBAL_FILTERS_OK = filter_Trend && filter_VolQuality && filter_Volatility && filter_Overextended;
+
+// ICHIMOKU MANUAL
+var HH9 = Sistem.HHV(9, H);
+var LL9 = Sistem.LLV(9, L);
+var TenkanManual = Sistem.Liste(0);
+for (int k = 0; k < V.Count; k++) TenkanManual[k] = (HH9[k] + LL9[k]) / 2;
+var HH26 = Sistem.HHV(26, H);
+var LL26 = Sistem.LLV(26, L);
+var KijunManual = Sistem.Liste(0);
+for (int k = 0; k < V.Count; k++) KijunManual[k] = (HH26[k] + LL26[k]) / 2;
+
+// --- KING İNDİKATÖRLERİ ---
+var CV = Sistem.Liste(0);
+for (int k = 0; k < V.Count; k++) CV[k] = C[k] * Vol[k];
+var SumCV = Sistem.MA(CV, "Simple", 20);
+var SumVol20 = Sistem.MA(Vol, "Simple", 20);
+var VWMA = Sistem.Liste(0);
+for (int k = 0; k < V.Count; k++) if (SumVol20[k] != 0) VWMA[k] = SumCV[k] / SumVol20[k];
+
+var MF_Vol = Sistem.Liste(0);
+for (int k = 0; k < V.Count; k++) {
+    if (H[k] != L[k]) MF_Vol[k] = Vol[k] * ((C[k] - L[k]) - (H[k] - C[k])) / (H[k] - L[k]);
+}
+var SumMFVol = Sistem.MA(MF_Vol, "Simple", 20); 
+var CMF_Manual = Sistem.Liste(0);
+for (int k = 0; k < V.Count; k++) if (SumVol20[k] != 0) CMF_Manual[k] = SumMFVol[k] / SumVol20[k];
+var PSAR = Sistem.Parabolic(0.02, 0.2);
+
+// --- BOMBA İNDİKATÖRLERİ ---
+var BB_Up = Sistem.BollingerUp(C, 20, 2);
+var BB_Down = Sistem.BollingerDown(C, 20, 2);
+var BB_Mid = Sistem.MA(C, "Simple", 20);
+var BBWidth = Sistem.Liste(0);
+for(int k=0; k<V.Count; k++) if(BB_Mid[k]!=0) BBWidth[k] = (BB_Up[k] - BB_Down[k]) / BB_Mid[k];
+var RSI_MA = Sistem.MA(RSI14, "Simple", 14);
+var StochRSIFast = Sistem.StochasticRSI(14);
+var StochRSISlow = Sistem.MA(StochRSIFast, "Simple", 3);
+// Hull MA Wait/Weight
+var HMA9 = Sistem.Liste(0);
+try { HMA9 = Sistem.HullMA(9); } 
+catch {
+    var wma9 = Sistem.MA(C, "Weighted", 9);
+    var wma4 = Sistem.MA(C, "Weighted", 4);
+    var rawHMA = Sistem.Liste(0);
+    for(int k=0; k<V.Count; k++) rawHMA[k] = 2 * wma4[k] - wma9[k];
+    HMA9 = Sistem.MA(rawHMA, "Weighted", 3);
+}
+
+// --- TEFO İNDİKATÖRLERİ ---
+var MACD = Sistem.MACD(12, 26);
+var MACDTrigger = Sistem.MA(MACD, "Exp", 9);
+var VolMA10 = Sistem.MA(Vol, "Simple", 10);
+var ADXMA10 = Sistem.MA(ADX, "Exp", 10);
+var Mom10 = Sistem.Momentum(10);
+var MFI14 = Sistem.MoneyFlowIndex(14);
+var CMF14 = Sistem.Liste(0); // Basit CMF
+var SumMFVol14 = Sistem.MA(MF_Vol, "Simple", 14);
+var SumVol14 = Sistem.MA(Vol, "Simple", 14);
+for (int k = 0; k < V.Count; k++) if (SumVol14[k] != 0) CMF14[k] = SumMFVol14[k] / SumVol14[k];
+var StochFast53 = Sistem.StochasticFast(5, 3);
+var StochSlow53 = Sistem.StochasticSlow(5, 3);
+
+
+// --- PUANLAMA V2 ---
+
+// 1. KING STRATEJİSİ
+int scoreKing = 0;
+if (GLOBAL_FILTERS_OK) {
+    if (C[i] > O[i]) scoreKing += 2;
+    if (C[i] > PSAR[i]) scoreKing += 2;
+    if (C[i] > VWMA[i]) scoreKing += 4;
+    if (TenkanManual[i] > KijunManual[i]) scoreKing += 2;
+    if (RSI14[i] > 55 && RSI14[i] < 80) scoreKing += 4;
+    if (ADX[i] > 25 && PDI[i] > MDI[i]) scoreKing += 4;
+    if (CMF_Manual[i] > 0) scoreKing += 4;
+    if (Vol[i] > VolMA5[i] * 1.2f) scoreKing += 3;
+}
+
+// 2. BOMBA STRATEJİSİ
+int scoreBomba = 0;
+if (GLOBAL_FILTERS_OK) {
+    if (BBWidth[i] < 0.15f) scoreBomba += 4;
+    if (C[i] > BB_Up[i]) scoreBomba += 4;
+    if (RSI14[i] > RSI_MA[i]) scoreBomba += 3;
+    if (RSI14[i] > 55) scoreBomba += 2;
+    if (Vol[i] > VolMA20[i] * 1.5f) scoreBomba += 4;
+    if (StochRSIFast[i] > StochRSISlow[i]) scoreBomba += 2;
+    if (C[i] > HMA9[i]) scoreBomba += 2;
+    // Özel: Ilk hacim patlamasi
+    if (i>=3) {
+        float volAvg3 = (Vol[i-1] + Vol[i-2] + Vol[i-3]) / 3;
+        if (Vol[i] > volAvg3 * 1.4f && Vol[i-1] < volAvg3) scoreBomba += 4;
+    }
+    // Penalties
+    if (i>=3 && (RSI14[i] - RSI14[i-3]) > 20) scoreBomba -= 3;
+    if (ADX[i] < 20) scoreBomba -= 2;
+}
+
+// 3. TEFO STRATEJİSİ
+int scoreTefo = 0;
+if (GLOBAL_FILTERS_OK) {
+    if (Vol[i] > Vol[i-1] * 1.3f) scoreTefo += 1;
+    if (Vol[i] > Vol[i-1] * 1.5f) scoreTefo += 2;
+    if (Vol[i] > VolMA10[i]) scoreTefo += 2;
+    if (ADX[i] > 20) scoreTefo += 2;
+    if (ADX[i] > ADXMA10[i]) scoreTefo += 2;
+    if (PDI[i] > MDI[i]) scoreTefo += 3;
+    if (Mom10[i] > Mom10[i-1]) scoreTefo += 1;
+    if (MACD[i] > MACDTrigger[i]) scoreTefo += 3;
+    if (MFI14[i] > MFI14[i-1]) scoreTefo += 2;
+    if (C[i] > O[i]) scoreTefo += 1;
+    if (CMF14[i] > 0) scoreTefo += 3;
+    if (StochFast53[i] > StochSlow53[i]) scoreTefo += 3;
+    if (ADX[i] < 20) scoreTefo -= 2;
+}
+
+
+// --- KARA LİSTE VE EŞİK ---
+int requiredScore = 22 + currentThresholdMod;
+bool king_ok = (scoreKing >= requiredScore);
+bool bomba_ok = (scoreBomba >= requiredScore);
+bool tefo_ok = (scoreTefo >= requiredScore);
+
+// SORGULAMA ÇIKTISI
+if (king_ok || bomba_ok || tefo_ok)
+{
+    // Sistem Sorgu Kolonları
+    Sistem.SorguBaslik[0] = "Fiyat";
+    Sistem.SorguBaslik[1] = "King Puan";
+    Sistem.SorguBaslik[2] = "Bomba Puan";
+    Sistem.SorguBaslik[3] = "TeFo Puan";
+    Sistem.SorguBaslik[4] = "Durum";
+
+    Sistem.SorguDeger[0] = C[i];
+    Sistem.SorguDeger[1] = scoreKing;
+    Sistem.SorguDeger[2] = scoreBomba;
+    Sistem.SorguDeger[3] = scoreTefo;
+    
+    // Durum strateji kodları (K+B+T)
+    var tetiklenen = new System.Collections.Generic.List<string>();
+    if (king_ok) tetiklenen.Add("K");
+    if (bomba_ok) tetiklenen.Add("B");
+    if (tefo_ok) tetiklenen.Add("T");
+    string durum = string.Join("+", tetiklenen);
+
+    Sistem.SorguDeger[4] = durum;
+    Sistem.SorguAciklama = durum;
+    Sistem.SorguEkle();
+
+
+    // --- TELEGRAM VERI HAZIRLAMA (HAVUZ) ---
+    var sembolAdi = Sistem.Sembol.Split('\'')[1];
+    var periyot = Sistem.Periyot;
+    var fiyat = C[i];
+    var hacimYuzde = Vol[i-1] != 0 ? ((Vol[i] - Vol[i-1])/Vol[i-1]) * 100 : 0;
+    var fiyatYuzde = ((C[i] - C[i-1]) / C[i-1]) * 100;
+    
+    int enYuksekSkor = Math.Max(scoreKing, Math.Max(scoreBomba, scoreTefo));
+    
+    // Tek Satir Verisi: Sembol|Strateji|Periyot|Fiyat|Hacim%|Fiyat%|Skor
+    string tabloSatiri = sembolAdi + "|" + 
+                         durum + "|" + 
+                         periyot + "|" + 
+                         fiyat.ToString("0.00") + "|" + 
+                         "%" + hacimYuzde.ToString("0.0") + "|" + 
+                         "%" + fiyatYuzde.ToString("0.0") + "|" + 
+                         enYuksekSkor + "/25";
+
+    // Havuza Ekle - Tek Bir Havuz Kullanmak Yerine Ayrı Havuzlara Ekleyelim ama Gönderirken Birleştirelim
+    // Ya da daha basiti: 3'ü tek bir "SinyalListesi" havuzunda biriksin mi?
+    // Kullanici "K, B, T" ayri tablolarda ciksin ISTEMEDI, tek tablo istedi.
+    // O zaman tek bir KEY kullanalim: "SorguSinyal_Tum_V2_<Periyot>"
+    
+    string OrtakAnahtar = "SorguSinyal_Tum_V2_" + periyot;
+    
+    var depo = Sistem.SozcukTablosunuOku(OrtakAnahtar);
+    if (depo == null) depo = "";
+    if (!depo.Contains(sembolAdi)) Sistem.SozcukTablosunuGuncelle(OrtakAnahtar, depo + tabloSatiri + "|||");
+
+    // Zaman Damgasını ve Loop Periyodunu Güncelle
+    // Task icinde PeriyotStr'ye erisemeyebiliriz, o yüzden anahtari dinamik gecirmemiz lazim.
+    // Ancak Task lambda capture context ile 'OrtakAnahtar' ve 'ZamanAnahtari'ni yakalar. 
+    // SORUN: Bu Sorgu kodu her sembol icin bastan calisiyor. 'OrtakAnahtar' degeri her seferinde ayni mi?
+    // EVET, cunku 'PeriyotStr' basta Sistem.Periyot'tan alindi. Ayni periyottaki sorguda hep ayni key.
+    
+    Sistem.SozcukTablosunuGuncelle(ZamanAnahtari, DateTime.Now.ToString("o"));
+
+    // --- ASENKRON GÖNDERİM TETİKLEME ---
+    // Her hisse tarandığında timer'ı yeniden kurar. 
+    // Sinyal akışı durunca (tarama bitince) timer dolup mesajı atar.
+    
+    System.Threading.Tasks.Task.Run(async () => 
+    {
+        // 60 sn bekler. Eger bu surede yeni sinyal gelirse ZamanAnahtari guncellenir.
+        await System.Threading.Tasks.Task.Delay(60000); 
+
+        var sonZamanStr = Sistem.SozcukTablosunuOku(ZamanAnahtari);
+        if (!string.IsNullOrEmpty(sonZamanStr))
+        {
+            var sonZaman = DateTime.Parse(sonZamanStr, null, System.Globalization.DateTimeStyles.RoundtripKind);
+            // Eger 59.5 saniyedir yeni sinyal gelmediyse, demek ki tarama bitti. Gonder.
+            if ((DateTime.Now - sonZaman).TotalSeconds >= 59.5) 
+            {
+                var ham = Sistem.SozcukTablosunuOku(OrtakAnahtar);
+                if (!string.IsNullOrEmpty(ham)) 
+                {
+                    var satirlar = new System.Collections.Generic.List<string>(ham.ToString().Split(new[] { "|||" }, StringSplitOptions.RemoveEmptyEntries));
+                    
+                    // Skor sorting
+                    satirlar.Sort((a, b) => { 
+                        try {
+                            var pA = a.Split('|')[6].Split('/')[0].Trim();
+                            var pB = b.Split('|')[6].Split('/')[0].Trim();
+                            return int.Parse(pB).CompareTo(int.Parse(pA));
+                        } catch { return 0; }
+                    });
+
+                    // Başlık (Tek Tablo)
+                    // PeriyotStr Task disinda tanimli, lambda capture eder.
+                    string baslik = "(K)ING - (B)OMBA - (T)EFO - " + PeriyotStr;
+
+                    string t = "<b>" + baslik + " (" + satirlar.Count + " Adet)</b>\n";
+                    t += "<pre>";
+                    // Hizalama: Sembol(10) | Str(4) | Per(3) | Fiyat(8) | Hacim%(8) | Fiyat%(8) | Skor(6)
+                    t += "Sembol    |Str  |Per|Fiyat   |Hacim%  |Fiyat%  |Skor  \n";
+                    t += "----------|-----|---|--------|--------|--------|------\n";
+                    
+                    foreach (var row in satirlar)
+                    {
+                        var c = row.Split('|');
+                        if (c.Length >= 7)
+                        {
+                            string semb = c[0].Trim();
+                            string str = c[1].Trim();
+                            string per = c[2].Trim();
+                            string fyt = c[3].Trim();
+                            string vpct = c[4].Trim();
+                            string fpct = c[5].Trim();
+                            string skor = c[6].Trim();
+
+                            t += semb.PadRight(10).Substring(0, 10) + "|" +
+                                 str.PadRight(5).Substring(0, 5) + "|" + // Str 4->5
+                                 per.PadRight(3).Substring(0, 3) + "|" +
+                                 fyt.PadRight(8).Substring(0, 8) + "|" +
+                                 vpct.PadRight(8).Substring(0, 8) + "|" +
+                                 fpct.PadRight(8).Substring(0, 8) + "|" +
+                                 skor.PadRight(6) + "\n";
+                        }
+                    }
+                    t += "</pre>\n\n";
+                    
+                    // GONDER
+                    string urlString = "https://api.telegram.org/bot" + ApiToken + "/sendMessage?chat_id=" + ChatIdMain + "&text=" + System.Uri.EscapeDataString(t) + "&parse_mode=HTML";
+                    try
+                    {
+                        System.Net.WebRequest.Create(urlString).GetResponse().Close();
+                        
+                        // Gönderim Başarılı, Havuzu Temizle (Sadece su anki periyot icin!)
+                        Sistem.SozcukTablosunuGuncelle(OrtakAnahtar, "");
+                        Sistem.SozcukTablosunuGuncelle(ZamanAnahtari, ""); 
+                    }
+                    catch (System.Exception) { }
+                }
+            }
+        }
+    });
+
+}

@@ -1,23 +1,15 @@
-# Python
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
 venv/
-
-# Data
-*.csv
-*.txt
-!requirements.txt
-!README.md
-!ROADMAP.md
-!DEVLOG.md
-!src/**/*.txt
-
-# IDE
+.env
 .vscode/
-
-# Archive
-archive/
-
-# Results
-tests/*.csv
+.idea/
+*.db
+*.sqlite3
+/data/
+/TARAMA_LOG/
+debug_*.txt

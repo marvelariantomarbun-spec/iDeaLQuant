@@ -1,0 +1,37 @@
+// =============================================================================
+// IdealData İşlem Sinyallerini CSV Export
+// =============================================================================
+// Bu scripti grafik üzerinde çalıştır, işlem sinyallerini CSV'ye yazar.
+// =============================================================================
+
+var V = Sistem.GrafikVerileri;
+
+// CSV oluştur
+var sb = new System.Text.StringBuilder();
+sb.AppendLine("BarNo;Tarih;Saat;Sinyal;Fiyat");
+
+int islemSayisi = 0;
+for (int i = 0; i < Sistem.BarSayisi; i++)
+{
+    string yon = Sistem.Yon[i];
+    if (yon != "" && yon != null)
+    {
+        var C = Sistem.GrafikFiyatSec("Kapanis");
+        sb.Append(i);
+        sb.Append(";");
+        sb.Append(V[i].Tarih);
+        sb.Append(";");
+        sb.Append(V[i].Saat);
+        sb.Append(";");
+        sb.Append(yon);
+        sb.Append(";");
+        sb.Append(C[i].ToString("0.00").Replace(",", "."));
+        sb.AppendLine();
+        islemSayisi++;
+    }
+}
+
+// Dosyaya yaz
+string path = @"D:\iDeal\ideal_signals.csv";
+System.IO.File.WriteAllText(path, sb.ToString());
+Sistem.Mesaj("Export tamamlandi!\n" + path + "\n" + islemSayisi + " sinyal");

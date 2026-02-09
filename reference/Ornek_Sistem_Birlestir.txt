@@ -1,0 +1,223 @@
+Dictionary<string, float> Sistemler = new Dictionary<string, float>();
+
+Sistemler["Library_S_370"] = 3;
+Sistemler["Library_S_380"] = 1;
+Sistemler["Library_S_360"] = 4;
+Sistemler["Library_S_383"] = 2;
+
+var V = Sistem.GrafikVerileri;
+var C = Sistem.GrafikFiyatOku(V, "Kapanis");
+
+
+for (int i = 300; i < V.Count; i++)
+{
+    if (V[i].Date.Month != V[i - 1].Date.Month)
+        Sistem.DikeyCizgiEkle(i, Color.DimGray, 2, 2);
+}
+
+var SonPozDictionary = new Dictionary<string, int>();
+
+// pozisyon hesapla
+var PozList = Sistem.Liste(0);
+foreach (var item in Sistemler)
+{
+    var SembolSistem = Sistem.SistemGetir(item.Key, Sistem.Sembol, "5");
+    if (SembolSistem == null) continue;
+
+    var SonPozStr = "";
+    for (int i = V.Count - 1; i > 0; i--)
+    {
+        if (SembolSistem.Yon[i]!="")
+        {
+            SonPozStr = SembolSistem.Yon[i];
+            break;
+        }
+    }
+    int SonPozLot = 0;
+    if (SonPozStr == "A")
+        SonPozLot = Convert.ToInt32(item.Value);
+    else if (SonPozStr == "S")
+        SonPozLot = -Convert.ToInt32(item.Value);
+    SonPozDictionary[item.Key] = SonPozLot;
+
+
+    float Poz = 0;
+    for (int i = 0; i < V.Count; i++)
+    {
+        if (SembolSistem.Yon[i] == "A")
+            Poz = item.Value;
+        else if (SembolSistem.Yon[i] == "S")
+            Poz = -item.Value;
+        else if (SembolSistem.Yon[i] == "F")
+            Poz = 0;
+
+        PozList[i] += Convert.ToInt32(Poz);
+    }
+}
+Sistem.Cizgiler[0].Deger = PozList;
+Sistem.Cizgiler[1].Deger = Sistem.Liste(0);
+Sistem.DolguEkle(0, 1, Color.FromArgb(120, 0, 255, 0), Color.FromArgb(120, 255, 0, 0));
+
+int Counter=0;
+foreach (var item in SonPozDictionary)
+{
+    var RenkPoz = Color.Gold;
+    if (item.Value > 0)
+        RenkPoz = Color.LimeGreen;
+    else if (item.Value < 0)
+        RenkPoz = Color.Red;
+    Counter++;
+    Sistem.GradientYaziEkle(item.Key , 1, 30, 60 + Counter * 30, RenkPoz, RenkPoz, "Tahoma", 18);
+    Sistem.GradientYaziEkle(Math.Abs(item.Value).ToString("0"), 1, 280, 60 + Counter * 30, RenkPoz, RenkPoz, "Tahoma", 18);
+}
+
+
+// al sat renklendir
+var SonYon = "";
+for (int i = 0; i < V.Count; i++)
+{
+    if (PozList[i] > 0 && SonYon != "A")
+        Sistem.Yon[i] = "A";
+    else if (PozList[i] < 0 && SonYon != "S")
+        Sistem.Yon[i] = "S";
+    else if (PozList[i] == 0 && SonYon != "F")
+        Sistem.Yon[i] = "F";
+
+    if (Sistem.Yon[i] != "")
+        SonYon = Sistem.Yon[i];
+}
+
+
+// kar zarar hesapla
+var Kasa = 0.0f;
+var KZList = Sistem.Liste(0);
+for (int i = 1; i < V.Count; i++)
+{
+    if (PozList[i] != PozList[i - 1])
+        Kasa += -(PozList[i] - PozList[i - 1]) * C[i];
+    KZList[i] = Kasa + (PozList[i] * C[i]);
+}
+Sistem.Cizgiler[2].Deger = KZList;
+
+
+
+// yazılar
+Sistem.GradientYaziEkle(Sistem.Name, 1, 20, 30, Color.Gold, Color.Gold, "Tahoma", 30);
+//Sistem.GradientYaziEkle(DateTime.Now.ToString("dd/MMM/yyyy"), 1, 20, 80, Color.Gold, Color.Gold, "Tahoma", 30);
+//Sistem.GradientYaziEkle(KZList[KZList.Count - 1].ToString("0"), 1, 20, 130, Color.Gold, Color.Gold, "Tahoma", 30);
+
+
+
+var Sure = (DateTime.Now - V[0].Date).TotalDays / 30.4;
+
+// gün
+var DateGun = DateTime.Now.AddDays(-1);
+var DateGunBarNo = 0;
+for (int i = V.Count - 1; i > 0; i--)
+{
+    if (V[i].Date.Day <= DateGun.Day)
+    {
+        DateGunBarNo = i;
+        break;
+    }
+}
+var GetiriGun = Math.Round((KZList[KZList.Count - 1] - KZList[DateGunBarNo]) * 100, 1);
+
+// 1 ay
+var Date1Ay = DateTime.Now.AddDays(-30);
+var Date1AyBarNo = 0;
+for (int i = V.Count - 1; i > 0; i--)
+{
+    if (V[i].Date <= Date1Ay)
+    {
+        Date1AyBarNo = i;
+        break;
+    }
+}
+var Getiri1Ay = KZList[KZList.Count - 1] - KZList[Date1AyBarNo];
+
+// 2 ay
+var Date2Ay = DateTime.Now.AddDays(-60);
+var Date2AyBarNo = 0;
+for (int i = V.Count - 1; i > 0; i--)
+{
+    if (V[i].Date <= Date2Ay)
+    {
+        Date2AyBarNo = i;
+        break;
+    }
+}
+var Getiri2Ay = KZList[KZList.Count - 1] - KZList[Date2AyBarNo];
+
+// 3 ay
+var Date3Ay = DateTime.Now.AddDays(-90);
+var Date3AyBarNo = 0;
+for (int i = V.Count - 1; i > 0; i--)
+{
+    if (V[i].Date <= Date3Ay)
+    {
+        Date3AyBarNo = i;
+        break;
+    }
+}
+var Getiri3Ay = KZList[KZList.Count - 1] - KZList[Date3AyBarNo];
+
+// 6 ay
+var Date6Ay = DateTime.Now.AddDays(-180);
+var Date6AyBarNo = 0;
+for (int i = V.Count - 1; i > 0; i--)
+{
+    if (V[i].Date <= Date6Ay)
+    {
+        Date6AyBarNo = i;
+        break;
+    }
+}
+var Getiri6Ay = KZList[KZList.Count - 1] - KZList[Date6AyBarNo];
+
+// 12 ay
+var Date12Ay = DateTime.Now.AddDays(-365);
+var Date12AyBarNo = 0;
+for (int i = V.Count - 1; i > 0; i--)
+{
+    if (V[i].Date <= Date12Ay)
+    {
+        Date12AyBarNo = i;
+        break;
+    }
+}
+var Getiri12Ay = KZList[KZList.Count - 1] - KZList[Date12AyBarNo];
+
+
+Sistem.GradientYaziEkle(Sure.ToString("0.0") + " Ay", 3, 10, 20, Color.Silver, Color.Silver, "Tahoma", 18);
+Sistem.GradientYaziEkle(KZList[KZList.Count - 1].ToString("0.000"), 3, 180, 20, Color.Gold, Color.Gold, "Tahoma", 18);
+Sistem.GradientYaziEkle("30 Gün", 3, 10, 50, Color.Silver, Color.Silver, "Tahoma", 18);
+Sistem.GradientYaziEkle(Getiri1Ay.ToString("0.000"), 3, 180, 50, Color.Gold, Color.Gold, "Tahoma", 18);
+Sistem.GradientYaziEkle("60 Gün", 3, 10, 80, Color.Silver, Color.Silver, "Tahoma", 18);
+Sistem.GradientYaziEkle(Getiri2Ay.ToString("0.000"), 3, 180, 80, Color.Gold, Color.Gold, "Tahoma", 18);
+Sistem.GradientYaziEkle("90 Gün", 3, 10, 110, Color.Silver, Color.Silver, "Tahoma", 18);
+Sistem.GradientYaziEkle(Getiri3Ay.ToString("0.000"), 3, 180, 110, Color.Gold, Color.Gold, "Tahoma", 18);
+Sistem.GradientYaziEkle("180 Gün", 3, 10, 140, Color.Silver, Color.Silver, "Tahoma", 18);
+Sistem.GradientYaziEkle(Getiri6Ay.ToString("0.000"), 3, 180, 140, Color.Gold, Color.Gold, "Tahoma", 18);
+Sistem.GradientYaziEkle("Yıl", 3, 10, 170, Color.Silver, Color.Silver, "Tahoma", 18);
+Sistem.GradientYaziEkle(Getiri12Ay.ToString("0.000"), 3, 180, 170, Color.Gold, Color.Gold, "Tahoma", 18);
+
+
+var Renk = Color.Gold;
+if (GetiriGun > 0)
+    Renk = Color.LimeGreen;
+else if (GetiriGun < 0)
+    Renk = Color.Red;
+Sistem.GradientYaziEkle("BU GÜN", 3, 10, 230, Renk, Renk, "Tahoma", 18);
+Sistem.GradientYaziEkle(GetiriGun.ToString("0.00"), 3, 180, 230, Renk, Renk, "Tahoma", 18);
+
+
+var SonPoz = PozList[PozList.Count - 1];
+Renk = Color.Gold;
+if (SonPoz > 0)
+    Renk = Color.LimeGreen;
+else if (SonPoz < 0)
+    Renk = Color.Red;
+Sistem.GradientYaziEkle("POZISYON", 3, 10, 260, Renk, Renk, "Tahoma", 18);
+Sistem.GradientYaziEkle(SonPoz.ToString("0"), 3, 180, 260, Renk, Renk, "Tahoma", 18);
+

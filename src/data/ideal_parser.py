@@ -24,10 +24,15 @@ from typing import List, Optional, Dict
 import pandas as pd
 
 
-# Base Date: 1988-02-25 (IdealData epoch)
-# NOT: Daha önce 1988-02-28 olarak yanlıştı, bu 3 gün hatalı tarihlere neden oluyordu
+# Base Date: 1988-02-24 (IdealData epoch)
+# Hesaplama: 06.02.2026 22:59 = 19962659 dakika → 19962659 dakika önce = 1988-02-24
+BASE_DATE = datetime(1988, 2, 24)
 
-BASE_DATE = datetime(1988, 2, 25)
+
+
+
+
+
 RECORD_SIZE = 32
 
 # Periyot → Klasör ve Uzantı Mapping
@@ -97,6 +102,13 @@ def read_ideal_data(file_path: str) -> pd.DataFrame:
     # Tipik fiyat hesapla
     if len(df) > 0:
         df['Tipik'] = (df['High'] + df['Low'] + df['Close']) / 3
+        
+        # Türkçe kolon alias'ları (strateji ve optimizer uyumluluğu için)
+        df['Acilis'] = df['Open']
+        df['Yuksek'] = df['High']
+        df['Dusuk'] = df['Low']
+        df['Kapanis'] = df['Close']
+        df['Lot'] = df['Volume']
     
     return df
 
@@ -134,6 +146,13 @@ def resample_bars(df: pd.DataFrame, target_period: int) -> pd.DataFrame:
     
     # Tipik fiyat ekle
     resampled['Tipik'] = (resampled['High'] + resampled['Low'] + resampled['Close']) / 3
+    
+    # Türkçe kolon alias'ları
+    resampled['Acilis'] = resampled['Open']
+    resampled['Yuksek'] = resampled['High']
+    resampled['Dusuk'] = resampled['Low']
+    resampled['Kapanis'] = resampled['Close']
+    resampled['Lot'] = resampled['Volume']
     
     return resampled
 

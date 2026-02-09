@@ -1,0 +1,229 @@
+//************* SORGULAMA: ANKA (MTF) (Telegramlı) *************
+// BU KOD "SISTEM SORGULARI" PENCERESINDE CALISTIRILMALIDIR.
+// Strateji: ANKA Puanlama
+// Telegram: Havuz Mantığı
+
+// --- AYARLAR ---
+var ApiToken = "8581068218:AAEcQ7_-Bl38JeIs1ifpvZusm4QXBz_uFBY"; 
+var ChatIdMain = "-1003038562147";      
+
+// SSL Fix
+System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls12;
+
+// --- TELEGRAM HAVUZ ANAHTARLARI ---
+var AnahtarAnka = "SorguSinyal_Anka"; 
+var ZamanAnahtari = "SorguSonZaman_Anka"; 
+
+// --- VERILER ---
+var V = Sistem.GrafikVerileri;
+if (V == null || V.Count < 200) return null;
+
+var Sembol = Sistem.Sembol;
+var V_240 = Sistem.GrafikVerileriniOku(Sembol, "240");
+if (V_240 == null || V_240.Count < 50) return null;
+
+var V_G = Sistem.GrafikVerileriniOku(Sembol, "G");
+if (V_G == null || V_G.Count < 20) return null; // Günlük veri şart
+
+// --- INDIKATORLER ---
+var C = Sistem.GrafikFiyatSec("Kapanis");
+var Vol = Sistem.GrafikFiyatSec("Hacim");
+int bi = V.Count - 1;
+
+var VolMA20 = Sistem.MA(Vol, "Simple", 20);
+var StochRSI = Sistem.StochasticRSI(V, 14);
+var StochRSI_K = Sistem.MA(StochRSI, "Simple", 3);
+var StochRSI_D = Sistem.MA(StochRSI_K, "Simple", 3);
+var ADX = Sistem.ADX(V, 14);
+var BB_Mid = Sistem.MA(C, "Simple", 20);
+
+// MTF Verileri (240dk)
+var PDI_240 = Sistem.DirectionalIndicatorPlus(V_240, 14);
+var MDI_240 = Sistem.DirectionalIndicatorMinus(V_240, 14);
+int bi_240 = V_240.Count - 1;
+
+var MACD_240 = Sistem.MACD(V_240, 12, 26);
+var MACD_Sig_240 = Sistem.MA(MACD_240, "Exp", 9);
+
+var C_240 = Sistem.GrafikFiyatOku(V_240, "Kapanis");
+var Vol_240 = Sistem.GrafikFiyatOku(V_240, "Hacim");
+var CV_240 = Sistem.Liste(V_240.Count, 0);
+for(int k=0; k<V_240.Count; k++) CV_240[k] = C_240[k] * Vol_240[k];
+var SumCV_240 = Sistem.MA(CV_240, "Simple", 20);
+var SumVol_240 = Sistem.MA(Vol_240, "Simple", 20);
+var VWMA_240 = Sistem.Liste(V_240.Count, 0);
+for(int k=0; k<V_240.Count; k++) if(SumVol_240[k]!=0) VWMA_240[k] = SumCV_240[k] / SumVol_240[k];
+
+var TP_240 = Sistem.GrafikFiyatOku(V_240, "OrtaNokta");
+var VWAP_240 = Sistem.Liste(V_240.Count, 0);
+double runSumCV = 0, runSumVol = 0;
+// VWAP Optimization: Sadece son 50 bar
+for(int k=Math.Max(0, bi_240-50); k<=bi_240; k++) {
+    runSumCV += TP_240[k] * Vol_240[k];
+    runSumVol += Vol_240[k];
+    if(runSumVol!=0) VWAP_240[k] = (float)(runSumCV/runSumVol);
+}
+
+// Diger Indikatörler
+var HMA9 = Sistem.HullMA(V, 9);
+var RSI = Sistem.RSI(V, 14);
+var Mom = Sistem.Momentum(V, 14);
+var MFI = Sistem.MoneyFlowIndex(V, 14);
+
+// Ichimoku 240
+var HH26 = Sistem.HHV(26, Sistem.GrafikFiyatOku(V_240, "Yuksek"));
+var LL26 = Sistem.LLV(26, Sistem.GrafikFiyatOku(V_240, "Dusuk"));
+var Kijun_240 = (HH26[bi_240] + LL26[bi_240]) / 2;
+
+var HH9 = Sistem.HHV(9, Sistem.GrafikFiyatOku(V_240, "Yuksek"));
+var LL9 = Sistem.LLV(9, Sistem.GrafikFiyatOku(V_240, "Dusuk"));
+var Tenkan_240 = (HH9[bi_240] + LL9[bi_240]) / 2;
+
+
+// Degisimler
+float degisim1H = (C[bi] - C[bi-1]) / C[bi-1] * 100;
+float roc_240 = (C_240[bi_240] - C_240[bi_240-9]) / C_240[bi_240-9] * 100;
+
+var Vol_G = Sistem.GrafikFiyatOku(V_G, "Hacim");
+var VolMA10_G = Sistem.MA(Vol_G, "Simple", 10);
+int bi_G = V_G.Count - 1;
+
+
+// --- PUANLAMA SİSTEMİ (Max: 30 Puan) ---
+int scoreAnka = 0;
+
+// 1. FİYAT DEĞİŞİM KONTROLÜ (Max: 3)
+if (degisim1H < 15 && degisim1H > 1) scoreAnka += 2;
+if (degisim1H > 1 && degisim1H < 8) scoreAnka += 1;
+
+// 2. HACİM (Max: 3)
+float relVol = (VolMA20[bi] > 0) ? Vol[bi] / VolMA20[bi] : 0;
+if (relVol > 1) scoreAnka += 2;
+if (Vol_G[bi_G] > VolMA10_G[bi_G]) scoreAnka += 1;
+
+// 3. MOMENTUM & OSİLATÖRLER (Max: 6)
+if (StochRSI_K[bi] > StochRSI_D[bi]) scoreAnka += 2;
+if (RSI[bi] > 45 && RSI[bi] < 65) scoreAnka += 2;
+if (Mom[bi] > 100) scoreAnka += 2;
+
+// 4. TREND (Max: 6)
+if (ADX[bi] > 10 && ADX[bi] < 50) scoreAnka += 2;
+if (C[bi] > BB_Mid[bi]) scoreAnka += 2;
+if (HMA9[bi] < C[bi]) scoreAnka += 2;
+
+// 5. MTF TREND (4sa) (Max: 6)
+if (PDI_240[bi_240] > MDI_240[bi_240]) scoreAnka += 2;
+if (MACD_240[bi_240] > MACD_Sig_240[bi_240]) scoreAnka += 2;
+if (roc_240 > 0) scoreAnka += 2;
+
+// 6. PARA AKIŞI (Max: 3)
+if (MFI[bi] > 50) scoreAnka += 2;
+if (VWMA_240[bi_240] < C_240[bi_240]) scoreAnka += 1;
+
+// 7. ICHIMOKU (4sa) (Max: 3)
+if (Kijun_240 < C_240[bi_240]) scoreAnka += 1;
+if (Tenkan_240 < C_240[bi_240]) scoreAnka += 1;
+if (VWAP_240[bi_240] < C_240[bi_240]) scoreAnka += 1;
+
+// EŞİK: 24 Puan
+if (scoreAnka >= 24)
+{
+    Sistem.SorguBaslik[0] = "Fiyat";
+    Sistem.SorguBaslik[1] = "Puan";
+    Sistem.SorguBaslik[2] = "Durum";
+
+    Sistem.SorguDeger[0] = C[bi];
+    Sistem.SorguDeger[1] = scoreAnka;
+    Sistem.SorguDeger[2] = "ANKA";
+    
+    Sistem.SorguAciklama = "ANKA " + scoreAnka + "/30";
+    Sistem.SorguEkle();
+
+
+    // --- TELEGRAM HAVUZ ---
+    var sembolAdi = Sistem.Sembol.Split('\'')[1];
+    var periyot = Sistem.Periyot;
+    var fiyat = C[bi];
+    var hacimYuzde = Vol[bi-1] != 0 ? ((Vol[bi] - Vol[bi-1])/Vol[bi-1]) * 100 : 0;
+    var fiyatYuzde = ((C[bi] - C[bi-1]) / C[bi-1]) * 100;
+
+    // Format: Sembol|Bos|Periyot|Fiyat|Hacim%|Fiyat%|Skor
+    string satir = string.Format("{0}| |{1}|{2}|{3}|{4}|{5}/30",
+        sembolAdi, periyot, fiyat.ToString("0.00"), "%" + hacimYuzde.ToString("0.0"), "%" + fiyatYuzde.ToString("0.0"), scoreAnka);
+
+    var depo = Sistem.SozcukTablosunuOku(AnahtarAnka);
+    if (depo == null) depo = "";
+    if (!depo.Contains(sembolAdi)) Sistem.SozcukTablosunuGuncelle(AnahtarAnka, depo + satir + "|||");
+
+    Sistem.SozcukTablosunuGuncelle(ZamanAnahtari, DateTime.Now.ToString("o"));
+
+    // ASENKRON GÖNDERİM
+    System.Threading.Tasks.Task.Run(async () => 
+    {
+        await System.Threading.Tasks.Task.Delay(60000); 
+
+        var sonZamanStr = Sistem.SozcukTablosunuOku(ZamanAnahtari);
+        if (!string.IsNullOrEmpty(sonZamanStr))
+        {
+            var sonZaman = DateTime.Parse(sonZamanStr, null, System.Globalization.DateTimeStyles.RoundtripKind);
+            if ((DateTime.Now - sonZaman).TotalSeconds >= 59.5) 
+            {
+                string mesajGovde = "";
+                
+                var ham = Sistem.SozcukTablosunuOku(AnahtarAnka);
+                if (!string.IsNullOrEmpty(ham)) {
+                    var satirlar = new System.Collections.Generic.List<string>(ham.ToString().Split(new[] { "|||" }, StringSplitOptions.RemoveEmptyEntries));
+                    satirlar.Sort((a, b) => { 
+                        try {
+                            var pA = a.Split('|')[6].Split('/')[0].Trim();
+                            var pB = b.Split('|')[6].Split('/')[0].Trim();
+                            return int.Parse(pB).CompareTo(int.Parse(pA));
+                        } catch { return 0; }
+                    });
+
+                    string perLabel = Sistem.Periyot;
+                    string baslik = "(A)NKA Taramasi - " + perLabel;
+
+                    string t = "<b>" + baslik + " (" + satirlar.Count + " Adet)</b>\n";
+                    t += "<pre>";
+                    // Hizalama: Sembol(10) | Spacer(3) | Per(3) | Fiyat(8) | Hacim%(8) | Fiyat%(8) | Skor(6)
+                    t += "Sembol    |   |Per|Fiyat   |Hacim%  |Fiyat%  |Skor  \n";
+                    t += "----------|---|---|--------|--------|--------|------\n";
+                    
+                    foreach(var line in satirlar) {
+                        var c = line.Split('|');
+                        if (c.Length >= 7) {
+                            string semb = c[0].Trim();
+                            string spacer = c[1].Trim();
+                            string per = c[2].Trim();
+                            string fyt = c[3].Trim();
+                            string vpct = c[4].Trim();
+                            string fpct = c[5].Trim();
+                            string skor = c[6].Trim();
+
+                            t += semb.PadRight(10).Substring(0,10) + "|" +
+                                 spacer.PadRight(3).Substring(0,3) + "|" +
+                                 per.PadRight(3).Substring(0,3) + "|" +
+                                 fyt.PadRight(8).Substring(0,8) + "|" +
+                                 vpct.PadRight(8).Substring(0,8) + "|" +
+                                 fpct.PadRight(8).Substring(0,8) + "|" +
+                                 skor.PadRight(6) + "\n";
+                        }
+                    }
+                    t += "</pre>\n\n";
+                    
+                    mesajGovde += t;
+                }
+
+                if (mesajGovde != "")
+                {
+                    string urlString = "https://api.telegram.org/bot" + ApiToken + "/sendMessage?chat_id=" + ChatIdMain + "&text=" + System.Uri.EscapeDataString(mesajGovde) + "&parse_mode=HTML";
+                    try { System.Net.WebRequest.Create(urlString).GetResponse().Close(); } catch {}
+                    
+                    Sistem.SozcukTablosunuGuncelle(AnahtarAnka, "");
+                    Sistem.SozcukTablosunuGuncelle(ZamanAnahtari, ""); 
+                }
+            }
+        }
+    });
+}

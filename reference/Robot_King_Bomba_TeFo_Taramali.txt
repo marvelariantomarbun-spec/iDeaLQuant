@@ -1,0 +1,777 @@
+//************* ROBOT: KING & BOMBA & TeFo TARAMA (Taramali & Telegramli) V2 *************
+// KURULUM:
+// 1. Bu kodu Robot olarak kaydedin.
+// 2. Herhangi bir grafiği açın ve robotu üzerine sürükleyin.
+// 3. "Bar Kapanışında Çalış" seçeneğini MUTLAKA işaretleyin.
+// 4. C:\iDeal\SembolListeleri\TeFo.txt dosyasının olduğundan emin olun.
+
+// AYARLAR
+// SSL/TLS Fix
+System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls12;
+var ApiToken = "8581068218:AAEcQ7_-Bl38JeIs1ifpvZusm4QXBz_uFBY"; 
+var ChatIdMain = "-1003038562147";      // Ana Grup
+var ChatIdTwitter = "-1003352024161";   // Twitter Kanalı
+
+// Dosya Yolları
+string BaseDir = "C:\\iDeal\\TARAMA_LOG\\KING\\";
+string DosyaDebug = BaseDir + "Debug.txt";
+
+// Klasör Kontrolü
+if (!System.IO.Directory.Exists("C:\\iDeal\\TARAMA_LOG")) System.IO.Directory.CreateDirectory("C:\\iDeal\\TARAMA_LOG");
+if (!System.IO.Directory.Exists(BaseDir)) System.IO.Directory.CreateDirectory(BaseDir);
+// Helper: Dosyaya Güvenli Yazma
+Action<string, string, bool> DosyayaYaz = (dosya, icerik, append) => {
+    for (int i = 0; i < 5; i++) {
+        try {
+            if (append) System.IO.File.AppendAllText(dosya, icerik);
+            else System.IO.File.WriteAllText(dosya, icerik);
+            break;
+        } catch { System.Threading.Thread.Sleep(50); }
+    }
+};
+
+var Periyotlar = new List<string> { "15", "60", "240", "G" }; 
+
+foreach (var Periyot in Periyotlar)
+{
+    // --- ZAMAN KONTROLÜ ---
+    var Now = DateTime.Now;
+    var TimeStart = new TimeSpan(09, 55, 00);
+    var TimeEnd = new TimeSpan(18, 20, 00); // 18:10 -> 18:20 uzatildi
+    
+    bool InSession = (Now.TimeOfDay >= TimeStart && Now.TimeOfDay <= TimeEnd);
+    
+    // Zaman bazlı tarama anahtarı
+    var KeyLastScan = "LastScanTime_King_Clock_" + Periyot;
+    var LastScanObj = Sistem.NesneGetir(KeyLastScan);
+    DateTime LastScan = LastScanObj == null ? DateTime.MinValue : (DateTime)LastScanObj;
+    
+    int modDakika = 30; // 60, 240, G icin 30dk
+    if (Periyot == "5" || Periyot == "15") modDakika = 15; // 5 ve 15 icin 15dk
+    
+    // --- ZAMANLAMA OPTIMIZASYONU (Gecikme Toleransi) ---
+    // Dip/Zirve robotu uzun surdugu icin (60sn+), bu robot 1-2 dakika gecikmeli baslayabilir.
+    // Bu yuzden "Tam Dakika" kontrolü yerine "Blok" kontrolü yapiyoruz.
+    
+    int currentBlock = Now.Minute / modDakika;
+    int lastBlock = LastScan.Minute / modDakika;
+
+    // OZEL DURUM: 18:15 Kapanis Taramasi
+    if (Now.Hour == 18 && Now.Minute >= 15) currentBlock = 99; // Force new block
+    
+    bool NewBlock = (LastScan.Date != Now.Date) || (LastScan.Hour != Now.Hour) || (currentBlock != lastBlock);
+    
+    // Tolerans: Modulo degeri 0, 1 veya 2 ise calis (3 dakikalik pencere)
+    bool IsInWindow = (Now.Minute % modDakika <= 3); 
+
+    // 18:15 Penceresi (18:15 - 18:19 arasi)
+    if (Now.Hour == 18 && Now.Minute >= 15) IsInWindow = (Now.Minute >= 15 && Now.Minute <= 19); 
+    
+    bool TimeTrigger = InSession && NewBlock && IsInWindow;
+    
+    // Debug Log
+    // Debug Log Removed to prevent spam
+    // if (NotScannedYet) DosyayaYaz(DosyaDebug, DateTime.Now + " DEBUG: King/Bomba Dongusu (" + Periyot + ") Kontrol ediliyor...\r\n", true);
+
+    if (TimeTrigger) 
+    {
+        Sistem.NesneKaydet(KeyLastScan, Now);
+        DosyayaYaz(DosyaDebug, DateTime.Now + " DEBUG: Tarama Zaman Tetiklendi (" + Periyot + ")\r\n", true);
+        
+        bool periyottaSinyalVar = false; 
+
+        // Tek bir geçici sinyal dosyası kullanılacak
+        string DosyaSinyaller = BaseDir + "Sinyal_Tumu_" + Periyot + ".txt";
+        
+        // Temizle
+        DosyayaYaz(DosyaSinyaller, "", false);
+
+        // --- SEMBOL LISTESI (GUNLUK CACHE) ---
+        var DosyaYolu = "C:\\iDeal\\SembolListeleri\\TeFo.txt";
+        var CacheKey = "TeFo_Listesi_" + Sistem.Tarih; // Gunluk unique key
+        var SembollerListesi = Sistem.NesneGetir(CacheKey) as List<string>;
+
+        // --- Aktif Sinyalleri Oku (Tekrar kontrolü için) ---
+        var aktifSinyaller = new HashSet<string>();
+        string dbFile = "C:\\iDeal\\Sinyal_Log_Database.txt";
+        if (System.IO.File.Exists(dbFile)) {
+            var lines = System.IO.File.ReadAllLines(dbFile);
+            foreach (var line in lines) {
+                var c = line.Split('|');
+                // Format: Sembol|Strateji|Periyot|...|DURUM
+                if (c.Length > 5 && c[5] == "AKTIF") {
+                    aktifSinyaller.Add(c[0] + "|" + c[2]); // "Sembol|Periyot" anahtarı
+                }
+            }
+        }
+
+        if (SembollerListesi == null)
+        {
+            // Hafizada yoksa dosyadan oku
+            if (System.IO.File.Exists(DosyaYolu)) {
+                SembollerListesi = System.IO.File.ReadAllLines(DosyaYolu)
+                                    .Select(x => x.Trim())
+                                    .Where(x => !string.IsNullOrEmpty(x))
+                                    .ToList();
+                
+                // Hafizaya kaydet
+                Sistem.NesneKaydet(CacheKey, SembollerListesi);
+                DosyayaYaz(DosyaDebug, Now + " INFO: Sembol listesi dosyadan okundu ve hafizaya alindi (" + SembollerListesi.Count + " adet).\r\n", true);
+            }
+            else {
+                // Dosya yoksa fallback
+                SembollerListesi = Sistem.SembolAdListesi("BIST100", "E");
+                DosyayaYaz(DosyaDebug, Now + " WARN: TeFo.txt bulunamadi, BIST100 kullaniliyor.\r\n", true);
+            }
+        }
+        
+        if (SembollerListesi == null || SembollerListesi.Count == 0) {
+             DosyayaYaz(DosyaDebug, DateTime.Now + " ERROR: Sembol listesi BOS!\r\n", true);
+             continue;
+        }
+
+        // Veritabanına Kayıt Helper
+        Action<string, string, string, float> VeritabaninaYaz = (semb, strat, per, fyt) => {
+            try {
+                if (!System.IO.File.Exists(dbFile)) {
+                    System.IO.File.WriteAllText(dbFile, "Sembol|Strateji|Periyot|Tarih|GirisFiyat|DURUM|CikisTarih|CikisFiyat|PnL%|Sebep\r\n");
+                }
+                
+                // DUPLICATE KONTROL (Gunde 1 kez)
+                bool kayitVar = false;
+                if (System.IO.File.Exists(dbFile)) {
+                    var lines = System.IO.File.ReadAllLines(dbFile).ToList();
+                    for (int k=lines.Count-1; k>=0; k--) { 
+                        var c = lines[k].Split('|');
+                        if (c.Length > 3 && c[0] == semb && c[1] == strat && c[2] == per) {
+                            DateTime dt;
+                            if (DateTime.TryParse(c[3], out dt) && dt.Date == DateTime.Now.Date) {
+                                kayitVar = true; break;
+                            }
+                        }
+                    }
+                }
+                
+                if (!kayitVar) {
+                    string satir = semb + "|" + strat + "|" + per + "|" + DateTime.Now.ToString("yyyy-MM-dd HH:mm") + "|" + fyt.ToString("0.00") + "|AKTIF|||||\r\n";
+                    System.IO.File.AppendAllText(dbFile, satir);
+                }
+            } catch (Exception ex) {
+                DosyayaYaz(DosyaDebug, DateTime.Now + " ERROR VeritabaninaYaz: " + ex.Message + "\r\n", true);
+            }
+        };
+
+        // --- PIYASA PUANI (MARKET SCORE) HESAPLAMA (XU100 & XU030) ---
+        // Helper Func: Calculate Score
+        Func<string, Tuple<int, string, int>> HesaplaPiyasaPuani = (sembolEndeks) => {
+            var V_G = Sistem.GrafikVerileriniOku("IMKBH'" + sembolEndeks, "G");
+            var V_60 = Sistem.GrafikVerileriniOku("IMKBH'" + sembolEndeks, "60");
+            
+            int score = 0;
+            string mode = "NORMAL";
+            int mod = 0;
+
+            if (V_G != null && V_G.Count > 50 && V_60 != null && V_60.Count > 50) {
+                var C_G = Sistem.GrafikFiyatOku(V_G, "Kapanis");
+                var EMA50_G = Sistem.MA(C_G, "Exp", 50);
+                var RSI_G = Sistem.RSI(V_G, 14);
+                var MACD_G = Sistem.MACD(V_G, 12, 26);
+                var MACD_Sig_G = Sistem.MA(MACD_G, "Exp", 9);
+                
+                var C_60 = Sistem.GrafikFiyatOku(V_60, "Kapanis");
+                var EMA20_60 = Sistem.MA(C_60, "Exp", 20);
+                var SuperTrend_60 = Sistem.SuperTrend(V_60, 10, 3);
+
+                int bi_G = V_G.Count - 1;
+                int bi_60 = V_60.Count - 1;
+
+                if (C_G[bi_G] > EMA50_G[bi_G]) score += 20;
+                if (C_60[bi_60] > EMA20_60[bi_60]) score += 20;
+                if (RSI_G[bi_G] > 50) score += 20;
+                if (MACD_G[bi_G] > MACD_Sig_G[bi_G]) score += 20;
+                if (C_60[bi_60] > SuperTrend_60[bi_60]) score += 20;
+                if (score < 20) { mode = "CRASH"; mod = 999; }
+                else if (score < 60) { mode = "STRICT"; mod = 4; }
+                else if (score < 60) { mode = "STRICT"; mod = 3; }
+                else { mode = "BULL"; mod = 0; }
+            }
+            return Tuple.Create(score, mode, mod);
+        };
+
+        var MarketXU100 = HesaplaPiyasaPuani("XU100");
+        var MarketXU030 = HesaplaPiyasaPuani("XU030");
+
+        DosyayaYaz(DosyaDebug, string.Format("{0} INFO: XU100 Score={1} Mode={2} | XU030 Score={3} Mode={4}\r\n", 
+            DateTime.Now, MarketXU100.Item1, MarketXU100.Item2, MarketXU030.Item1, MarketXU030.Item2), true);
+
+        // --- TARAMA DÖNGÜSÜ ---
+        var TumSinyalSembolleri = new HashSet<string>();
+        
+        for (var i = 0; i < SembollerListesi.Count; i++)
+        {
+            var Sembol = SembollerListesi[i];
+            
+            try 
+            {
+                var V_Raw = Sistem.GrafikVerileriniOku(Sembol, Periyot);
+                if (V_Raw == null || V_Raw.Count < 200) {
+                    if (i < 5) DosyayaYaz(DosyaDebug, DateTime.Now + " WARN: " + Sembol + " verisi eksik/yok! (" + (V_Raw==null ? "NULL" : V_Raw.Count.ToString()) + ")\r\n", true);
+                    continue;
+                }
+                // HIZ OPTIMIZASYONU: Son 400 bar
+                var V = V_Raw.Count > 400 ? V_Raw.GetRange(V_Raw.Count - 400, 400) : V_Raw;
+                
+                // CRITICAL: Set System Data to Current Symbol for Built-in Indicators
+                Sistem.GrafikVerileri = V;
+                Sistem.BarSayisi = V.Count;
+
+                if (i % 50 == 0) DosyayaYaz(DosyaDebug, DateTime.Now + " DEBUG: Isleniyor... " + i + "/" + SembollerListesi.Count + " (" + Sembol + ")\r\n", true);
+                
+                var C = Sistem.GrafikFiyatOku(V, "Kapanis");
+                var H = Sistem.GrafikFiyatOku(V, "Yuksek");
+                var L = Sistem.GrafikFiyatOku(V, "Dusuk");
+                var O = Sistem.GrafikFiyatOku(V, "Acilis");
+                var Vol = Sistem.GrafikFiyatOku(V, "Hacim");
+                var bi = V.Count - 1; 
+
+                // --- VIOP vs HISSE AYRIMI ---
+                bool isViop = Sembol.Contains("VIP") || Sembol.StartsWith("F_");
+                int currentThresholdMod = isViop ? MarketXU030.Item3 : MarketXU100.Item3;
+                string currentMarketMode = isViop ? MarketXU030.Item2 : MarketXU100.Item2;
+
+                if (currentMarketMode == "CRASH") {
+                    if (i % 50 == 0) DosyayaYaz(DosyaDebug, "DEBUG SKIP: " + Sembol + " (CRASH MODE)\r\n", true);
+                    continue;
+                }
+
+                // --- ORTAK İNDİKATÖRLER & FİLTRELER ---
+                var RSI14 = Sistem.RSI(V, 14);
+                var PDI = Sistem.DirectionalIndicatorPlus(V, 14);
+                var MDI = Sistem.DirectionalIndicatorMinus(V, 14);
+                var ADX = Sistem.ADX(V, 14);
+                var ATR = Sistem.AverageTrueRange(V, 14);
+                var EMA50 = Sistem.MA(C, "Exp", 50);
+                var EMA20 = Sistem.MA(C, "Exp", 20);
+                var VolMA20 = Sistem.MA(Vol, "Simple", 20);
+                var VolMA5 = Sistem.MA(Vol, "Simple", 5);
+                // --- GLOBAL FİLTRELER (HARD FILTERS) ---
+                bool filter_Trend = (C[bi] > EMA50[bi]); // Ana Trend Yukari
+                bool filter_VolQuality = (Vol[bi] > VolMA20[bi] * 1.5f) && (C[bi] > (H[bi] + L[bi]) / 2.0f); // Hacim ve Mum Kalitesi
+                
+                // Volatilite Filtresi (ATR/Fiyat < %3) - Asiri volatiliteden kacis
+                float atrRatio = (C[bi] > 0) ? (ATR[bi] / C[bi]) : 0;
+                bool filter_Volatility = (atrRatio < 0.03f); 
+
+                // Asiri Uzaklasma Filtresi (Overextension) - Fiyat EMA20'den %5'ten fazla uzaklasmamali
+                float distFromMA = (EMA20[bi] > 0) ? ((C[bi] - EMA20[bi]) / EMA20[bi]) : 0;
+                bool filter_Overextended = (distFromMA < 0.05f);
+
+                // Global Filtre Sonucu
+                bool GLOBAL_FILTERS_OK = filter_Trend && filter_VolQuality && filter_Volatility && filter_Overextended;
+
+                // Ichimoku Manual
+                var HH9 = Sistem.HHV(9, H);
+                var LL9 = Sistem.LLV(9, L);
+                var TenkanManual = Sistem.Liste(V.Count, 0);
+                for (int k = 0; k < V.Count; k++) TenkanManual[k] = (HH9[k] + LL9[k]) / 2;
+
+                var HH26 = Sistem.HHV(26, H);
+                var LL26 = Sistem.LLV(26, L);
+                var KijunManual = Sistem.Liste(V.Count, 0);
+                for (int k = 0; k < V.Count; k++) KijunManual[k] = (HH26[k] + LL26[k]) / 2;
+
+                // --- KING İNDİKATÖRLERİ ---
+                // VWMA & VWAP
+                var CV = Sistem.Liste(V.Count, 0);
+                for (int k = 0; k < V.Count; k++) CV[k] = C[k] * Vol[k];
+                var SumCV = Sistem.MA(CV, "Simple", 20);
+                var SumVol20 = Sistem.MA(Vol, "Simple", 20);
+                var VWMA = Sistem.Liste(V.Count, 0);
+                for (int k = 0; k < V.Count; k++) if (SumVol20[k] != 0) VWMA[k] = SumCV[k] / SumVol20[k];
+
+                // CMF Manual
+                var MF_Vol = Sistem.Liste(V.Count, 0);
+                for (int k = 0; k < V.Count; k++)
+                {
+                    if (H[k] != L[k]) MF_Vol[k] = Vol[k] * ((C[k] - L[k]) - (H[k] - C[k])) / (H[k] - L[k]);
+                }
+                var SumMFVol = Sistem.MA(MF_Vol, "Simple", 20); 
+                var CMF_Manual = Sistem.Liste(V.Count, 0);
+                for (int k = 0; k < V.Count; k++) if (SumVol20[k] != 0) CMF_Manual[k] = SumMFVol[k] / SumVol20[k];
+                
+                var PSAR = Sistem.Parabolic(V, 0.02, 0.2);
+
+                // --- BOMBA İNDİKATÖRLERİ ---
+                var BB_Up = Sistem.BollingerUp(C, 20, 2);
+                var BB_Down = Sistem.BollingerDown(C, 20, 2);
+                var BB_Mid = Sistem.MA(C, "Simple", 20);
+                var BBWidth = Sistem.Liste(V.Count, 0);
+                for(int k=0; k<V.Count; k++) if(BB_Mid[k]!=0) BBWidth[k] = (BB_Up[k] - BB_Down[k]) / BB_Mid[k];
+                var RSI_MA = Sistem.MA(RSI14, "Simple", 14);
+                var RSI7 = Sistem.RSI(V, 7);
+                var StochRSIFast = Sistem.StochasticRSI(V, 14);
+                var StochRSISlow = Sistem.MA(StochRSIFast, "Simple", 3);
+                
+                // Hull MA (Fallback)
+                var HMA9 = Sistem.Liste(V.Count, 0);
+                try { HMA9 = Sistem.HullMA(V, 9); } 
+                catch {
+                    var wma9 = Sistem.MA(C, "Weighted", 9);
+                    var wma4 = Sistem.MA(C, "Weighted", 4);
+                    var rawHMA = Sistem.Liste(V.Count, 0);
+                    for(int k=0; k<V.Count; k++) rawHMA[k] = 2 * wma4[k] - wma9[k];
+                    HMA9 = Sistem.MA(rawHMA, "Weighted", 3);
+                }
+
+                // --- TeFo İNDİKATÖRLERİ ---
+                var MACD = Sistem.MACD(V, 12, 26);
+                var MACDTrigger = Sistem.MA(MACD, "Exp", 9);
+                var VolMA10 = Sistem.MA(Vol, "Simple", 10);
+                var ADXMA10 = Sistem.MA(ADX, "Exp", 10);
+                var Mom10 = Sistem.Momentum(V, 10);
+                var MFI14 = Sistem.MoneyFlowIndex(V, 14);
+                var CMF14 = Sistem.Liste(V.Count, 0);
+                // CMF14 Fallback
+                var SumMFVol14 = Sistem.MA(MF_Vol, "Simple", 14);
+                var SumVol14 = Sistem.MA(Vol, "Simple", 14);
+                for (int k = 0; k < V.Count; k++) if (SumVol14[k] != 0) CMF14[k] = SumMFVol14[k] / SumVol14[k];
+
+                var StochFast53 = Sistem.StochasticFast(V, 5, 3);
+                var StochSlow53 = Sistem.StochasticSlow(V, 5, 3);
+                var TenkanAuto = TenkanManual; // Alias
+
+                // --- SİNYAL KONTROLLERİ ---
+                
+                if (i == 0) {
+                    DosyayaYaz(DosyaDebug, string.Format("DEBUG DATA {0}: C={1} O={2} RSI={3} VWMA={4} CMF={5}\r\n", 
+                        Sembol, C[bi], O[bi], RSI14[bi], VWMA[bi], CMF_Manual[bi]), true);
+                }
+
+                // 1. KING STRATEJİSİ (Trend & Momentum Lideri) - MAX 25 PUAN
+                int scoreKing = 0;
+                if (GLOBAL_FILTERS_OK) {
+                    // Trend
+                    if (C[bi] > O[bi]) scoreKing += 2;
+                    if (C[bi] > PSAR[bi]) scoreKing += 2;
+                    if (C[bi] > VWMA[bi]) scoreKing += 4; // Artırıldı (3->4)
+                    if (TenkanManual[bi] > KijunManual[bi]) scoreKing += 2;
+                    
+                    // Momentum (RSI 55-80 Bandi)
+                    if (RSI14[bi] > 55 && RSI14[bi] < 80) scoreKing += 4; // Artırıldı (3->4)
+                    if (ADX[bi] > 25 && PDI[bi] > MDI[bi]) scoreKing += 4; // Artırıldı (3->4)
+                    
+                    // Para Girisi
+                    // Para Girisi
+                    if (CMF_Manual[bi] > 0) scoreKing += 4; // Artırıldı (3->4)
+                    
+                    // Hacim
+                    if (Vol[bi] > VolMA5[bi] * 1.2f) scoreKing += 3; // Artırıldı (1->3)
+                }
+                // Eşik: 18 Puan + Mod
+                bool king_ok = (scoreKing >= (22 + currentThresholdMod)); 
+                
+                if (king_ok) {
+                     DosyayaYaz(DosyaDebug, "DEBUG KING SCORE: " + Sembol + " Score=" + scoreKing + "\r\n", true);
+                }
+
+                // 2. BOMBA STRATEJİSİ (Patlama/Breakout) - MAX 25 PUAN
+                int scoreBomba = 0;
+                if (GLOBAL_FILTERS_OK) {
+                    // Bollinger Sıkışması (Squeeze)
+                    if (BBWidth[bi] < 0.15f) scoreBomba += 4; // Artırıldı (3->4)
+                    if (C[bi] > BB_Up[bi]) scoreBomba += 4; // Artırıldı (2->4)
+                    
+                    // RSI Breakout
+                    if (RSI14[bi] > RSI_MA[bi]) scoreBomba += 3;
+                    if (RSI14[bi] > 55) scoreBomba += 2;
+                    
+                    // Hacim Patlamasi
+                    if (Vol[bi] > VolMA20[bi] * 1.5f) scoreBomba += 4; // Artırıldı (2->4)
+                    
+                    // Momentum
+                    if (StochRSIFast[bi] > StochRSISlow[bi]) scoreBomba += 2;
+                    if (C[bi] > HMA9[bi]) scoreBomba += 2;
+                }
+                // Ilk hacim patlamasini yakala
+                if (bi >= 3) {
+                    float volAvg3 = (Vol[bi-1] + Vol[bi-2] + Vol[bi-3]) / 3;
+                    if (Vol[bi] > volAvg3 * 1.4f && Vol[bi-1] < volAvg3) {
+                        scoreBomba += 4; // Artırıldı (2->4)
+                    }
+                }
+                
+                // FILTER: Momentum Tukenmislik
+                if (bi >= 3) {
+                    float rsiChange3 = RSI14[bi] - RSI14[bi-3];
+                    if (rsiChange3 > 20) {
+                        scoreBomba -= 3; // Cok hizli yukseldi
+                    }
+                }
+
+                // FILTER: Flat Market Penalty
+                if (ADX[bi] < 20) scoreBomba -= 2;
+
+                // SONUC (Eşik: 18 Puan + Mod)
+                bool bomba_ok = (scoreBomba >= (22 + currentThresholdMod));
+                
+                if (bomba_ok) {
+                     DosyayaYaz(DosyaDebug, "DEBUG BOMBA SCORE: " + Sembol + " Score=" + scoreBomba + "\r\n", true);
+                }
+
+                // TEFO V2 - Weighted Scoring System - MAX 25 PUAN
+                int scoreTefo = 0;
+
+                if (GLOBAL_FILTERS_OK) {
+                    // 1. VOLUME STRENGTH
+                    if (Vol[bi] > Vol[bi-1] * 1.3f) scoreTefo += 1;
+                    if (Vol[bi] > Vol[bi-1] * 1.5f) scoreTefo += 2;
+                    if (Vol[bi] > VolMA10[bi]) scoreTefo += 2;
+
+                    // 2. TREND DIRECTION
+                    if (ADX[bi] > 20) scoreTefo += 2;
+                    if (ADX[bi] > ADXMA10[bi]) scoreTefo += 2;
+                    if (PDI[bi] > MDI[bi]) scoreTefo += 3;
+
+                    // 3. MOMENTUM INDICATORS
+                    if (Mom10[bi] > Mom10[bi-1]) scoreTefo += 1;
+                    if (MACD[bi] > MACDTrigger[bi]) scoreTefo += 3; // Artırıldı (2->3)
+                    if (MFI14[bi] > MFI14[bi-1]) scoreTefo += 2;
+
+                    // 4. CANDLE & MONEY FLOW
+                    if (C[bi] > O[bi]) scoreTefo += 1;
+                    if (CMF14[bi] > 0) scoreTefo += 3; // Artırıldı (2->3)
+
+                    // 5. STOCHASTIC
+                    if (StochFast53[bi] > StochSlow53[bi]) scoreTefo += 3; // Artırıldı (2->3)
+
+                    // FILTER: Flat Market Penalty
+                    if (ADX[bi] < 20) scoreTefo -= 2;
+                }
+
+                // SONUC (Eşik: 18 Puan + Mod)
+                bool tefo_ok = (scoreTefo >= (22 + currentThresholdMod));
+
+                if (tefo_ok) {
+                     DosyayaYaz(DosyaDebug, "DEBUG TEFO SCORE: " + Sembol + " Score=" + scoreTefo + "\r\n", true);
+                }
+
+                // --- MTF CONFIRMATION (Timeframe Onayi) ---
+                // Sadece potansiyel sinyal varsa calisir (Performans icin)
+                // Eger skor esige yakinsa (esik-3) veya gecmisse kontrol et
+                int maxScore = Math.Max(scoreKing, Math.Max(scoreBomba, scoreTefo));
+                int requiredScore = 22 + currentThresholdMod;
+                
+                if (maxScore >= (requiredScore - 3)) 
+                {
+                    string mtfPeriyot = "";
+                    if (Periyot == "15") mtfPeriyot = "60";
+                    else if (Periyot == "60") mtfPeriyot = "240";
+                    else if (Periyot == "240") mtfPeriyot = "G";
+                    
+                    if (mtfPeriyot != "") 
+                    {
+                        var V_MTF = Sistem.GrafikVerileriniOku(Sembol, mtfPeriyot);
+                        if (V_MTF != null && V_MTF.Count > 50) {
+                            var C_MTF = Sistem.GrafikFiyatOku(V_MTF, "Kapanis");
+                            var EMA50_MTF = Sistem.MA(C_MTF, "Exp", 50);
+                            int bi_MTF = V_MTF.Count - 1;
+                            
+                            // Ust periyot trendi
+                            if (C_MTF[bi_MTF] > EMA50_MTF[bi_MTF]) {
+                                // Trend Yonunde: +3 Puan
+                                scoreKing += 3; scoreBomba += 3; scoreTefo += 3;
+                                DosyayaYaz(DosyaDebug, "DEBUG MTF CONFIRM: " + Sembol + " (" + mtfPeriyot + ") Trend UP (+3 Puan)\r\n", true);
+                            } else {
+                                // Trend Tersi: -3 Puan
+                                scoreKing -= 3; scoreBomba -= 3; scoreTefo -= 3;
+                                DosyayaYaz(DosyaDebug, "DEBUG MTF REJECT: " + Sembol + " (" + mtfPeriyot + ") Trend DOWN (-3 Puan)\r\n", true);
+                            }
+                        }
+                    }
+                }
+
+                // --- YENİ SONUÇ BİRLEŞTİRME VE İŞLEME ---
+                var tetiklenenStratejiler = new List<string>();
+                int enYuksekSkor = 0;
+
+                // Tekrar Kontrol (MTF sonrasi skorlar degisti)
+                king_ok = (scoreKing >= requiredScore);
+                bomba_ok = (scoreBomba >= requiredScore);
+                tefo_ok = (scoreTefo >= requiredScore);
+
+                if (king_ok) {
+                    tetiklenenStratejiler.Add("K");
+                    enYuksekSkor = Math.Max(enYuksekSkor, scoreKing);
+                }
+                if (bomba_ok) {
+                    tetiklenenStratejiler.Add("B");
+                    enYuksekSkor = Math.Max(enYuksekSkor, scoreBomba);
+                }
+                if (tefo_ok) {
+                    tetiklenenStratejiler.Add("T");
+                    enYuksekSkor = Math.Max(enYuksekSkor, scoreTefo);
+                }
+
+                if (tetiklenenStratejiler.Count > 0)
+                {
+                    var birlesikStrateji = string.Join("+", tetiklenenStratejiler);
+                    
+                    DosyayaYaz(DosyaDebug, DateTime.Now + " DEBUG: SINYAL BULUNDU! " + Sembol + " Strateji:" + birlesikStrateji + "\r\n", true);
+                    var sembolTemiz = Sembol.Replace("VIP'VIP-", "VIP-").Replace("IMKBH'", "").Trim();
+                    var fiyat = C[bi];
+                    
+                    // Tekrar eden sinyal mi kontrolü
+                    bool isTekrar = aktifSinyaller.Contains(sembolTemiz + "|" + Periyot);
+                    
+                    // Günlük değişim hesaplama (Tablo için)
+                    float gunlukHacimYuzde = 0;
+                    float gunlukFiyatYuzde = 0;
+                    
+                    try {
+                        var V_Gunluk = Sistem.GrafikVerileriniOku(Sembol, "G");
+                        if (V_Gunluk != null && V_Gunluk.Count >= 2) {
+                            var C_G = Sistem.GrafikFiyatOku(V_Gunluk, "Kapanis");
+                            var Vol_G = Sistem.GrafikFiyatOku(V_Gunluk, "Hacim");
+                            int gi = V_Gunluk.Count - 1;
+                            
+                            if (C_G[gi-1] != 0) gunlukFiyatYuzde = ((C_G[gi] - C_G[gi-1]) / C_G[gi-1]) * 100;
+                            if (Vol_G[gi-1] != 0) gunlukHacimYuzde = ((Vol_G[gi] - Vol_G[gi-1]) / Vol_G[gi-1]) * 100;
+                        }
+                    } catch { }
+
+                    // OHLC & XU100 Fetch (V3 Update)
+                    string ohlc = O[bi].ToString("0.00") + "|" + H[bi].ToString("0.00") + "|" + L[bi].ToString("0.00") + "|" + C[bi].ToString("0.00") + "|" + Vol[bi].ToString("0");
+                    string xu100Val = "0";
+                    try { 
+                        var xu100V = Sistem.GrafikVerileriniOku("IMKBH'XU100", "G");
+                        if(xu100V != null && xu100V.Count > 0) xu100Val = xu100V[xu100V.Count-1].Close.ToString("0.00");
+                    } catch {}
+
+                    // Format: Sembol|Strateji|Periyot|Fiyat|Hacim%|Fiyat%|Skor|Tekrar|Open|High|Low|Close|Vol|XU100
+                    string satir = string.Format("{0}|{1}|{2}|{3}|{4}|{5}|{6}/25|{7}|{8}|{9}", 
+                        sembolTemiz, birlesikStrateji, Periyot, fiyat.ToString("0.00"), 
+                        "%" + gunlukHacimYuzde.ToString("0.0"), "%" + gunlukFiyatYuzde.ToString("0.0"), enYuksekSkor, isTekrar ? "T" : "",
+                        ohlc, xu100Val);
+                    
+                    DosyayaYaz(DosyaSinyaller, satir + "|||", true);
+                    VeritabaninaYaz(sembolTemiz, birlesikStrateji, Periyot, fiyat);
+                    TumSinyalSembolleri.Add(sembolTemiz);
+                    periyottaSinyalVar = true;
+                }
+            } catch (Exception ex) {
+                DosyayaYaz(DosyaDebug, DateTime.Now + " ERROR Loop: " + Sembol + " " + ex.Message + "\r\n", true);
+            }
+        } // sembol loop sonu
+
+        // --- DEBUG & TELEGRAM ---
+        DosyayaYaz(DosyaDebug, DateTime.Now + " DEBUG: Dongu Bitti. SinyalVar: " + periyottaSinyalVar + "\r\n", true);
+
+        // Helper Func - TabloOlustur
+        Func<string, string, string> TabloOlustur = (dosyaYolu, baslik) => {
+            if (System.IO.File.Exists(dosyaYolu)) {
+                var ham = System.IO.File.ReadAllText(dosyaYolu);
+                if (!string.IsNullOrEmpty(ham)) {
+                    var satirlar = new System.Collections.Generic.List<string>(ham.ToString().Split(new[] { "|||" }, StringSplitOptions.RemoveEmptyEntries));
+                    var uniqueSatirlar = new System.Collections.Generic.HashSet<string>(satirlar);
+                    var finalListe = new System.Collections.Generic.List<string>(uniqueSatirlar);
+
+                    // CLEANUP: Remove invalid lines (Count mismatch fix)
+                    finalListe.RemoveAll(x => x.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray().Length < 7);
+
+                    // Skor sütununa göre sırala (son sütun)
+                    finalListe.Sort((a, b) => { 
+                        try {
+                            var partsA = a.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                            var partsB = b.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                            if (partsA.Length >= 7 && partsB.Length >= 7) {
+                                int scoreA = int.Parse(partsA[6].Split('/')[0].Trim());
+                                int scoreB = int.Parse(partsB[6].Split('/')[0].Trim());
+                                return scoreB.CompareTo(scoreA);
+                            }
+                        } catch { }
+                        return 0;
+                    });
+                
+                    // En yüksek 2 farklı skoru bul
+                    var topScores = finalListe.Select(x => {
+                        try { 
+                            var parts = x.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                            return int.Parse(parts[6].Split('/')[0].Trim()); 
+                        } catch { return 0; }
+                    }).Distinct().OrderByDescending(s => s).Take(2).ToHashSet();
+
+                    string t = "<b>" + baslik + " (" + finalListe.Count + " Adet)</b>\n";
+                    t += "<pre>";
+                    t += "Sembol    |Str  |Per|Fiyat   |Hacim%  |Fiyat%  |Skor  \n";
+                    t += "----------|-----|---|--------|--------|--------|------\n";
+                    
+                    for (int k = 0; k < finalListe.Count; k++)
+                    {
+                        // ROBUST PARSING
+                        var parts = finalListe[k].Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries)
+                                                .Select(p => p.Trim()).ToArray();
+
+                        // Format: Sembol|Strateji|Periyot|Fiyat|Hacim%|Fiyat%|Skor|Tekrar
+                        if (parts.Length >= 7) {
+                            string p_sembol = parts[0];
+                            string p_strat = parts[1];
+                            string p_per = parts[2];
+                            string p_fiyat = parts[3];
+                            string p_hacim = parts[4];
+                            string p_fiyatDeg = parts[5];
+                            string p_skor = parts[6];
+                            string p_tekrar = parts.Length > 7 ? parts[7] : "";
+                            
+                            int scoreVal = 0;
+                            try { scoreVal = int.Parse(p_skor.Split('/')[0].Trim()); } catch {}
+
+                            string tekrarIsareti = (p_tekrar == "T") ? " (T)" : "";
+                            // Padding Ayarlari
+                            string sembol = (p_sembol + tekrarIsareti).PadRight(10).Substring(0,10); // 14 -> 10
+                            string strateji = p_strat.PadRight(5).Substring(0,5); // 9 -> 5
+                            string per = p_per.PadRight(3).Substring(0,3);
+                            string fiyat = p_fiyat.PadRight(8).Substring(0,8);
+                            string hacim = p_hacim.PadRight(8).Substring(0,8);
+                            string fiyatDeg = p_fiyatDeg.PadRight(8).Substring(0,8);
+                            string skorPadded = p_skor.PadRight(6); // 5 -> 6
+                            
+                            string line = sembol + "|" + strateji + "|" + per + "|" + fiyat + "|" + hacim + "|" + fiyatDeg + "|" + skorPadded;
+                            string star = topScores.Contains(scoreVal) ? "⭐" : "  ";
+                            
+                            t += star + line + "\n";
+                        }
+                    }
+                    t += "</pre>\n\n";
+                    return t;
+                }
+            }
+            return "";
+        };
+
+        if (periyottaSinyalVar)
+        {
+            try 
+            {
+                DosyayaYaz(DosyaDebug, DateTime.Now + " DEBUG: Telegram bloguna girildi.\r\n", true);
+                
+                string perLabel = Periyot == "G" ? "Günlük" : Periyot + "dk";
+                
+                string mesajGovde = TabloOlustur(DosyaSinyaller, "(K)ING - (B)OMBA - (T)EFO  - " + perLabel);
+                bool veriVar = !string.IsNullOrEmpty(mesajGovde);
+
+                if (veriVar)
+                {
+                    DosyayaYaz(DosyaDebug, DateTime.Now + " DEBUG: Mesaj hazir (" + mesajGovde.Length + " chars). Kontrol ediliyor...\r\n", true);
+                    
+                    int maxLen = 4000;
+                    if (mesajGovde.Length <= maxLen)
+                    {
+                        // 1. Ana Gruba Gönder (Tek Parça)
+                        string urlString = "https://api.telegram.org/bot" + ApiToken + "/sendMessage?chat_id=" + ChatIdMain + "&text=" + System.Uri.EscapeDataString(mesajGovde) + "&parse_mode=HTML";
+                        var request = System.Net.WebRequest.Create(urlString);
+                        request.Timeout = 15000;
+                        using (var response = request.GetResponse()) { }
+                        DosyayaYaz(DosyaDebug, DateTime.Now + " SUCCESS: Mesaj gonderildi (Tek parca).\r\n", true);
+                    }
+                    else
+                    {
+                        // Mesaj çok uzun, parçala
+                        DosyayaYaz(DosyaDebug, DateTime.Now + " INFO: Mesaj cok uzun (" + mesajGovde.Length + "), parcalaniyor...\r\n", true);
+
+                        var ham = System.IO.File.ReadAllText(DosyaSinyaller);
+                        var satirlar = new System.Collections.Generic.List<string>(ham.ToString().Split(new[] { "|||" }, StringSplitOptions.RemoveEmptyEntries));
+                        var uniqueSatirlar = new System.Collections.Generic.HashSet<string>(satirlar);
+                        var finalListe = new System.Collections.Generic.List<string>(uniqueSatirlar);
+
+                        // CLEANUP: Remove invalid lines (Count mismatch fix)
+                        finalListe.RemoveAll(x => x.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray().Length < 7);
+
+                        finalListe.Sort((a, b) => { 
+                            try {
+                                var partsA = a.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                                var partsB = b.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                                
+                                if (partsA.Length >= 7 && partsB.Length >= 7) {
+                                    int scoreA = int.Parse(partsA[6].Split('/')[0].Trim());
+                                    int scoreB = int.Parse(partsB[6].Split('/')[0].Trim());
+                                    return scoreB.CompareTo(scoreA);
+                                }
+                            } catch { }
+                            return 0;
+                        });
+                        
+                        var topScores = finalListe.Select(x => {
+                            try { 
+                                var parts = x.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray();
+                                return int.Parse(parts[6].Split('/')[0].Trim()); 
+                            } catch { return 0; }
+                        }).Distinct().OrderByDescending(s => s).Take(2).ToHashSet();
+
+                        string baslik = "(K)ING - (B)OMBA - (T)EFO - " + perLabel;
+                        int chunkSize = 30; // Her mesajda 30 hisse
+                        for (int i = 0; i < finalListe.Count; i += chunkSize)
+                        {
+                            var parca = finalListe.GetRange(i, Math.Min(chunkSize, finalListe.Count - i));
+                            string parcaMesaj = "<b>" + baslik + " (Parça " + ((i / chunkSize) + 1) + ")</b>\n<pre>";
+                            parcaMesaj += "Sembol    |Str  |Per|Fiyat   |Hacim%  |Fiyat%  |Skor  \n";
+                            parcaMesaj += "----------|-----|---|--------|--------|--------|------\n";
+                            
+                            foreach(var satir in parca) {
+                                // ROBUST PARSING: Bosluklari ve bos elemanlari temizle
+                                var parts = satir.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries)
+                                                 .Select(p => p.Trim()).ToArray();
+
+                                // Format: Sembol|Strateji|Periyot|Fiyat|Hacim%|Fiyat%|Skor|Tekrar
+                                if (parts.Length >= 7) {
+                                    string p_sembol = parts[0];
+                                    string p_strat = parts[1];
+                                    string p_per = parts[2];
+                                    string p_fiyat = parts[3];
+                                    string p_hacim = parts[4];
+                                    string p_fiyatDeg = parts[5];
+                                    string p_skor = parts[6];
+                                    string p_tekrar = parts.Length > 7 ? parts[7] : "";
+                                    
+                                    int scoreVal = 0;
+                                    try { scoreVal = int.Parse(p_skor.Split('/')[0].Trim()); } catch {}
+
+                                    string tekrarIsareti = (p_tekrar == "T") ? " (T)" : "";
+                                    // Padding Fix
+                                    string sembol = (p_sembol + tekrarIsareti).PadRight(10).Substring(0,10);
+                                    string strateji = p_strat.PadRight(5).Substring(0,5);
+                                    string per = p_per.PadRight(3).Substring(0,3);
+                                    string fiyat = p_fiyat.PadRight(8).Substring(0,8);
+                                    string hacim = p_hacim.PadRight(8).Substring(0,8);
+                                    string fiyatDeg = p_fiyatDeg.PadRight(8).Substring(0,8);
+                                    string skorPadded = p_skor.PadRight(6);
+                                    
+                                    string line = sembol + "|" + strateji + "|" + per + "|" + fiyat + "|" + hacim + "|" + fiyatDeg + "|" + skorPadded;
+                                    string star = topScores.Contains(scoreVal) ? "⭐" : "  ";
+                                    
+                                    parcaMesaj += star + line + "\n";
+                                }
+                            }
+                            parcaMesaj += "</pre>";
+
+                            string url = "https://api.telegram.org/bot" + ApiToken + "/sendMessage?chat_id=" + ChatIdMain + "&text=" + System.Uri.EscapeDataString(parcaMesaj) + "&parse_mode=HTML";
+                            var req = System.Net.WebRequest.Create(url);
+                            req.Timeout = 15000;
+                            using (var res = req.GetResponse()) { }
+                            System.Threading.Thread.Sleep(1000);
+                        }
+                        DosyayaYaz(DosyaDebug, DateTime.Now + " SUCCESS: Mesajlar parcali gonderildi.\r\n", true);
+                    }
+                }
+                else
+                {
+                    DosyayaYaz(DosyaDebug, DateTime.Now + " DEBUG: VeriVar=False, mesaj olusturulmadi.\r\n", true);
+                }
+            } 
+            catch (Exception ex) 
+            {
+                DosyayaYaz(DosyaDebug, DateTime.Now + " ERROR Telegram: " + ex.Message + "\r\n", true);
+                try { System.IO.File.AppendAllText("C:\\iDeal\\TARAMA_LOG\\KING\\CriticalError.txt", DateTime.Now + " " + ex.ToString() + "\r\n"); } catch {}
+            }
+        }
+    } // InSession
+} // Periyot Loop

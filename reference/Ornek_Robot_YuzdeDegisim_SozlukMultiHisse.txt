@@ -1,0 +1,65 @@
+var Sozluk = new Dictionary<string,double>();
+
+Sozluk["IMKBH'AKFGY"] = 5; // 5 lot
+Sozluk["IMKBH'ERBOS"] = 5; // 5 lot
+Sozluk["IMKBH'ISMEN"] = 5; // 5 lot
+Sozluk["IMKBH'SARKY"] = 5; // 5 lot
+Sozluk["IMKBH'TDGYO"] = 5; // 5 lot
+Sozluk["IMKBH'AYGAZ"] = 5; // 5 lot
+Sozluk["IMKBH'CUSAN"] = 5; // 5 lot
+Sozluk["IMKBH'GOODY"] = 5; // 5 lot
+Sozluk["IMKBH'KLMSN"] = 5; // 5 lot
+Sozluk["IMKBH'KOZAL"] = 5; // 5 lot
+Sozluk["IMKBH'MSGYO"] = 5; // 1 lot
+Sozluk["IMKBH'RYGYO"] = 5; // 2 lot
+Sozluk["IMKBH'TKNSA"] = 5; // 5 lot
+
+            for (var No=0; No < Sozluk.Count; No++) 
+              { 
+                var EmirSembol = Sozluk.ElementAt(No).Key;
+                var Sembol = EmirSembol;
+                var Yuzeysel = Sistem.YuzeyselVeriOku(Sembol);
+                var Dif = (decimal)Yuzeysel.NetPerDay;
+                var LastPrice = (decimal)Yuzeysel.LastPrice;
+                var Lot = Sozluk.ElementAt(No).Value;
+              
+                var Anahtar = Sembol + "," + Sistem.Name;
+                double PozFiyat = 0;
+                DateTime PozTarih = DateTime.Now;
+                string PozRezerv = "";
+                var Pozisyon = Sistem.PozisyonKontrolOku(Anahtar, out PozFiyat, out PozTarih, out PozRezerv);
+
+                double Miktar = 0;
+                if (Pozisyon == 0 && Dif >= 2 && PozRezerv == "") // İŞLEME GİR 
+                {
+                    Miktar = Lot;
+                    Sistem.PozisyonKontrolGuncelle(Anahtar, Miktar, (double)LastPrice, "ALIS");
+                }
+
+                else if (Pozisyon > 0 && Dif >= 7)  // KAR AL
+                {
+                    Miktar = -Pozisyon;
+                    Sistem.PozisyonKontrolGuncelle(Anahtar, 0, (double)LastPrice, "KAR ALINDI");
+                }
+
+                else if (Pozisyon > 0 && Dif <= -2)  // STOP
+                {
+                    Miktar = -Pozisyon;
+                    Sistem.PozisyonKontrolGuncelle(Anahtar, 0, (double)LastPrice, "STOPLANDI");
+                }
+
+                if (Miktar == 0) continue;
+
+                Sistem.EmirIslem = Miktar > 0 ? Sistem.EmirIslem = "ALIS" : Sistem.EmirIslem = "SATIS";
+                Sistem.EmirMiktari = Math.Abs(Miktar);
+                Sistem.EmirSembol = EmirSembol;
+                Sistem.EmirSuresi = "KIE";
+                Sistem.EmirTipi = "Piyasa";
+                Sistem.EmirSatisTipi = "NORMAL";
+                Sistem.EmirGonder();
+
+
+            }
+
+
+

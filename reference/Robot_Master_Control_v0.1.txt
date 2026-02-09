@@ -1,0 +1,234 @@
+// ===============================================================================================
+// MASTER CONTROL ROBOT - PORTFÖY YÖNETİM SİSTEMİ
+// ===============================================================================================
+// KONSEPT TASARIMI v0.1
+// 
+// AMAÇ:
+// Tüm stratejileri merkezi olarak yönetmek, pozisyon boyutlandırma yapmak,
+// risk limitleri uygulamak ve portföy çeşitlendirmesini kontrol etmek.
+//
+// Tarih: 2026-01-24
+// ===============================================================================================
+
+// ===============================================================================================
+// BÖLÜM 1: GENEL AYARLAR
+// ===============================================================================================
+
+// Sermaye Ayarları
+var TOPLAM_SERMAYE = 100000.0;     // Toplam portföy değeri (TL)
+var MAX_RISK_ISLEM = 2.0;          // Her işlemde max risk (% olarak)
+var MAX_RISK_GUNLUK = 5.0;         // Günlük max kayıp limiti (%)
+var MAX_RISK_HAFTALIK = 10.0;      // Haftalık max kayıp limiti (%)
+
+// Pozisyon Limitleri
+var MAX_ACIK_POZISYON = 3;         // Aynı anda max açık pozisyon sayısı
+var MAX_TEKRAR_SEMBOL = 1;         // Aynı sembolde max pozisyon
+var MAX_TEKRAR_YON = 2;            // Aynı yönde (Long/Short) max pozisyon
+
+// Kontrat Değerleri (Güncellenmeli)
+var XU030_KONTRAT_DEGERI = 100.0;  // 1 puan = 100 TL
+var USDTRY_KONTRAT_DEGERI = 1000.0;
+
+// ===============================================================================================
+// BÖLÜM 2: STRATEJİ TANIMLARI
+// ===============================================================================================
+/*
+Yönetilecek stratejiler:
+1. ARS_Trend_5DK     - F_XU030 - Trend takip
+2. ARS_Trend_15DK    - F_XU030 - Trend takip
+3. Endeks_Vadeli     - F_XU030 - Breakout
+4. VIOP_Scalp        - F_USDTRY - Scalping (gelecekte)
+
+Her strateji için:
+- Sistem adı
+- Sembol
+- Periyot
+- Ağırlık (portföy içindeki oran)
+- Aktif/Pasif durumu
+*/
+
+// Strateji listesi (SozcukTablosundan okunabilir)
+string[] STRATEJI_LISTESI = new string[] {
+    "ARS_Trend_5DK|F_XU030|5|0.40|AKTIF",
+    "ARS_Trend_15DK|F_XU030|15|0.30|AKTIF",
+    "Endeks_Vadeli|F_XU030|15|0.30|PASIF"
+};
+
+// ===============================================================================================
+// BÖLÜM 3: MEVCUT DURUM OKUMA
+// ===============================================================================================
+
+// IdealData'dan mevcut pozisyonları oku
+// var ViopHesap = Sistem.ViopHesapOku();
+// var AcikPozisyonlar = Sistem.ViopPozisyonlar(1000);
+
+// Günlük KZ hesaplama
+// var GunlukKZ = HesaplaGunlukKZ();
+
+// ===============================================================================================
+// BÖLÜM 4: RİSK KONTROL FONKSİYONLARI
+// ===============================================================================================
+
+/*
+// Günlük limit kontrolü
+bool GunlukLimitKontrol()
+{
+    float gunlukKayip = HesaplaGunlukKZ();
+    float limitTL = (float)(TOPLAM_SERMAYE * MAX_RISK_GUNLUK / 100);
+    
+    if (gunlukKayip <= -limitTL)
+    {
+        Sistem.Mesaj("⚠️ GÜNLÜK LİMİT AŞILDI! Yeni işlem yapılamaz.", Color.Red);
+        return false;
+    }
+    return true;
+}
+
+// Pozisyon limiti kontrolü
+bool PozisyonLimitKontrol()
+{
+    int acikSayi = AcikPozisyonlar.Count;
+    if (acikSayi >= MAX_ACIK_POZISYON)
+    {
+        Sistem.Mesaj("⚠️ MAX POZİSYON LİMİTİ! " + acikSayi + "/" + MAX_ACIK_POZISYON, Color.Orange);
+        return false;
+    }
+    return true;
+}
+*/
+
+// ===============================================================================================
+// BÖLÜM 5: LOT HESAPLAMA
+// ===============================================================================================
+
+/*
+// Risk bazlı lot hesaplama
+int HesaplaLot(string sembol, float girisFiyat, float stopFiyat)
+{
+    float riskTL = (float)(TOPLAM_SERMAYE * MAX_RISK_ISLEM / 100);
+    float stopMesafesi = Math.Abs(girisFiyat - stopFiyat);
+    
+    float kontratDegeri = XU030_KONTRAT_DEGERI;
+    if (sembol.Contains("USD")) kontratDegeri = USDTRY_KONTRAT_DEGERI;
+    
+    float kayipPerLot = stopMesafesi * kontratDegeri;
+    int lot = (int)(riskTL / kayipPerLot);
+    
+    return Math.Max(1, lot);  // Minimum 1 lot
+}
+
+// Volatilite bazlı lot ayarlama
+int VolatiliteAyarlamasiUygula(int lot, float atr, float ortalamaATR)
+{
+    float volatiliteOrani = atr / ortalamaATR;
+    
+    if (volatiliteOrani > 1.5) lot = (int)(lot * 0.5);      // Çok volatil
+    else if (volatiliteOrani > 1.2) lot = (int)(lot * 0.75); // Volatil
+    else if (volatiliteOrani < 0.8) lot = (int)(lot * 1.25); // Sakin
+    
+    return Math.Max(1, lot);
+}
+*/
+
+// ===============================================================================================
+// BÖLÜM 6: DRAWDOWN YÖNETİMİ
+// ===============================================================================================
+
+/*
+// Drawdown seviyesine göre lot çarpanı
+float DrawdownCarpani()
+{
+    float maxDD = (float)Sistem.GetiriMaxDD;
+    
+    if (maxDD <= -TOPLAM_SERMAYE * 0.2)      // %20+ DD
+    {
+        Sistem.Mesaj("🛑 KRİTİK DRAWDOWN! İşlemler durduruldu.", Color.Red);
+        return 0.0f;
+    }
+    else if (maxDD <= -TOPLAM_SERMAYE * 0.15) // %15-20 DD
+        return 0.25f;
+    else if (maxDD <= -TOPLAM_SERMAYE * 0.10) // %10-15 DD
+        return 0.50f;
+    else if (maxDD <= -TOPLAM_SERMAYE * 0.05) // %5-10 DD
+        return 0.75f;
+    else
+        return 1.0f;
+}
+*/
+
+// ===============================================================================================
+// BÖLÜM 7: ANA KONTROL DÖNGÜSÜ
+// ===============================================================================================
+
+/*
+// Her bar'da çalışacak ana mantık
+void AnaKontrol()
+{
+    // 1. Risk limitleri kontrol
+    if (!GunlukLimitKontrol()) return;
+    if (!PozisyonLimitKontrol()) return;
+    
+    // 2. Her stratejiyi kontrol et
+    foreach (var stratejiStr in STRATEJI_LISTESI)
+    {
+        var parcalar = stratejiStr.Split('|');
+        string sistemAdi = parcalar[0];
+        string sembol = parcalar[1];
+        string periyot = parcalar[2];
+        float agirlik = float.Parse(parcalar[3]);
+        string durum = parcalar[4];
+        
+        if (durum != "AKTIF") continue;
+        
+        // 3. Strateji sinyalini al
+        var sistem = Sistem.SistemGetir(sistemAdi, sembol, periyot);
+        string sinyal = Sistem.SonYonGetir(sistemAdi, sembol, periyot);
+        
+        // 4. Sinyal varsa lot hesapla ve emir gönder
+        if (sinyal == "A" || sinyal == "S")
+        {
+            float girisFiyat = Sistem.SonFiyat(sembol);
+            float stopFiyat = HesaplaStop(sinyal, girisFiyat);
+            
+            int lot = HesaplaLot(sembol, girisFiyat, stopFiyat);
+            lot = (int)(lot * agirlik);
+            lot = (int)(lot * DrawdownCarpani());
+            lot = VolatiliteAyarlamasiUygula(lot, atr, ortalamaATR);
+            
+            if (lot > 0)
+            {
+                // Emir gönder
+                // Sistem.EmirGonder(...);
+            }
+        }
+    }
+}
+*/
+
+// ===============================================================================================
+// BÖLÜM 8: BİLGİ PANELİ
+// ===============================================================================================
+
+// Panel gösterimi
+string panelInfo = "══════ MASTER CONTROL ══════" + Environment.NewLine +
+                   "Sermaye: " + TOPLAM_SERMAYE.ToString("N0") + " TL" + Environment.NewLine +
+                   "Max Risk/İşlem: %" + MAX_RISK_ISLEM + Environment.NewLine +
+                   "Max Risk/Gün: %" + MAX_RISK_GUNLUK + Environment.NewLine +
+                   "─────────────────────────────" + Environment.NewLine +
+                   "Max Pozisyon: " + MAX_ACIK_POZISYON + Environment.NewLine +
+                   "Aktif Strateji: 2" + Environment.NewLine +
+                   "─────────────────────────────" + Environment.NewLine +
+                   "DURUM: BEKLEME";
+
+Sistem.Dortgen(1, 10, 30, 220, 150, Color.DarkBlue, Color.Black, Color.White);
+Sistem.GradientYaziEkle(panelInfo, 1, 15, 35, Color.White, Color.LightBlue, "Consolas", 9);
+
+// ===============================================================================================
+// GELİŞTİRME PLANI:
+// ===============================================================================================
+// v0.2: ViopHesapOku ve ViopPozisyonlar entegrasyonu
+// v0.3: EmirGonder fonksiyonu ile gerçek emir
+// v0.4: Telegram bildirimleri
+// v0.5: İşlem geçmişi ve raporlama
+// v1.0: Tam otomatik portföy yönetimi
+// ===============================================================================================

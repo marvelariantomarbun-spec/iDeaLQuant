@@ -109,8 +109,13 @@ class DataPanel(QWidget):
         
         layout.addLayout(select_row)
         
-        # Yükle butonu
+        # Yükle ve DB Butonları
         btn_row = QHBoxLayout()
+        
+        db_btn = QPushButton("🛠️ Veritabanı Yönetimi")
+        db_btn.clicked.connect(self.show_db_manager)
+        btn_row.addWidget(db_btn)
+        
         btn_row.addStretch()
         load_btn = QPushButton("IdealData'dan Yükle")
         load_btn.setObjectName("primaryButton")
@@ -282,25 +287,45 @@ class DataPanel(QWidget):
                 QMessageBox.warning(self, "Uyarı", f"{symbol} için veri bulunamadı.")
                 return
             
-            # Kolon isimlerini standartlaştır
-            df = df.rename(columns={
+            # Kolon isimlerini standartlaştır (eğer zaten aliaslar yoksa)
+            rename_map = {}
+            standard_cols = {
                 'Open': 'Acilis',
                 'High': 'Yuksek',
                 'Low': 'Dusuk',
                 'Close': 'Kapanis',
                 'Volume': 'Lot',
                 'Amount': 'Hacim'
-            })
+            }
+            for old_col, new_col in standard_cols.items():
+                if old_col in df.columns and new_col not in df.columns:
+                    rename_map[old_col] = new_col
+            
+            if rename_map:
+                df = df.rename(columns=rename_map)
             
             self.df = df
             self._update_preview()
             
-            # Süreç oluştur
+            # Süreç oluştur - tam dosya yolunu hesapla
+            from src.data.ideal_parser import get_file_path
+            
+            # Doğru dosya yolunu bul (parser mantığıyla)
+            found_path = get_file_path(chart_data, market, symbol, period)
+            
+            # Eğer bulunamazsa yine de fallback oluştur (v1.0 mantığı)
+            if found_path:
+                data_file_path = found_path
+            else:
+                from src.data.ideal_parser import PERIOD_MAP
+                period_info = PERIOD_MAP.get(period, {'folder': period, 'ext': f'.{period}'})
+                data_file_path = Path(chart_data) / market / period_info['folder'] / f"{symbol}{period_info['ext']}"
+            
             full_symbol = f"{market}_{symbol}"
             process_id = db.create_process(
                 symbol=full_symbol,
                 period=f"{period}dk" if period.isdigit() else period,
-                data_file=f"{symbol}.{period}",
+                data_file=str(data_file_path),
                 data_rows=len(df)
             )
             self.current_process_id = process_id
@@ -393,25 +418,44 @@ class DataPanel(QWidget):
             QMessageBox.critical(self, "Hata", f"Veri yüklenirken hata: {str(e)}")
     
     def _apply_filter(self):
-        """Filtreleri uygula"""
-        if self.df is None:
-            return
+        """Filtreleri uygula - Hem önizleme hem de gerçek veriyi güncelle"""
+        # Ham veri yoksa çık
+        if not hasattr(self, 'df_raw') or self.df_raw is None:
+            if self.df is not None:
+                self.df_raw = self.df.copy()  # İlk kez: mevcut veriyi raw olarak kaydet
+            else:
+                return
         
         # Tarih filtresi
         start = self.start_date.date().toPython()
         end = self.end_date.date().toPython()
         
-        filtered = self.df[
-            (self.df['DateTime'].dt.date >= start) & 
-            (self.df['DateTime'].dt.date <= end)
-        ]
+        filtered = self.df_raw[
+            (self.df_raw['DateTime'].dt.date >= start) & 
+            (self.df_raw['DateTime'].dt.date <= end)
+        ].copy()
         
         # Son N satır
         n = self.last_n_rows.value()
         if n > 0:
             filtered = filtered.tail(n)
         
-        self._update_preview(filtered)
+        # Veriyi güncelle ve diğer panellere bildir
+        self.df = filtered.reset_index(drop=True)
+        self._update_preview()
+        
+        # Optimizasyon ve Validasyon panellerine sinyal gönder
+        self.data_loaded.emit(self.df)
+        
+        # Kullanıcıya bilgi ver
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(
+            self, 
+            "Filtre Uygulandı", 
+            f"Filtrelenmiş veri: {len(self.df):,} bar\n"
+            f"Tarih aralığı: {start} - {end}"
+        )
+
     
     def _update_preview(self, df=None):
         """Önizleme tablosunu güncelle"""
@@ -452,3 +496,9 @@ class DataPanel(QWidget):
     def get_data(self) -> pd.DataFrame:
         """Yüklü veriyi döndür"""
         return self.df
+
+    def show_db_manager(self):
+        """Veritabanı yöneticisini göster"""
+        from src.ui.widgets.database_manager import DatabaseManager
+        dialog = DatabaseManager(self)
+        dialog.exec()

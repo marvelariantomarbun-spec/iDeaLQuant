@@ -1,0 +1,54 @@
+//Kısa sistem, Uzun sistemin belirlediği ana yön doğrultusunda işlem açar.
+//Uzun sistem "A"(yani alış) ise Kısa sistem alış-flat, Uzun sistem "S"(yani satış) ise Kısa sistem satış-flat olarak çalışabilir.
+
+var SistemAdi1 = "UZUNSISTEM";
+var SistemAdi2 = "KISASISTEM";
+
+var OrjinalSistem1 = Sistem.SistemGetir(SistemAdi1, "VIP'VIP-X030","G");
+var OrjinalSistem2 = Sistem.SistemGetir(SistemAdi2, "VIP'VIP-X030","G");
+
+var V = Sistem.GrafikVerileri;
+var Yon1 = "";
+var Yon2 = "";
+var SonYon = "";
+
+for (int i = 0; i < V.Count; i++)
+{
+    if (OrjinalSistem1.Yon[i] == "A")
+        Yon1 = "A";
+    else if (OrjinalSistem1.Yon[i] == "S")
+        Yon1 = "S";
+    else if (OrjinalSistem1.Yon[i] == "F")
+        Yon1 = "F";
+
+    if (OrjinalSistem2.Yon[i] == "A")
+        Yon2 = "A";
+    else if (OrjinalSistem2.Yon[i] == "S")
+        Yon2 = "S";
+    else if (OrjinalSistem2.Yon[i] == "F")
+        Yon2 = "F";
+
+   if (Yon1 == "A" && Yon2 == "A" && SonYon != "A")
+   {
+      Sistem.Yon[i] = "A";
+      SonYon = "A";
+   }
+   else if (Yon1 == "A" && Yon2 != "A" && SonYon != "F")
+   {
+      Sistem.Yon[i] = "F";
+      SonYon = "F";
+   }
+   else if (Yon1 == "S" && Yon2 == "S" && SonYon != "S")
+   {
+      Sistem.Yon[i] = "S";
+     SonYon = "S";
+   }
+   else if (Yon1 == "S" && Yon2 != "S" && SonYon != "F")
+   {
+      Sistem.Yon[i] = "F";
+      SonYon = "F";
+   }
+
+}
+
+

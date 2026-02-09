@@ -88,8 +88,17 @@ class ScoreBasedStrategy:
         self.config = config or ScoreConfig()
         self.dates = dates or []
         
+        # Warmup State (C# export ile uyumlu)
+        cfg = self.config
+        self.vade_cooldown_bar = max(cfg.ars_period, max(cfg.adx_period, max(cfg.macdv_short, cfg.macdv_long))) + 10
+        self.warmup_bars = max(50, self.vade_cooldown_bar)
+        self.warmup_aktif = False
+        self.warmup_baslangic_bar = -999
+        self.arefe_flat = False
+        
         self._calculate_indicators()
     
+
     def _calculate_indicators(self):
         cfg = self.config
 
@@ -175,13 +184,15 @@ class ScoreBasedStrategy:
                    extreme_price: float = 0,
                    return_flat_reason: bool = False) -> Signal:
         
-        if i < 50: 
+        # Warmup bars kontrolü
+        if i < self.warmup_bars: 
             return Signal.NONE
         
         # ===== VADE/TATİL YÖNETİMİ =====
         if self.dates and i < len(self.dates):
             dt = self.dates[i]
             t = dt.time()
+            prev_dt = self.dates[i-1] if i > 0 else None
             
             # Seans kontrolü (09:30-18:15, 19:00-23:00)
             gun_seansi = time(9, 30) <= t < time(18, 15)
@@ -197,8 +208,11 @@ class ScoreBasedStrategy:
             # Arefe kontrolü
             arefe = is_holiday_eve(dt.date())
             
-            # SENARYO 1: Arefe + Vade Sonu → 11:30 flat
+            # SENARYO 1: Arefe + Vade Sonu → 11:30 flat + warmup aktif
             if arefe and vade_sonu_gun and t > time(11, 30):
+                self.warmup_aktif = True
+                self.warmup_baslangic_bar = -999
+                self.arefe_flat = False
                 if current_position != "FLAT":
                     if return_flat_reason:
                         return (Signal.FLAT, "arefe_vade_sonu")
@@ -206,13 +220,17 @@ class ScoreBasedStrategy:
             
             # SENARYO 2: Sadece Arefe → 11:30 flat
             elif arefe and not vade_sonu_gun and t > time(11, 30):
+                self.arefe_flat = True
                 if current_position != "FLAT":
                     if return_flat_reason:
                         return (Signal.FLAT, "arefe")
                     return Signal.FLAT
             
-            # SENARYO 3: Normal Vade Sonu → 17:40 flat
+            # SENARYO 3: Normal Vade Sonu → 17:40 flat + warmup aktif
             elif vade_sonu_gun and t > time(17, 40):
+                self.warmup_aktif = True
+                self.warmup_baslangic_bar = -999
+                self.arefe_flat = False
                 if current_position != "FLAT":
                     if return_flat_reason:
                         return (Signal.FLAT, "vade_sonu")
@@ -224,6 +242,33 @@ class ScoreBasedStrategy:
                     return (Signal.NONE, None)
                 return Signal.NONE
             
+            # Warmup başlangıç barını tespit et (yeni seans başlangıcı)
+            if self.warmup_aktif and self.warmup_baslangic_bar == -999:
+                yeni_seans_baslangici = False
+                if prev_dt:
+                    prev_t = prev_dt.time()
+                    # Akşam seansı başlangıcı
+                    if aksam_seansi and prev_t < time(19, 0):
+                        yeni_seans_baslangici = True
+                    # Gün seansı başlangıcı (yeni gün)
+                    if gun_seansi and time(9, 30) <= t < time(9, 35):
+                        if dt.date() != prev_dt.date():
+                            yeni_seans_baslangici = True
+                if yeni_seans_baslangici:
+                    self.warmup_baslangic_bar = i
+            
+            # Warmup cooldown kontrolü
+            if self.warmup_aktif and self.warmup_baslangic_bar > 0:
+                if (i - self.warmup_baslangic_bar) < self.vade_cooldown_bar:
+                    return Signal.NONE
+                else:
+                    self.warmup_aktif = False
+            
+            # Arefe flat günü bitimi
+            if self.arefe_flat and prev_dt and dt.date() != prev_dt.date():
+                self.arefe_flat = False
+            
+
         cfg = self.config
         l_score = self.long_scores[i]
         s_score = self.short_scores[i]
@@ -275,26 +320,26 @@ class ScoreBasedStrategy:
             dates: Opsiyonel tarih listesi (vade/tatil yönetimi için)
         """
         config = ScoreConfig(
-            min_score=config_dict.get('min_score', 3),
-            exit_score=config_dict.get('exit_score', 3),
-            ars_period=config_dict.get('ars_period', 3),
-            ars_k=config_dict.get('ars_k', 0.01),
-            adx_period=config_dict.get('adx_period', 17),
-            adx_threshold=config_dict.get('adx_threshold', 25.0),
-            macdv_short=config_dict.get('macdv_short', 13),
-            macdv_long=config_dict.get('macdv_long', 28),
-            macdv_signal=config_dict.get('macdv_signal', 8),
-            macdv_threshold=config_dict.get('macdv_threshold', 0.0),
-            netlot_period=config_dict.get('netlot_period', 5),
-            netlot_threshold=config_dict.get('netlot_threshold', 20.0),
-            ars_mesafe_threshold=config_dict.get('ars_mesafe_threshold', 0.25),
-            bb_period=config_dict.get('bb_period', 20),
-            bb_std=config_dict.get('bb_std', 2.0),
-            bb_width_multiplier=config_dict.get('bb_width_multiplier', 0.8),
-            bb_avg_period=config_dict.get('bb_avg_period', 50),
-            yatay_ars_bars=config_dict.get('yatay_ars_bars', 10),
-            yatay_adx_threshold=config_dict.get('yatay_adx_threshold', 20.0),
-            filter_score_threshold=config_dict.get('filter_score_threshold', 2),
+            min_score=int(config_dict.get('min_score', 3)),
+            exit_score=int(config_dict.get('exit_score', 3)),
+            ars_period=int(config_dict.get('ars_period', 3)),
+            ars_k=float(config_dict.get('ars_k', 0.01)),
+            adx_period=int(config_dict.get('adx_period', 17)),
+            adx_threshold=float(config_dict.get('adx_threshold', 25.0)),
+            macdv_short=int(config_dict.get('macdv_short', 13)),
+            macdv_long=int(config_dict.get('macdv_long', 28)),
+            macdv_signal=int(config_dict.get('macdv_signal', 8)),
+            macdv_threshold=float(config_dict.get('macdv_threshold', 0.0)),
+            netlot_period=int(config_dict.get('netlot_period', 5)),
+            netlot_threshold=float(config_dict.get('netlot_threshold', 20.0)),
+            ars_mesafe_threshold=float(config_dict.get('ars_mesafe_threshold', 0.25)),
+            bb_period=int(config_dict.get('bb_period', 20)),
+            bb_std=float(config_dict.get('bb_std', 2.0)),
+            bb_width_multiplier=float(config_dict.get('bb_width_multiplier', 0.8)),
+            bb_avg_period=int(config_dict.get('bb_avg_period', 50)),
+            yatay_ars_bars=int(config_dict.get('yatay_ars_bars', 10)),
+            yatay_adx_threshold=float(config_dict.get('yatay_adx_threshold', 20.0)),
+            filter_score_threshold=int(config_dict.get('filter_score_threshold', 2)),
             vade_tipi=config_dict.get('vade_tipi', 'ENDEKS'),
         )
         

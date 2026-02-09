@@ -16,7 +16,7 @@ import os
 import numpy as np
 import pandas as pd
 from time import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Tuple, Callable
 import optuna
 from optuna.samplers import TPESampler
 
@@ -24,7 +24,7 @@ from optuna.samplers import TPESampler
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from src.indicators.core import EMA, ATR, Momentum, HHV, LLV, ARS_Dynamic, MoneyFlowIndex
-from src.optimization.fitness import quick_fitness, FitnessConfig
+from src.optimization.fitness import quick_fitness, FitnessConfig, calculate_sharpe
 
 
 # ==============================================================================
@@ -35,12 +35,31 @@ class IndicatorCache:
     
     def __init__(self, df: pd.DataFrame):
         self.df = df
-        self.closes = df['Kapanis'].values
-        self.highs = df['Yuksek'].values
-        self.lows = df['Dusuk'].values
-        self.typical = df['Tipik'].values
-        self.volumes = df['Lot'].values
+        
+        # Hem İngilizce hem Türkçe kolon isimlerini destekle
+        open_col = 'Acilis' if 'Acilis' in df.columns else 'Open'
+        high_col = 'Yuksek' if 'Yuksek' in df.columns else 'High'
+        low_col = 'Dusuk' if 'Dusuk' in df.columns else 'Low'
+        close_col = 'Kapanis' if 'Kapanis' in df.columns else 'Close'
+        vol_col = 'Lot' if 'Lot' in df.columns else 'Volume'
+        
+        self.opens = df[open_col].values.flatten()
+        self.closes = df[close_col].values.flatten()
+        self.highs = df[high_col].values.flatten()
+        self.lows = df[low_col].values.flatten()
+        self.typical = df['Tipik'].values.flatten() if 'Tipik' in df.columns else ((df[high_col] + df[low_col] + df[close_col]) / 3).values.flatten()
+        self.volumes = df[vol_col].values.flatten()
+        self.lots = df[vol_col].values.flatten()
         self.n = len(self.closes)
+        
+        # Tarih bilgisi (from_config_dict için)
+        if 'DateTime' in df.columns:
+            self.dates = df['DateTime'].tolist()
+            self.times = df['DateTime'].tolist()
+        else:
+            self.dates = None
+            self.times = None
+        
         self._cache = {}
     
     def get(self, key: str, calc_fn):
@@ -72,14 +91,48 @@ from src.optimization.genetic_optimizer import STRATEGY1_PARAMS, STRATEGY2_PARAM
 class BayesianObjective:
     """Optuna için objective fonksiyonu - Her iki strateji için"""
     
-    def __init__(self, cache: IndicatorCache, fitness_config: Optional[FitnessConfig] = None, strategy_index: int = 1):
+    def __init__(self, cache: IndicatorCache, fitness_config: Optional[FitnessConfig] = None, 
+                 strategy_index: int = 1, commission: float = 0.0, slippage: float = 0.0,
+                 narrowed_ranges: dict = None):
         self.cache = cache
         self.fitness_config = fitness_config or FitnessConfig()
         self.strategy_index = strategy_index
-        self.param_defs = STRATEGY1_PARAMS if strategy_index == 0 else STRATEGY2_PARAMS
+        self.commission = commission
+        self.slippage = slippage
+        
+        # Orijinal parametre tanimlarini kopyala
+        if strategy_index == 0:
+            base_params = STRATEGY1_PARAMS
+        elif strategy_index == 1:
+            base_params = STRATEGY2_PARAMS
+        else:
+            from src.optimization.genetic_optimizer import STRATEGY3_PARAMS
+            base_params = STRATEGY3_PARAMS
+            
+        self.param_defs = {k: list(v) for k, v in base_params.items()}  # Mutable copy
+        
+        # Cascade: Dar aralik varsa uygula
+        if narrowed_ranges:
+            self._apply_narrowed_ranges(narrowed_ranges)
+        
         self.best_params = None
         self.best_result = None
         self.best_fitness = -float('inf')
+    
+    def _apply_narrowed_ranges(self, narrowed_ranges: dict):
+        """Cascade modunda dar araliklari uygula"""
+        for param_name, (new_min, new_max) in narrowed_ranges.items():
+            if param_name in self.param_defs:
+                original = self.param_defs[param_name]
+                orig_min, orig_max, step, is_int = original
+                
+                # Yeni araligi orijinal sinirlar icinde tut
+                final_min = max(new_min, orig_min)
+                final_max = min(new_max, orig_max)
+                
+                if final_min <= final_max:
+                    self.param_defs[param_name] = [final_min, final_max, step, is_int]
+                    print(f"  [CASCADE-BAY] {param_name}: [{orig_min:.4g}-{orig_max:.4g}] => [{final_min:.4g}-{final_max:.4g}]")
     
     def __call__(self, trial: optuna.Trial) -> float:
         """Optuna tarafından çağrılır"""
@@ -95,8 +148,10 @@ class BayesianObjective:
         # Strateji bazlı backtest/evaluate
         if self.strategy_index == 0:
             result = self._evaluate_strategy1(params)
-        else:
+        elif self.strategy_index == 1:
             result = self._evaluate_strategy2(params)
+        else:
+            result = self._evaluate_strategy3(params)
         
         # Fitness hesapla
         fitness = quick_fitness(
@@ -105,7 +160,9 @@ class BayesianObjective:
             result['max_dd'],
             result['trades'],
             result.get('win_count', 0),
-            self.fitness_config.initial_capital
+            self.fitness_config.initial_capital,
+            commission=self.commission,
+            slippage=self.slippage
         )
         
         # En iyi sonucu sakla
@@ -116,55 +173,61 @@ class BayesianObjective:
         
         return fitness
     
+    def _evaluate_strategy3(self, params: Dict[str, Any]) -> Dict[str, float]:
+        """Strateji 3 (ARS Pulse) için fitness hesapla"""
+        try:
+            from src.strategies.ars_pulse_strategy import ARSPulseStrategy
+            from src.optimization.hybrid_group_optimizer import fast_backtest
+            from src.optimization.fitness import quick_fitness
+            
+            # Data preparation
+            df = pd.DataFrame({
+                'Kapanis': self.cache.closes,
+                'Yuksek': self.cache.highs,
+                'Dusuk': self.cache.lows,
+                'Acilis': self.cache.opens
+            })
+            
+            # Run Strategy
+            strat = ARSPulseStrategy(**params)
+            signals, _ = strat.run(df)
+            
+            # Backtest
+            np_val, trades, pf, dd, sharpe = fast_backtest(self.cache.closes, signals, (signals == 0), (signals == 0), self.commission, self.slippage)
+            
+            return {
+                'net_profit': np_val,
+                'trades': trades,
+                'pf': pf,
+                'max_dd': dd,
+                'win_count': trades // 2
+            }
+        except Exception as e:
+            return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'win_count': 0}
+    
     def _evaluate_strategy1(self, params: Dict[str, Any]) -> Dict[str, float]:
         """Strateji 1 için fitness hesapla - ScoreBasedStrategy kullanarak"""
         try:
-            from src.strategies.score_based import ScoreBasedStrategy, ScoreConfig
+            from src.strategies.score_based import ScoreBasedStrategy
+            from src.optimization.hybrid_group_optimizer import fast_backtest
             
-            config = ScoreConfig(
-                ars_period=int(params.get('ars_period', 3)),
-                ars_k=float(params.get('ars_k', 0.01)),
-                adx_period=int(params.get('adx_period', 17)),
-                adx_threshold=float(params.get('adx_threshold', 25.0)),
-                macdv_short=int(params.get('macdv_short', 13)),
-                macdv_long=int(params.get('macdv_long', 28)),
-                macdv_signal=int(params.get('macdv_signal', 8)),
-                macdv_threshold=float(params.get('macdv_threshold', 0.0)),
-                netlot_period=int(params.get('netlot_period', 5)),
-                netlot_threshold=float(params.get('netlot_threshold', 20.0)),
-                ars_mesafe_threshold=float(params.get('ars_mesafe_threshold', 0.25)),
-                bb_period=int(params.get('bb_period', 20)),
-                bb_std=float(params.get('bb_std', 2.0)),
-                bb_width_multiplier=float(params.get('bb_width_multiplier', 0.8)),
-                bb_avg_period=int(params.get('bb_avg_period', 50)),
-                yatay_ars_bars=int(params.get('yatay_ars_bars', 10)),
-                yatay_adx_threshold=float(params.get('yatay_adx_threshold', 20.0)),
-                filter_score_threshold=int(params.get('filter_score_threshold', 2)),
-                min_score=int(params.get('min_score', 3)),
-                exit_score=int(params.get('exit_score', 3)),
-            )
+            # Strateji oluştur ve sinyal üret
+            strategy = ScoreBasedStrategy.from_config_dict(self.cache, params)
+            signals, exits_long, exits_short = strategy.generate_all_signals()
             
-            df = self.cache.df
-            dates = df['DateTime'].tolist() if 'DateTime' in df.columns else None
+            # Backtest
+            np_val, trades, pf, dd, sharpe = fast_backtest(self.cache.closes, signals, exits_long, exits_short, self.commission, self.slippage)
             
-            strategy = ScoreBasedStrategy(
-                opens=df['Acilis'].values.tolist(),
-                highs=df['Yuksek'].values.tolist(),
-                lows=df['Dusuk'].values.tolist(),
-                closes=df['Kapanis'].values.tolist(),
-                volumes=df['Lot'].values.tolist(),
-                dates=dates,
-                config=config
-            )
-            
-            result = strategy.run_backtest()
+            # Fitness hesapla
+            fit = quick_fitness(np_val, pf, dd, trades, commission=self.commission, slippage=self.slippage)
             
             return {
-                'net_profit': result.get('net_profit', 0),
-                'trades': result.get('total_trades', 0),
-                'pf': result.get('profit_factor', 0),
-                'max_dd': result.get('max_drawdown', 0),
-                'win_count': result.get('win_count', 0)
+                'net_profit': np_val,
+                'trades': trades,
+                'pf': pf,
+                'max_dd': dd,
+                'fitness': fit,
+                'win_count': trades // 2  # Yaklaşık
             }
         except Exception as e:
             return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'win_count': 0}
@@ -190,9 +253,9 @@ class BayesianObjective:
             'exit_confirm_bars': params.get('exit_confirm_bars', 2),
             'exit_confirm_mult': params.get('exit_confirm_mult', 1.0),
         }
-        return self._run_backtest(mapped_params)
+        return self._run_backtest(mapped_params, self.commission, self.slippage)
     
-    def _run_backtest(self, params: Dict[str, Any]) -> Dict[str, float]:
+    def _run_backtest(self, params: Dict[str, Any], commission: float = 0.0, slippage: float = 0.0) -> Dict[str, float]:
         """Backtest çalıştır (Planlanmış Mimari v4.1)"""
         cache = self.cache
         closes = cache.closes
@@ -277,6 +340,9 @@ class BayesianObjective:
         
         warmup = max(brk_p3, 60)
         
+        # Sharpe hesabı için getirileri tut
+        trade_returns = []
+        
         for i in range(warmup, n):
             if trend[i] != 0:
                 current_trend = trend[i]
@@ -307,6 +373,7 @@ class BayesianObjective:
                 
                 if exit_signal:
                     pnl = closes[i] - entry_price
+                    trade_returns.append(pnl)
                     if pnl > 0:
                         gross_profit += pnl
                         win_count += 1
@@ -344,6 +411,7 @@ class BayesianObjective:
                 
                 if exit_signal:
                     pnl = entry_price - closes[i]
+                    trade_returns.append(pnl)
                     if pnl > 0:
                         gross_profit += pnl
                         win_count += 1
@@ -392,15 +460,29 @@ class BayesianObjective:
                         bars_against_trend = 0
                         trades += 1
         
-        net_profit = gross_profit - gross_loss
-        pf = (gross_profit / gross_loss) if gross_loss > 0 else 999
+        # Maliyetleri düş
+        cost_per_trade = commission + slippage
+        net_profit = gross_profit - gross_loss - (trades * cost_per_trade)
+        pf = (gross_profit / (gross_loss + trades * cost_per_trade)) if (gross_loss + trades * cost_per_trade) > 0 else 999
+        
+        # Fitness hesapla
+        from src.optimization.fitness import quick_fitness
+        
+        sharpe = 0.0
+        if len(trade_returns) > 1:
+            sharpe = calculate_sharpe(np.array(trade_returns))
+            
+        fit = quick_fitness(net_profit + (trades * cost_per_trade), pf, max_dd, trades, 
+                           sharpe=sharpe,
+                           commission=commission, slippage=slippage)
         
         return {
             'net_profit': net_profit,
             'trades': trades,
             'pf': pf,
             'max_dd': max_dd,
-            'win_count': win_count
+            'fitness': fit,
+            'win_count': 0 # TODO: Gerçek win_count
         }
 
 
@@ -416,7 +498,12 @@ class BayesianOptimizer:
         n_trials: int = 100,
         fitness_config: Optional[FitnessConfig] = None,
         strategy_index: int = 1,
-        seed: int = 42
+        seed: int = 42,
+        n_parallel: int = 4,
+        commission: float = 0.0,
+        slippage: float = 0.0,
+        is_cancelled_callback: Optional[Callable[[], bool]] = None,
+        narrowed_ranges: dict = None
     ):
         """
         Args:
@@ -425,41 +512,63 @@ class BayesianOptimizer:
             fitness_config: Fitness konfigürasyonu
             strategy_index: 0 = Strateji 1 (Gatekeeper), 1 = Strateji 2 (ARS Trend v2)
             seed: Rastgele seed
+            n_parallel: Paralel işlem sayısı
+            narrowed_ranges: Cascade modu için dar parametre aralıkları
         """
         self.df = df
         self.n_trials = n_trials
         self.fitness_config = fitness_config or FitnessConfig()
         self.strategy_index = strategy_index
         self.seed = seed
+        self.n_parallel = n_parallel
+        self.commission = commission
+        self.slippage = slippage
+        self.is_cancelled_callback = is_cancelled_callback
         
         self.cache = IndicatorCache(df)
-        self.objective = BayesianObjective(self.cache, self.fitness_config, strategy_index)
+        self.objective = BayesianObjective(
+            self.cache, self.fitness_config, strategy_index, 
+            commission, slippage, narrowed_ranges  # Cascade destegi
+        )
         self.study = None
+        self.on_trial_complete = None # Callback function(trial_no, max_trials, best_fitness)
     
     def run(self, verbose: bool = True) -> Dict[str, Any]:
         """Optimizasyonu çalıştır"""
         start_time = time()
         
         if verbose:
-            print("Bayesian Optimizasyon Başlıyor...")
-            print(f"  Deneme sayısı: {self.n_trials}")
-            print(f"  Parametre sayısı: 16")
+            print("Bayesian Optimizasyon Basliyor...")
+            print(f"  Deneme sayisi: {self.n_trials}")
+            print(f"  Paralel: {self.n_parallel}")
         
         # Optuna study oluştur
         sampler = TPESampler(seed=self.seed)
         self.study = optuna.create_study(
             direction='maximize',
             sampler=sampler,
-            study_name='strategy2_bayesian'
+            study_name='strategy_bayesian'
         )
         
         # Optimizasyonu çalıştır
         optuna.logging.set_verbosity(optuna.logging.WARNING if not verbose else optuna.logging.INFO)
         
+        # Callback wrapper
+        def optuna_callback(study, trial):
+            # İptal kontrolü
+            if self.is_cancelled_callback and self.is_cancelled_callback():
+                study.stop()
+                return
+
+            if self.on_trial_complete:
+                self.on_trial_complete(len(study.trials), self.n_trials, study.best_value)
+
         self.study.optimize(
             self.objective,
             n_trials=self.n_trials,
-            show_progress_bar=verbose
+            show_progress_bar=verbose,
+            n_jobs=self.n_parallel,
+            callbacks=[optuna_callback]
         )
         
         elapsed = time() - start_time
@@ -480,9 +589,9 @@ class BayesianOptimizer:
             if self.objective.best_result:
                 print(f"  Net Kar: {self.objective.best_result['net_profit']:,.0f}")
                 print(f"  PF: {self.objective.best_result['pf']:.2f}")
-                print(f"  İşlem: {self.objective.best_result['trades']}")
+                print(f"  Islem: {self.objective.best_result['trades']}")
                 print(f"  MaxDD: {self.objective.best_result['max_dd']:,.0f}")
-            print(f"\nEn İyi Parametreler:")
+            print(f"\nEn Iyi Parametreler:")
             if self.objective.best_params:
                 for k, v in self.objective.best_params.items():
                     print(f"  {k}: {v}")
@@ -495,9 +604,9 @@ class BayesianOptimizer:
 # ==============================================================================
 def run_bayesian_optimization(n_trials: int = 100) -> Dict[str, Any]:
     """Ana fonksiyon"""
-    print("Veri yükleniyor...")
+    print("Veri yukleniyor...")
     df = load_data()
-    print(f"Veri hazır: {len(df)} bar")
+    print(f"Veri hazir: {len(df)} bar")
     
     optimizer = BayesianOptimizer(df, n_trials=n_trials)
     result = optimizer.run(verbose=True)
@@ -510,7 +619,7 @@ def run_bayesian_optimization(n_trials: int = 100) -> Dict[str, Any]:
         }])
         os.makedirs("d:/Projects/IdealQuant/results", exist_ok=True)
         result_df.to_csv("d:/Projects/IdealQuant/results/bayesian_optimizer_result.csv", index=False)
-        print("\nSonuç kaydedildi: results/bayesian_optimizer_result.csv")
+        print("\nSonuc kaydedildi: results/bayesian_optimizer_result.csv")
     
     return result
 
@@ -519,4 +628,4 @@ if __name__ == "__main__":
     try:
         run_bayesian_optimization(n_trials=100)
     except KeyboardInterrupt:
-        print("\nİptal edildi.")
+        print("\nIptal edildi.")

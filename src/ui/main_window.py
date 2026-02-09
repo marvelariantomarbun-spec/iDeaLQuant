@@ -179,9 +179,10 @@ class MainWindow(QMainWindow):
         # Data panel -> Strategy panel (mevcut)
         self.data_panel.data_loaded.connect(self.strategy_panel.set_data)
         
-        # Data panel -> Optimizer panel
+        # Data panel -> Optimizer & Validation panels
         self.data_panel.data_loaded.connect(self.optimizer_panel.set_data)
-        self.data_panel.data_loaded.connect(lambda df: self.update_status(f"Veri yüklendi: {len(df)} bar"))
+        self.data_panel.data_loaded.connect(self.validation_panel.set_data)
+        self.data_panel.data_loaded.connect(lambda df: self.update_status(f"Veri yuklendi: {len(df)} bar"))
         
         # Data panel -> Optimizer panel (Süreç bağlantısı)
         self.data_panel.process_created.connect(self.optimizer_panel.set_process)

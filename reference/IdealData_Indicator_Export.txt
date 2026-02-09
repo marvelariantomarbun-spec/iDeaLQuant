@@ -1,0 +1,42 @@
+// =============================================================================
+// IdealData İndikatör Export - MİNİMAL VERSİYON
+// =============================================================================
+// Arastirma_1DK_Indikatorler.txt ile aynı yapıda
+
+var V = Sistem.GrafikVerileri;
+var C = Sistem.GrafikFiyatSec("Kapanis");
+
+// İndikatörler
+var SMA20 = Sistem.MA(C, "Simple", 20);
+var EMA20 = Sistem.MA(C, "Exp", 20);
+var RSI14 = Sistem.RSI(14);
+var ATR14 = Sistem.AverageTrueRange(14);
+
+// CSV için StringBuilder
+var sb = new System.Text.StringBuilder();
+sb.AppendLine("BarNo;Kapanis;SMA20;EMA20;RSI14;ATR14");
+
+// Son 50 bar - güvenli sınırda başla
+int start = Sistem.BarSayisi - 50;
+if (start < 50) start = 50;
+
+for (int i = start; i < Sistem.BarSayisi; i++)
+{
+    sb.Append(i);
+    sb.Append(";");
+    sb.Append(C[i].ToString("0.00").Replace(",", "."));
+    sb.Append(";");
+    sb.Append(SMA20[i].ToString("0.00").Replace(",", "."));
+    sb.Append(";");
+    sb.Append(EMA20[i].ToString("0.00").Replace(",", "."));
+    sb.Append(";");
+    sb.Append(RSI14[i].ToString("0.00").Replace(",", "."));
+    sb.Append(";");
+    sb.Append(ATR14[i].ToString("0.00").Replace(",", "."));
+    sb.AppendLine();
+}
+
+// Dosyaya yaz
+string path = @"D:\iDeal\ideal_ind.csv";
+System.IO.File.WriteAllText(path, sb.ToString());
+Sistem.Mesaj("OK: " + path);

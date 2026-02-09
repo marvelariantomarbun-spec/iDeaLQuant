@@ -1,0 +1,99 @@
+// =============================================================================
+// SCORE BASED İNDİKATÖR EXPORT (DEBUG MODU)
+// =============================================================================
+try {
+    Sistem.Mesaj("Export başlıyor...");
+    
+    var V = Sistem.GrafikVerileri;
+    var O = Sistem.GrafikFiyatSec("Acilis");
+    var H = Sistem.GrafikFiyatSec("Yuksek");
+    var L = Sistem.GrafikFiyatSec("Dusuk");
+    var C = Sistem.GrafikFiyatSec("Kapanis");
+    var T = Sistem.GrafikFiyatSec("Tipik");
+    
+    // --- PARAMETRELER ---
+    var QQEF_PERIOD = 14;
+    var QQEF_SMOOTH = 5;
+    var RVI_PERIOD = 10;
+    var QSTICK_PERIOD = 8;
+    var ADX_PERIOD = 14;
+    
+    // --- İNDİKATÖRLER (Sırayla, hata olursa nerede olduğunu anlamak için) ---
+    
+    // 1. ARS
+    var ARS_K = 0.0123;
+    var ARS_EMA = Sistem.MA(T, "Exp", 3);
+    var ARS = Sistem.Liste(0);
+    for (int i = 1; i < Sistem.BarSayisi; i++) {
+        float altBand = (float)(ARS_EMA[i] * (1 - ARS_K));
+        float ustBand = (float)(ARS_EMA[i] * (1 + ARS_K));
+        if (altBand > ARS[i - 1]) ARS[i] = altBand;
+        else if (ustBand < ARS[i - 1]) ARS[i] = ustBand;
+        else ARS[i] = ARS[i - 1];
+    }
+    
+    // 2. QQEF
+    var QQEF = Sistem.QQEF(QQEF_PERIOD, QQEF_SMOOTH);
+    var QQES = Sistem.QQES(QQEF_PERIOD, QQEF_SMOOTH);
+    
+    // 3. RVI
+    var RVI = Sistem.RelativeVigorIndex(RVI_PERIOD);
+    var RVI_Signal = Sistem.RelativeVigorIndexSignal(RVI_PERIOD);
+    
+    // 4. Qstick
+    var Qstick = Sistem.Qstick(QSTICK_PERIOD);
+    
+    // 5. NetLot
+    var NetLot = Sistem.Liste(0);
+    for (int i = 1; i < Sistem.BarSayisi; i++) {
+        float barHacim = (H[i] - L[i]) > 0 ? (C[i] - O[i]) / (H[i] - L[i]) : 0;
+        NetLot[i] = barHacim * 100;
+    }
+    var NetLot_MA = Sistem.MA(NetLot, "Simple", 5);
+    
+    // 6. ADX
+    var MyADX = Sistem.ADX(ADX_PERIOD);
+    
+    // --- EXPORT ---
+    var sb = new System.Text.StringBuilder();
+    sb.AppendLine("BarNo;Tarih;Saat;ARS;QQEF;QQES;RVI;RVI_Sig;Qstick;NetLot;ADX");
+    
+    for (int i = 0; i < Sistem.BarSayisi; i++)
+    {
+        sb.Append(i);
+        sb.Append(";");
+        sb.Append(V[i].Date.ToString("dd.MM.yyyy"));
+        sb.Append(";");
+        sb.Append(V[i].Date.ToString("HH:mm:ss"));
+        sb.Append(";");
+        sb.Append(ARS[i].ToString("0.0000").Replace(",", "."));
+        sb.Append(";");
+        sb.Append(QQEF[i].ToString("0.0000").Replace(",", "."));
+        sb.Append(";");
+        sb.Append(QQES[i].ToString("0.0000").Replace(",", "."));
+        sb.Append(";");
+        sb.Append(RVI[i].ToString("0.0000").Replace(",", "."));
+        sb.Append(";");
+        sb.Append(RVI_Signal[i].ToString("0.0000").Replace(",", "."));
+        sb.Append(";");
+        sb.Append(Qstick[i].ToString("0.0000").Replace(",", "."));
+        sb.Append(";");
+        sb.Append(NetLot_MA[i].ToString("0.0000").Replace(",", "."));
+        sb.Append(";");
+        sb.Append(MyADX[i].ToString("0.0000").Replace(",", ".")); // ADX değişken adını MyADX yaptım çakışmaması için
+        sb.AppendLine();
+    }
+    
+    // Dosyaya yaz (C:\Ideal\ altına yazalım, izin sorunu olmasın)
+    // Eğer klasör yoksa hata verebilir, o yüzden kök dizine de yazabiliriz veya var olan bir klasöre.
+    string path = @"D:\Projects\IdealQuant\data\ideal_score_indicators.csv";
+    
+    // Klasör kontrolü (C# basit)
+    // System.IO.Directory.CreateDirectory(@"D:\Projects\IdealQuant\data"); 
+    
+    System.IO.File.WriteAllText(path, sb.ToString());
+    Sistem.Mesaj("BAŞARILI!\n" + path + " dosyası oluşturuldu.");
+
+} catch (Exception ex) {
+    Sistem.Mesaj("HATA OLUŞTU:\n" + ex.Message);
+}

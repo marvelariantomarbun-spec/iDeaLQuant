@@ -1,0 +1,670 @@
+//************* ROBOT: PERFORMANS TAKİP & SANAL PORTFÖY YÖNETİMİ V3 - GELİŞMİŞ *************
+
+// AYARLAR
+var ApiToken = "8581068218:AAEcQ7_-Bl38JeIs1ifpvZusm4QXBz_uFBY"; 
+var ChatIdMain = "-1003038562147";
+
+// Parametreler - Hisse Senetleri
+var KarAlYuzde = 5.0f;
+var ZararDurdurYuzde = 1.0f;
+var ZamanAsimiGun = 5;
+
+// Parametreler - Vadeli Kontratlar (VIP)
+var KarAlYuzde_VIP = 1.0f;
+var ZararDurdurYuzde_VIP = 1.0f;
+var ZamanAsimiGun_VIP = 5; 
+
+// Dosya Yolları
+string DbFile = "C:\\iDeal\\Sinyal_Log_Database.txt";
+string DosyaDebug = "C:\\iDeal\\Telegram_Debug.txt";
+
+// Helper: Dosyaya Güvenli Yazma
+Action<string, string, bool> DosyayaYaz = (dosya, icerik, append) => {
+    for (int i = 0; i < 5; i++) {
+        try {
+            if (append) System.IO.File.AppendAllText(dosya, icerik);
+            else System.IO.File.WriteAllText(dosya, icerik);
+            break;
+        } catch { System.Threading.Thread.Sleep(50); }
+    }
+};
+
+// --- ZAMAN KONTROLÜ ---
+var Now = DateTime.Now;
+var KeyLastRun = "LastRun_PerfTakip";
+var LastRunObj = Sistem.NesneGetir(KeyLastRun);
+if (LastRunObj != null && (Now - (DateTime)LastRunObj).TotalSeconds < 5) return null;
+Sistem.NesneKaydet(KeyLastRun, Now);
+
+if (!System.IO.File.Exists(DosyaDebug)) System.IO.File.WriteAllText(DosyaDebug, "--- LOG START ---\r\n");
+DosyayaYaz(DosyaDebug, Now + " INFO: Performans Takip Robotu V3 Calisiyor...\r\n", true);
+
+if (!System.IO.File.Exists(DbFile)) return null;
+
+// --- VERİ OKUMA VE NESNELEŞTİRME ---
+var lines = System.IO.File.ReadAllLines(DbFile).ToList();
+var Pozisyonlar = new List<Dictionary<string, object>>();
+bool degisiklikVar = false;
+var kapananlarTelegram = new List<string>();
+var trCulture = new System.Globalization.CultureInfo("tr-TR");
+
+for (int i = 0; i < lines.Count; i++)
+{
+    var line = lines[i];
+    if (string.IsNullOrWhiteSpace(line) || line.StartsWith("Sembol")) continue;
+
+    var cols = line.Split('|');
+    if (cols.Length < 6) continue;
+
+    try {
+        var pos = new Dictionary<string, object>();
+        pos["Sembol"] = cols[0];
+        pos["Strateji"] = cols[1];
+        pos["Periyot"] = cols[2];
+        pos["GirisTarih"] = DateTime.Parse(cols[3], trCulture);
+        pos["GirisFiyat"] = float.Parse(cols[4].Replace(".", ","), trCulture);
+        pos["Durum"] = cols[5];
+        pos["CikisTarih"] = (cols.Length > 6 && !string.IsNullOrEmpty(cols[6])) ? DateTime.Parse(cols[6], trCulture) : DateTime.MinValue;
+        pos["CikisFiyat"] = (cols.Length > 7 && !string.IsNullOrEmpty(cols[7])) ? float.Parse(cols[7].Replace(".", ","), trCulture) : 0f;
+        pos["PnL"] = (cols.Length > 8 && !string.IsNullOrEmpty(cols[8])) ? float.Parse(cols[8].Replace(".", ","), trCulture) : 0f;
+        pos["Sebep"] = (cols.Length > 9) ? cols[9] : "";
+        pos["MaxPnL"] = (cols.Length > 10 && !string.IsNullOrEmpty(cols[10])) ? float.Parse(cols[10].Replace(".", ","), trCulture) : 0f;
+        
+        Pozisyonlar.Add(pos);
+    } catch (Exception ex) {
+        DosyayaYaz(DosyaDebug, "ERROR Parse: " + line + " " + ex.Message + "\r\n", true);
+    }
+}
+
+// --- AKTİF POZİSYONLARI GÜNCELLE ---
+foreach (var pos in Pozisyonlar)
+{
+    if ((string)pos["Durum"] == "AKTIF")
+    {
+        string sembol = (string)pos["Sembol"];
+        string strateji = (string)pos["Strateji"];
+        float girisFiyat = (float)pos["GirisFiyat"];
+        DateTime girisTarih = (DateTime)pos["GirisTarih"];
+        
+        string realSymbol = sembol;
+        if (sembol.StartsWith("VIP-")) {
+            realSymbol = "VIP'VIP-" + sembol.Substring(4);
+        } else if (sembol.StartsWith("F_")) {
+             realSymbol = "VIP'VIP-" + sembol; 
+        }
+
+        var V = Sistem.GrafikVerileriniOku(realSymbol, "G");
+        if (V == null || V.Count == 0) V = Sistem.GrafikVerileriniOku(sembol, "G");
+        if (V == null || V.Count == 0) V = Sistem.GrafikVerileriniOku("IMKBH'" + sembol, "G");
+
+        if (V != null && V.Count > 0)
+        {
+            float sonFiyat = V[V.Count - 1].Close;
+            float pnlYuzde = 0;
+            
+            if (strateji.Contains("ZIRVE")) pnlYuzde = ((girisFiyat - sonFiyat) / girisFiyat) * 100;
+            else pnlYuzde = ((sonFiyat - girisFiyat) / girisFiyat) * 100;
+
+            pos["CikisFiyat"] = sonFiyat;
+            pos["PnL"] = pnlYuzde;
+
+            string yeniDurum = "AKTIF";
+            string sebep = "";
+            
+            bool isVIP = sembol.StartsWith("VIP-") || sembol.StartsWith("F_") || realSymbol.Contains("VIP'");
+            float tpLevel = isVIP ? KarAlYuzde_VIP : KarAlYuzde;
+            float slLevel = isVIP ? ZararDurdurYuzde_VIP : ZararDurdurYuzde;
+            int timeLimit = isVIP ? ZamanAsimiGun_VIP : ZamanAsimiGun;
+
+            float maxPnL = pos.ContainsKey("MaxPnL") ? (float)pos["MaxPnL"] : 0f;
+            
+            if (pnlYuzde > maxPnL) {
+                maxPnL = pnlYuzde;
+                pos["MaxPnL"] = maxPnL;
+                degisiklikVar = true;
+            }
+
+            float dynamicStop = -slLevel;
+            bool isTrailingActive = false;
+            
+            if (maxPnL >= 1.0f) {
+                dynamicStop = maxPnL - 1.0f;
+                isTrailingActive = true;
+            }
+            
+            if (pnlYuzde >= tpLevel) { yeniDurum = "KAPALI"; sebep = "KÂR AL"; }
+            else if (pnlYuzde <= dynamicStop) { 
+                yeniDurum = "KAPALI"; 
+                sebep = isTrailingActive ? "İZL.STOP" : "STOP"; 
+            }
+            else if ((Now - girisTarih).TotalDays > timeLimit) { yeniDurum = "KAPALI"; sebep = "ZAMAN"; }
+
+            if (yeniDurum == "KAPALI")
+            {
+                pos["Durum"] = "KAPALI";
+                pos["CikisTarih"] = Now;
+                pos["Sebep"] = sebep + " (%" + pnlYuzde.ToString("0.0") + ")";
+                
+                string periyot = (string)pos["Periyot"];
+                kapananlarTelegram.Add(sembol + " (" + strateji + " / " + periyot + ") " + pos["Sebep"]);
+                degisiklikVar = true;
+            }
+        }
+    }
+}
+
+// --- HELPER FONKSIYONLAR ---
+
+// Max Drawdown Hesaplama
+Func<List<Dictionary<string, object>>, float> HesaplaMaxDrawdown = (list) => {
+    if (list.Count == 0) return 0;
+    
+    var sorted = list.OrderBy(x => (DateTime)x["CikisTarih"]).ToList();
+    float maxDD = 0;
+    float runningPnL = 0;
+    float peak = 0;
+
+    foreach (var pos in sorted) {
+        runningPnL += (float)pos["PnL"];
+        if (runningPnL > peak) peak = runningPnL;
+        float dd = peak - runningPnL;
+        if (dd > maxDD) maxDD = dd;
+    }
+    
+    return maxDD;
+};
+
+// Trend Icon
+Func<float, float, string> GetTrendIcon = (current, previous) => {
+    if (previous == 0) return "";
+    float diff = current - previous;
+    if (diff > 1) return " 📈";
+    if (diff < -1) return " 📉";
+    return " ➡️";
+};
+
+// Performans Rengi
+Func<float, Color> GetPerformanceColor = (pnl) => {
+    if (pnl >= 3) return Color.FromArgb(39, 174, 96); // #27AE60 yeşil
+    if (pnl > 0) return Color.FromArgb(243, 156, 18); // #F39C12 turuncu
+    return Color.FromArgb(231, 76, 60); // #E74C3C kırmızı
+};
+
+// Detaylı Row Hazırlama
+Func<List<Dictionary<string, object>>, string, float, object[]> PrepareDetailedRow = (list, label, previousPnL) => {
+    if (list.Count == 0) return new object[] { label, "0", "-", "-", "-", "-", "-", "-", "-", "", 0f };
+    
+    int count = list.Count;
+    var wins = list.Where(x => (float)x["PnL"] > 0).ToList();
+    var losses = list.Where(x => (float)x["PnL"] <= 0).ToList();
+    
+    int winCount = wins.Count;
+    float winRate = ((float)winCount / count) * 100;
+    float avgWin = wins.Count > 0 ? wins.Average(x => (float)x["PnL"]) : 0;
+    float avgLoss = losses.Count > 0 ? Math.Abs(losses.Average(x => (float)x["PnL"])) : 0;
+    float riskReward = avgLoss > 0 ? avgWin / avgLoss : 0;
+    float avgPnL = list.Average(x => (float)x["PnL"]);
+    float totalPnL = list.Sum(x => (float)x["PnL"]);
+    float maxDD = HesaplaMaxDrawdown(list);
+    
+    string trendIcon = GetTrendIcon(totalPnL, previousPnL);
+    
+    return new object[] { 
+        label, 
+        count.ToString(), 
+        winRate.ToString("0.00") + "%",
+        avgWin > 0 ? "%" + avgWin.ToString("0.00") : "-",
+        avgLoss > 0 ? "%" + avgLoss.ToString("0.00") : "-",
+        riskReward > 0 ? riskReward.ToString("0.00") : "-",
+        maxDD > 0 ? "%" + maxDD.ToString("0.00") : "-",
+        "%" + avgPnL.ToString("0.00"),
+        "%" + totalPnL.ToString("0.00"),
+        trendIcon,
+        totalPnL // Raw value for color
+    };
+};
+
+// --- POZİSYONLARI GRUPLAMA ---
+var Aktifler = Pozisyonlar.Where(x => (string)x["Durum"] == "AKTIF").ToList();
+var Kapananlar = Pozisyonlar.Where(x => (string)x["Durum"] == "KAPALI").ToList();
+
+// İşlem Günlerini Tespit
+var islemGunleri = Kapananlar
+    .Select(x => ((DateTime)x["CikisTarih"]).Date)
+    .Distinct()
+    .OrderByDescending(d => d)
+    .ToList();
+
+var bugun = Now.Date;
+var sonIslemGunu = islemGunleri.FirstOrDefault(d => d < bugun);
+if (sonIslemGunu == default(DateTime)) sonIslemGunu = bugun.AddDays(-1);
+var oncekiIslemGunu = islemGunleri.Skip(1).FirstOrDefault();
+if (oncekiIslemGunu == default(DateTime)) oncekiIslemGunu = sonIslemGunu.AddDays(-1);
+
+// Hafta başlangıçları (Pazartesi)
+var buHaftaBaslangic = bugun.AddDays(-(int)bugun.DayOfWeek + (bugun.DayOfWeek == DayOfWeek.Sunday ? -6 : 1));
+var gecenHaftaBaslangic = buHaftaBaslangic.AddDays(-7);
+var gecenHaftaBitis = buHaftaBaslangic.AddDays(-1);
+
+// Ay başlangıçları
+var buAyBaslangic = new DateTime(bugun.Year, bugun.Month, 1);
+var gecenAyBaslangic = buAyBaslangic.AddMonths(-1);
+var gecenAyBitis = buAyBaslangic.AddDays(-1);
+
+// Liste filtreleme
+var listBugun = Kapananlar.Where(x => ((DateTime)x["CikisTarih"]).Date == bugun).ToList();
+var listSonIslemGunu = Kapananlar.Where(x => ((DateTime)x["CikisTarih"]).Date == sonIslemGunu).ToList();
+var listOncekiIslemGunu = Kapananlar.Where(x => ((DateTime)x["CikisTarih"]).Date == oncekiIslemGunu).ToList();
+
+var listBuHafta = Kapananlar.Where(x => ((DateTime)x["CikisTarih"]).Date >= buHaftaBaslangic && ((DateTime)x["CikisTarih"]).Date <= bugun).ToList();
+var listGecenHafta = Kapananlar.Where(x => ((DateTime)x["CikisTarih"]).Date >= gecenHaftaBaslangic && ((DateTime)x["CikisTarih"]).Date <= gecenHaftaBitis).ToList();
+
+var listBuAy = Kapananlar.Where(x => ((DateTime)x["CikisTarih"]).Date >= buAyBaslangic && ((DateTime)x["CikisTarih"]).Date <= bugun).ToList();
+var listGecenAy = Kapananlar.Where(x => ((DateTime)x["CikisTarih"]).Date >= gecenAyBaslangic && ((DateTime)x["CikisTarih"]).Date <= gecenAyBitis).ToList();
+
+var listSon3Ay = Kapananlar.Where(x => ((DateTime)x["CikisTarih"]).Date >= bugun.AddMonths(-3)).ToList();
+var listSon6Ay = Kapananlar.Where(x => ((DateTime)x["CikisTarih"]).Date >= bugun.AddMonths(-6)).ToList();
+var listBuYil = Kapananlar.Where(x => ((DateTime)x["CikisTarih"]).Year == bugun.Year).ToList();
+
+// Trend için önceki değerler
+float gecenHaftaPnL = listGecenHafta.Count > 0 ? listGecenHafta.Sum(x => (float)x["PnL"]) : 0;
+float gecenAyPnL = listGecenAy.Count > 0 ? listGecenAy.Sum(x => (float)x["PnL"]) : 0;
+
+// --- TABLO 1: ANA PERFORMANS TABLOSU ---
+string TabloAd1 = "Ana Performans";
+var SutunSayisi1 = 10;
+var SutunGenislik1 = new int[10] { 160, 50, 70, 70, 70, 70, 70, 70, 80, 40 };
+var SutunHizala1 = new int[10] { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
+var SutunBaslik1 = new string[10] { "KATEGORİ", "ADET", "BAŞARI%", "AVG WIN", "AVG LOSS", "WIN/LOSS", "MAX DD", "ORT.PNL", "TOPLAM", "TREND" };
+
+Sistem.Tablo(TabloAd1, 50, 50, 900, 380, SutunSayisi1, 17, SutunGenislik1, SutunHizala1, SutunBaslik1, 0, 8);
+
+// Başlık satırını manuel renklendirme (koyu gri arka plan + beyaz bold)
+for (int h = 0; h < SutunSayisi1; h++) {
+    Sistem.TabloYazdir(TabloAd1, h, 0, SutunBaslik1[h], Color.White, Color.FromArgb(52, 73, 94));
+}
+
+int row1 = 1;
+
+// Aktif Pozisyonlar Özet (Anlık Durum)
+if (Aktifler.Count > 0) {
+    float aktifPnL = Aktifler.Sum(x => (float)x["PnL"]);
+    
+    // Anlık duruma göre kazanan/kaybeden pozisyonlar
+    var anlikKazananlar = Aktifler.Where(x => (float)x["PnL"] > 0).ToList();
+    var anlikKaybedenler = Aktifler.Where(x => (float)x["PnL"] <= 0).ToList();
+    
+    int anlikKazananSayisi = anlikKazananlar.Count;
+    int anlikKaybedenSayisi = anlikKaybedenler.Count;
+    
+    // Anlık başarı oranı (geçici)
+    float anlikBasariOrani = Aktifler.Count > 0 ? ((float)anlikKazananSayisi / Aktifler.Count) * 100 : 0;
+    
+    // Anlık ortalama kar/zarar
+    float anlikAvgKar = anlikKazananlar.Count > 0 ? anlikKazananlar.Average(x => (float)x["PnL"]) : 0;
+    float anlikAvgZarar = anlikKaybedenler.Count > 0 ? Math.Abs(anlikKaybedenler.Average(x => (float)x["PnL"])) : 0;
+    
+    // Anlık Risk/Reward
+    float anlikRiskReward = anlikAvgZarar > 0 ? anlikAvgKar / anlikAvgZarar : 0;
+    
+    Color aktifColor = aktifPnL >= 0 ? Color.FromArgb(39, 174, 96) : Color.FromArgb(231, 76, 60);
+    
+    Sistem.TabloYazdir(TabloAd1, 0, row1, "AKTİF POZİSYONLAR (Anlık)", Color.White, Color.FromArgb(44, 62, 80));
+    Sistem.TabloYazdir(TabloAd1, 1, row1, Aktifler.Count.ToString(), Color.White, Color.FromArgb(44, 62, 80));
+    Sistem.TabloYazdir(TabloAd1, 2, row1, anlikBasariOrani.ToString("0.00") + "%", Color.LightGreen, Color.FromArgb(44, 62, 80));
+    Sistem.TabloYazdir(TabloAd1, 3, row1, anlikAvgKar > 0 ? "%" + anlikAvgKar.ToString("0.00") : "-", Color.LightGreen, Color.FromArgb(44, 62, 80));
+    Sistem.TabloYazdir(TabloAd1, 4, row1, anlikAvgZarar > 0 ? "%" + anlikAvgZarar.ToString("0.00") : "-", Color.FromArgb(255, 150, 150), Color.FromArgb(44, 62, 80));
+    Sistem.TabloYazdir(TabloAd1, 5, row1, anlikRiskReward > 0 ? anlikRiskReward.ToString("0.00") : "-", Color.Silver, Color.FromArgb(44, 62, 80));
+    Sistem.TabloYazdir(TabloAd1, 6, row1, "-", Color.White, Color.FromArgb(44, 62, 80));
+    Sistem.TabloYazdir(TabloAd1, 7, row1, "%" + (aktifPnL / Aktifler.Count).ToString("0.00"), Color.White, Color.FromArgb(44, 62, 80));
+    Sistem.TabloYazdir(TabloAd1, 8, row1, "%" + aktifPnL.ToString("0.00"), aktifColor, Color.FromArgb(44, 62, 80));
+    Sistem.TabloYazdir(TabloAd1, 9, row1, anlikKazananSayisi + "🟢/" + anlikKaybedenSayisi + "🔴", Color.White, Color.FromArgb(44, 62, 80));
+    row1++;
+}
+
+// Ayırıcı
+Sistem.TabloYazdir(TabloAd1, 0, row1, "━━━━━━━━━━━━━━━━━━", Color.Gray, Color.Black);
+row1++;
+
+// Bugün
+var rowBugun = PrepareDetailedRow(listBugun, "Bugün", 0);
+Color colorBugun = listBugun.Count > 0 ? GetPerformanceColor((float)rowBugun[10]) : Color.Gray;
+for (int c = 0; c < 10; c++) {
+    Color txtColor = (c == 8) ? colorBugun : Color.White;
+    Sistem.TabloYazdir(TabloAd1, c, row1, (string)rowBugun[c], txtColor, Color.Black);
+}
+row1++;
+
+// Son İşlem Günü
+if (sonIslemGunu != bugun) {
+    var rowSonGun = PrepareDetailedRow(listSonIslemGunu, sonIslemGunu.ToString("dd.MM.yyyy"), 0);
+    Color colorSonGun = listSonIslemGunu.Count > 0 ? GetPerformanceColor((float)rowSonGun[10]) : Color.Gray;
+    for (int c = 0; c < 10; c++) {
+        Color txtColor = (c == 8) ? colorSonGun : Color.Silver;
+        Sistem.TabloYazdir(TabloAd1, c, row1, (string)rowSonGun[c], txtColor, Color.Black);
+    }
+    row1++;
+}
+
+// Önceki İşlem Günü
+if (oncekiIslemGunu != sonIslemGunu && oncekiIslemGunu != bugun) {
+    var rowOncekiGun = PrepareDetailedRow(listOncekiIslemGunu, oncekiIslemGunu.ToString("dd.MM.yyyy"), 0);
+    Color colorOncekiGun = listOncekiIslemGunu.Count > 0 ? GetPerformanceColor((float)rowOncekiGun[10]) : Color.Gray;
+    for (int c = 0; c < 10; c++) {
+        Color txtColor = (c == 8) ? colorOncekiGun : Color.Silver;
+        Sistem.TabloYazdir(TabloAd1, c, row1, (string)rowOncekiGun[c], txtColor, Color.Black);
+    }
+    row1++;
+}
+
+// Ayırıcı
+Sistem.TabloYazdir(TabloAd1, 0, row1, "━━━━━━━━━━━━━━━━━━", Color.Gray, Color.Black);
+row1++;
+
+// Bu Hafta
+var rowBuHafta = PrepareDetailedRow(listBuHafta, "Bu Hafta", gecenHaftaPnL);
+Color colorBuHafta = listBuHafta.Count > 0 ? GetPerformanceColor((float)rowBuHafta[10]) : Color.Gray;
+for (int c = 0; c < 10; c++) {
+    Color txtColor = (c == 8) ? colorBuHafta : Color.White;
+    Sistem.TabloYazdir(TabloAd1, c, row1, (string)rowBuHafta[c], txtColor, Color.FromArgb(52, 73, 94));
+}
+row1++;
+
+// Geçen Hafta
+var rowGecenHafta = PrepareDetailedRow(listGecenHafta, "Geçen Hafta", 0);
+Color colorGecenHafta = listGecenHafta.Count > 0 ? GetPerformanceColor((float)rowGecenHafta[10]) : Color.Gray;
+for (int c = 0; c < 10; c++) {
+    Color txtColor = (c == 8) ? colorGecenHafta : Color.Silver;
+    Sistem.TabloYazdir(TabloAd1, c, row1, (string)rowGecenHafta[c], txtColor, Color.FromArgb(52, 73, 94));
+}
+row1++;
+
+// Ayırıcı
+Sistem.TabloYazdir(TabloAd1, 0, row1, "━━━━━━━━━━━━━━━━━━", Color.Gray, Color.Black);
+row1++;
+
+// Bu Ay
+var rowBuAy = PrepareDetailedRow(listBuAy, "Bu Ay", gecenAyPnL);
+Color colorBuAy = listBuAy.Count > 0 ? GetPerformanceColor((float)rowBuAy[10]) : Color.Gray;
+for (int c = 0; c < 10; c++) {
+    Color txtColor = (c == 8) ? colorBuAy : Color.White;
+    Sistem.TabloYazdir(TabloAd1, c, row1, (string)rowBuAy[c], txtColor, Color.FromArgb(52, 73, 94));
+}
+row1++;
+
+// Geçen Ay
+var rowGecenAy = PrepareDetailedRow(listGecenAy, "Geçen Ay", 0);
+Color colorGecenAy = listGecenAy.Count > 0 ? GetPerformanceColor((float)rowGecenAy[10]) : Color.Gray;
+for (int c = 0; c < 10; c++) {
+    Color txtColor = (c == 8) ? colorGecenAy : Color.Silver;
+    Sistem.TabloYazdir(TabloAd1, c, row1, (string)rowGecenAy[c], txtColor, Color.FromArgb(52, 73, 94));
+}
+row1++;
+
+// Son 3 Ay
+var rowSon3Ay = PrepareDetailedRow(listSon3Ay, "Son 3 Ay", 0);
+for (int c = 0; c < 10; c++) {
+    Sistem.TabloYazdir(TabloAd1, c, row1, (string)rowSon3Ay[c], Color.LightGray, Color.Black);
+}
+row1++;
+
+// Son 6 Ay
+var rowSon6Ay = PrepareDetailedRow(listSon6Ay, "Son 6 Ay", 0);
+for (int c = 0; c < 10; c++) {
+    Sistem.TabloYazdir(TabloAd1, c, row1, (string)rowSon6Ay[c], Color.LightGray, Color.Black);
+}
+row1++;
+
+// Bu Yıl
+var rowBuYil = PrepareDetailedRow(listBuYil, "Bu Yıl", 0);
+for (int c = 0; c < 10; c++) {
+    Sistem.TabloYazdir(TabloAd1, c, row1, (string)rowBuYil[c], Color.LightGray, Color.Black);
+}
+row1++;
+
+// Ayırıcı
+Sistem.TabloYazdir(TabloAd1, 0, row1, "━━━━━━━━━━━━━━━━━━", Color.Gold, Color.Black);
+row1++;
+
+// Genel Toplam
+var rowGenel = PrepareDetailedRow(Kapananlar, "GENEL TOPLAM", 0);
+Color colorGenel = Kapananlar.Count > 0 ? GetPerformanceColor((float)rowGenel[10]) : Color.Gray;
+for (int c = 0; c < 10; c++) {
+    Color txtColor = (c == 8) ? colorGenel : Color.Gold;
+    Sistem.TabloYazdir(TabloAd1, c, row1, (string)rowGenel[c], txtColor, Color.Black);
+}
+
+// --- TABLO 2: AKTİF POZİSYONLAR DETAY ---
+// Strateji İsim Mapping
+var stratejiIsimleri = new Dictionary<string, string> {
+    {"ANKA", "ANKA"},
+    {"DIP_V2", "Dip Zirve V2"},
+    {"K+B+T", "King Bomba TeFo"},
+    {"K+B", "King Bomba"},
+    {"B+T", "Bomba TeFo"},
+    {"K", "King"},
+    {"B", "Bomba"},
+    {"T", "TeFo"}
+};
+
+if (Aktifler.Count > 0) {
+    string TabloAd2 = "Aktif Pozisyonlar Detay";
+    var SutunSayisi2 = 10;
+    var SutunGenislik2 = new int[10] { 80, 120, 40, 90, 40, 70, 70, 70, 70, 50 };
+    var SutunHizala2 = new int[10] { 0, 0, 1, 1, 1, 1, 1, 1, 1, 1 };
+    var SutunBaslik2 = new string[10] { "SEMBOL", "STRATEJİ", "PER", "GİRİŞ TARİH", "GÜN", "GİRİŞ", "GÜNCEL", "PNL%", "MAX PNL", "DURUM" };
+    
+    int satirSayisi2 = Math.Min(Aktifler.Count + 1, 15);
+    Sistem.Tablo(TabloAd2, 970, 50, 900, Math.Min(280, satirSayisi2 * 22), SutunSayisi2, satirSayisi2, SutunGenislik2, SutunHizala2, SutunBaslik2, 0, 8);
+    
+    // Başlık satırını manuel renklendirme
+    for (int h = 0; h < SutunSayisi2; h++) {
+        Sistem.TabloYazdir(TabloAd2, h, 0, SutunBaslik2[h], Color.White, Color.FromArgb(52, 73, 94));
+    }
+    
+    int row2 = 1;
+    
+    foreach (var pos in Aktifler.OrderByDescending(x => (float)x["PnL"]).Take(15)) {
+        string sembol = (string)pos["Sembol"];
+        string strateji = (string)pos["Strateji"];
+        string stratejiTamAd = stratejiIsimleri.ContainsKey(strateji) ? stratejiIsimleri[strateji] : strateji;
+        string periyot = (string)pos["Periyot"];
+        DateTime girisTarih = (DateTime)pos["GirisTarih"];
+        float girisFiyat = (float)pos["GirisFiyat"];
+        float guncelFiyat = (float)pos["CikisFiyat"];
+        float pnl = (float)pos["PnL"];
+        float maxPnl = (float)pos["MaxPnL"];
+        
+        int gunSayisi = (int)(Now - girisTarih).TotalDays;
+        
+        // Risk durumu
+        string durum = "🟢";
+        if (pnl < 0) durum = "🔴";
+        else if (pnl < 2 || (maxPnl - pnl) > 1.5) durum = "🟡";
+        
+        Color pnlColor = pnl >= 0 ? Color.FromArgb(39, 174, 96) : Color.FromArgb(231, 76, 60);
+        
+        Sistem.TabloYazdir(TabloAd2, 0, row2, sembol, Color.White, Color.Black);
+        Sistem.TabloYazdir(TabloAd2, 1, row2, stratejiTamAd, Color.White, Color.Black);
+        Sistem.TabloYazdir(TabloAd2, 2, row2, periyot, Color.White, Color.Black);
+        Sistem.TabloYazdir(TabloAd2, 3, row2, girisTarih.ToString("dd.MM HH:mm"), Color.White, Color.Black);
+        Sistem.TabloYazdir(TabloAd2, 4, row2, gunSayisi.ToString(), Color.White, Color.Black);
+        Sistem.TabloYazdir(TabloAd2, 5, row2, girisFiyat.ToString("0.00"), Color.White, Color.Black);
+        Sistem.TabloYazdir(TabloAd2, 6, row2, guncelFiyat.ToString("0.00"), Color.White, Color.Black);
+        Sistem.TabloYazdir(TabloAd2, 7, row2, "%" + pnl.ToString("0.00"), pnlColor, Color.Black);
+        Sistem.TabloYazdir(TabloAd2, 8, row2, "%" + maxPnl.ToString("0.00"), Color.LightGray, Color.Black);
+        Sistem.TabloYazdir(TabloAd2, 9, row2, durum, Color.White, Color.Black);
+        
+        row2++;
+    }
+}
+
+// --- PERİYODİK TELEGRAM RAPORU (Saatte 1 Kez) ---
+var KeyLastReport = "PerformansRapor_LastSend";
+var LastReportObj = Sistem.NesneGetir(KeyLastReport);
+DateTime LastReport = LastReportObj == null ? DateTime.MinValue : (DateTime)LastReportObj;
+
+bool ShouldSendReport = (Now.Minute >= 0 && Now.Minute <= 5) &&
+                        (Now.Hour != LastReport.Hour || Now.Date != LastReport.Date);
+
+if (ShouldSendReport)
+{
+    Sistem.NesneKaydet(KeyLastReport, Now);
+    try {
+        float aktifPnL = 0;
+        int aktifCount = Aktifler.Count;
+        foreach(var p in Aktifler) aktifPnL += (float)p["PnL"];
+
+        var gunlukKapananlar = Kapananlar
+            .GroupBy(x => ((DateTime)x["CikisTarih"]).Date)
+            .OrderByDescending(g => g.Key)
+            .Take(5)
+            .ToList();
+
+        float toplamKapaliPnL = 0;
+        foreach(var p in Kapananlar) toplamKapaliPnL += (float)p["PnL"];
+
+        float genelToplamPnL = aktifPnL + toplamKapaliPnL;
+
+        string mesaj = "📊 <b>PERFORMANS RAPORU</b>\n\n";
+        mesaj += "⏰ " + Now.ToString("HH:mm") + "\n";
+        mesaj += "📈 Aktif PnL: <b>%" + aktifPnL.ToString("0.00") + "</b> (" + aktifCount + " Adet)\n\n";
+        
+        mesaj += "✅ <b>Kapananlar (Günlük):</b>\n";
+        if (gunlukKapananlar.Count > 0) {
+            foreach (var gun in gunlukKapananlar) {
+                float gunlukPnL = gun.Sum(x => (float)x["PnL"]);
+                int gunlukAdet = gun.Count();
+                string tarihStr = gun.Key.ToString("dd.MM");
+                if (gun.Key == Now.Date) tarihStr += " (Bugün)";
+                
+                mesaj += "▪️ " + tarihStr + ": <b>%" + gunlukPnL.ToString("0.00") + "</b> (" + gunlukAdet + " İşlem)\n";
+            }
+        } else {
+            mesaj += "▪️ Henüz kapanan işlem yok.\n";
+        }
+        
+        mesaj += "\n💰 <b>GENEL TOPLAM: %" + genelToplamPnL.ToString("0.00") + "</b>\n\n";
+        mesaj += "<i>Detaylar tabloda görülebilir</i>";
+        
+        string url = "https://api.telegram.org/bot" + ApiToken + "/sendMessage?chat_id=" + ChatIdMain + "&text=" + System.Uri.EscapeDataString(mesaj) + "&parse_mode=HTML";
+        System.Net.WebRequest.Create(url).GetResponse().Close();
+        DosyayaYaz(DosyaDebug, Now + " INFO: Periyodik rapor gonderildi.\r\n", true);
+    } catch (Exception ex) {
+        DosyayaYaz(DosyaDebug, Now + " ERROR: Rapor hatasi: " + ex.Message + "\r\n", true);
+    }
+}
+
+// --- PERFORMANS ANALİZİ RAPORU (Günlük, Saat 18:30) ---
+var KeyLastAnalysis = "PerformansAnaliz_LastSend";
+var LastAnalysisObj = Sistem.NesneGetir(KeyLastAnalysis);
+DateTime LastAnalysis = LastAnalysisObj == null ? DateTime.MinValue : (DateTime)LastAnalysisObj;
+
+bool ShouldSendAnalysis = (Now.Hour == 18 && Now.Minute >= 30 && Now.Minute <= 40) &&
+                          (Now.Date != LastAnalysis.Date);
+
+if (ShouldSendAnalysis)
+{
+    Sistem.NesneKaydet(KeyLastAnalysis, Now);
+    try {
+        if (Kapananlar.Count > 0)
+        {
+            var groups = Kapananlar
+                .GroupBy(x => new { 
+                    Strateji = (string)x["Strateji"], 
+                    Periyot = (string)x["Periyot"] 
+                })
+                .OrderBy(g => g.Key.Strateji)
+                .ThenBy(g => g.Key.Periyot)
+                .ToList();
+
+            string mesaj = "📊 <b>PERFORMANS ANALİZİ</b>\n";
+            mesaj += "📅 " + Now.ToString("dd.MM.yyyy") + "\n";
+            mesaj += "━━━━━━━━━━━━━━━━━━━━\n\n";
+
+            float toplamWin = 0, toplamLoss = 0, toplamPnL = 0;
+            int toplamTrade = 0;
+
+            foreach (var group in groups)
+            {
+                var trades = group.ToList();
+                int total = trades.Count;
+                int win = trades.Count(t => (float)t["PnL"] > 0);
+                int loss = total - win;
+                float avgPnL = trades.Average(t => (float)t["PnL"]);
+                float successRate = total > 0 ? ((float)win / total) * 100 : 0;
+
+                toplamTrade += total;
+                toplamWin += win;
+                toplamLoss += loss;
+                toplamPnL += avgPnL * total;
+
+                string perLabel = group.Key.Periyot == "G" ? "Gün" : group.Key.Periyot + "dk";
+                
+                mesaj += "<b>" + group.Key.Strateji + "</b> (" + perLabel + ")\n";
+                mesaj += "├ Toplam: " + total + " | ✅ " + win + " | ❌ " + loss + "\n";
+                mesaj += "├ Başarı: " + successRate.ToString("0.0") + "%\n";
+                mesaj += "└ Ort.PnL: " + (avgPnL >= 0 ? "+" : "") + avgPnL.ToString("0.00") + "%\n\n";
+            }
+
+            float genelBasari = toplamTrade > 0 ? (toplamWin / toplamTrade) * 100 : 0;
+            float genelOrtPnL = toplamTrade > 0 ? toplamPnL / toplamTrade : 0;
+
+            mesaj += "━━━━━━━━━━━━━━━━━━━━\n";
+            mesaj += "<b>GENEL ÖZET</b>\n";
+            mesaj += "📈 Toplam İşlem: " + toplamTrade + "\n";
+            mesaj += "✅ Kazanan: " + ((int)toplamWin) + " (" + genelBasari.ToString("0.0") + "%)\n";
+            mesaj += "❌ Kaybeden: " + ((int)toplamLoss) + "\n";
+            mesaj += "💰 Ort.PnL: " + (genelOrtPnL >= 0 ? "+" : "") + genelOrtPnL.ToString("0.00") + "%\n";
+
+            string url = "https://api.telegram.org/bot" + ApiToken + "/sendMessage?chat_id=" + ChatIdMain + "&text=" + System.Uri.EscapeDataString(mesaj) + "&parse_mode=HTML";
+            System.Net.WebRequest.Create(url).GetResponse().Close();
+            DosyayaYaz(DosyaDebug, Now + " INFO: Performans analizi gonderildi.\r\n", true);
+        }
+    } catch (Exception ex) {
+        DosyayaYaz(DosyaDebug, Now + " ERROR: Analiz hatasi: " + ex.Message + "\r\n", true);
+    }
+}
+
+// --- DOSYAYI GÜNCELLE ---
+if (degisiklikVar)
+{
+    var finalLines = new List<string>();
+    finalLines.Add("Sembol|Strateji|Periyot|Tarih|GirisFiyat|DURUM|CikisTarih|CikisFiyat|PnL%|Sebep|MaxPnL");
+    
+    foreach(var pos in Pozisyonlar) {
+        string line = pos["Sembol"] + "|" + 
+                      pos["Strateji"] + "|" + 
+                      pos["Periyot"] + "|" + 
+                      ((DateTime)pos["GirisTarih"]).ToString("o") + "|" + 
+                      ((float)pos["GirisFiyat"]).ToString() + "|" + 
+                      pos["Durum"] + "|" + 
+                      (((DateTime)pos["CikisTarih"]) == DateTime.MinValue ? "" : ((DateTime)pos["CikisTarih"]).ToString("o")) + "|" + 
+                      ((float)pos["CikisFiyat"]).ToString() + "|" + 
+                      ((float)pos["PnL"]).ToString("0.00") + "|" + 
+                      pos["Sebep"] + "|" +
+                      (pos.ContainsKey("MaxPnL") ? ((float)pos["MaxPnL"]).ToString("0.00") : "0.00");
+        finalLines.Add(line);
+    }
+    
+    for (int k = 0; k < 5; k++) {
+        try {
+            System.IO.File.WriteAllLines(DbFile, finalLines);
+            break;
+        } catch (Exception ex) {
+            System.Threading.Thread.Sleep(100);
+            if (k == 4) DosyayaYaz(DosyaDebug, Now + " CRITICAL ERROR: DB Yazilamadi! " + ex.Message + "\r\n", true);
+        }
+    }
+    
+    // --- TELEGRAM BİLDİRİMİ (KAPANANLAR) ---
+    if (kapananlarTelegram.Count > 0)
+    {
+        try {
+            string mesaj = "🔔 <b>POZİSYON KAPATILDI</b>\n\n";
+            foreach (var p in kapananlarTelegram) mesaj += "▪️ " + p + "\n";
+            string url = "https://api.telegram.org/bot" + ApiToken + "/sendMessage?chat_id=" + ChatIdMain + "&text=" + System.Uri.EscapeDataString(mesaj) + "&parse_mode=HTML";
+            System.Net.WebRequest.Create(url).GetResponse().Close();
+        } catch {}
+    }
+}

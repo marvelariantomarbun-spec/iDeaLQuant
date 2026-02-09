@@ -32,15 +32,16 @@ class WalkForwardConfig:
     genetic_config: Optional[GeneticConfig] = None  # Optimizer ayarları
 
 class WalkForwardAnalysis:
-    def __init__(self, df: pd.DataFrame, config: WalkForwardConfig):
+    def __init__(self, df: pd.DataFrame, config: WalkForwardConfig, strategy_index: int = 1):
         self.df = df
         self.config = config
+        self.strategy_index = strategy_index
         self.results = []
         
         # Tarih indeksini ayarla (eğer yoksa)
         if 'Tarih' in df.columns:
             # Tarih formatı dd.mm.yyyy varsayılıyor
-            self.df['Date'] = pd.to_datetime(self.df['Tarih'], format='%d.%m.%Y')
+            self.df['Date'] = pd.to_datetime(self.df['Tarih'], format='%d.%m.%Y', dayfirst=True)
         
     def run(self):
         """Walk-Forward analizini çalıştır"""
@@ -68,11 +69,6 @@ class WalkForwardAnalysis:
             if test_end > end_date:
                 break
                 
-            window_count += 1
-            print(f"\n--- Pencere {window_count} ---")
-            print(f"Train: {train_start.date()} -> {train_end.date()}")
-            print(f"Test : {test_start.date()} -> {test_end.date()}")
-            
             # Veriyi böl
             train_mask = (self.df['Date'] >= train_start) & (self.df['Date'] < train_end)
             test_mask = (self.df['Date'] >= test_start) & (self.df['Date'] < test_end)
@@ -81,18 +77,23 @@ class WalkForwardAnalysis:
             df_test = self.df.loc[test_mask].copy().reset_index(drop=True)
             
             if len(df_train) < 500 or len(df_test) < 100:
-                print("Yetersiz veri, atlanıyor...")
+                print(f"Yetersiz veri (Train:{len(df_train)}, Test:{len(df_test)}), atlanıyor...")
                 current_date += pd.DateOffset(months=self.config.step_months)
                 continue
+
+            window_count += 1
+            print(f"\n--- Pencere {window_count} ---")
+            print(f"Train: {train_start.date()} -> {train_end.date()} ({len(df_train)} bars)")
+            print(f"Test : {test_start.date()} -> {test_end.date()} ({len(df_test)} bars)")
             
             # 1. OPTİMİZASYON (Train)
-            print("  Optimize ediliyor (Genetik)...")
+            print("  [STEP 1] Optimize ediliyor (Genetik)...")
             # Hızlı optimizasyon için nesil sayısını düşük tutabiliriz
             gen_config = self.config.genetic_config or GeneticConfig(
                 population_size=30, generations=10, early_stop_generations=3
             )
             
-            optimizer = GeneticOptimizer(df_train, gen_config)
+            optimizer = GeneticOptimizer(df_train, gen_config, strategy_index=self.strategy_index)
             opt_result = optimizer.run(verbose=False)
             
             best_params = opt_result['best_params']
@@ -103,7 +104,7 @@ class WalkForwardAnalysis:
             
             # 2. VALIDASYON (Test)
             print("  Test ediliyor (OOS)...")
-            evaluator = FitnessEvaluator(df_test)
+            evaluator = FitnessEvaluator(df_test, strategy_index=self.strategy_index)
             test_result = evaluator.evaluate(best_params)
             
             print(f"  Test Net Profit: {test_result['net_profit']:.2f}")

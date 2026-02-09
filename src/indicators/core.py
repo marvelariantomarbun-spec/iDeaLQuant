@@ -364,27 +364,38 @@ def LLV(lows: List[float], period: int) -> List[float]:
 # CUSTOM INDICATORS
 # =============================================================================
 
-def ARS(typical: List[float], ema_period: int = 3, k: float = 0.0123) -> List[float]:
+def ARS(typical: List[float], ema_period: int = 3, k: float = 0.0123, round_step: float = 0.0) -> List[float]:
     """
     Adaptive Regime Switch - Custom indicator
     Classic version with fixed percentage band
+    round_step: Optional rounding step (e.g., 0.025 for IdealData compatibility)
     """
+    import math
     n = len(typical)
     result = [0.0] * n
     
     # Calculate EMA of typical price
     ema = EMA(typical, ema_period)
     
+    # First value
+    result[0] = ema[0]
+    
     for i in range(1, n):
         alt_band = ema[i] * (1 - k)
         ust_band = ema[i] * (1 + k)
         
         if alt_band > result[i - 1]:
-            result[i] = alt_band
+            raw_ars = alt_band
         elif ust_band < result[i - 1]:
-            result[i] = ust_band
+            raw_ars = ust_band
         else:
-            result[i] = result[i - 1]
+            raw_ars = result[i - 1]
+            
+        # Rounding
+        if round_step > 0:
+            result[i] = math.floor(raw_ars / round_step + 0.5) * round_step
+        else:
+            result[i] = raw_ars
     
     return result
 
@@ -496,8 +507,36 @@ def RVI(opens: List[float], highs: List[float], lows: List[float],
     return rvi, signal
 
 
+def MACDV(closes: List[float], highs: List[float], lows: List[float], k: int = 13, u: int = 28, sig: int = 8) -> tuple[List[float], List[float]]:
+    """
+    MACDV (MACD Volatility-normalized)
+    Implementation based on IdealData strategy logic
+    """
+    n = len(closes)
+    ema_s = EMA(closes, k)
+    ema_l = EMA(closes, u)
+    
+    tr = [0.0] * n
+    for i in range(1, n):
+        hl = highs[i] - lows[i]
+        hc = abs(highs[i] - closes[i-1])
+        lc = abs(lows[i] - closes[i-1])
+        tr[i] = max(hl, max(hc, lc))
+        
+    # ATRe is EMA of True Range
+    atre = EMA(tr, u)
+    
+    macdv = [0.0] * n
+    for i in range(n):
+        if atre[i] != 0:
+            macdv[i] = ((ema_s[i] - ema_l[i]) / atre[i]) * 100.0
+            
+    macdv_signal = EMA(macdv, sig)
+    return macdv, macdv_signal
+
+
 def NetLot(opens: List[float], highs: List[float], lows: List[float], 
-           closes: List[float]) -> List[float]:
+           closes: List[float], period: int = 1) -> List[float]:
     """Net Lot Indicator (Buying/Selling Pressure)"""
     n = len(closes)
     result = [0.0] * n
@@ -506,8 +545,10 @@ def NetLot(opens: List[float], highs: List[float], lows: List[float],
         range_hl = highs[i] - lows[i]
         if range_hl > 0:
             pressure = (closes[i] - opens[i]) / range_hl
-            result[i] = pressure * 100
-    
+            result[i] = pressure * 100.0
+            
+    if period > 1:
+        return SMA(result, period)
     return result
 
 
@@ -668,39 +709,3 @@ def QQEF(closes: List[float], rsi_period: int = 14, smooth_period: int = 5) -> t
     return qqef, qqes
 
 
-def MACDV(closes: List[float], highs: List[float], lows: List[float], 
-          short_p: int = 12, long_p: int = 26, signal_p: int = 9) -> tuple:
-    """
-    MACD-V (Volatility Normalized MACD)
-    Formula: (EMA(short) - EMA(long)) / EMA(TR, long) * 100
-    Signal: EMA(MACDV, signal_p)
-    """
-    n = len(closes)
-    
-    # 1. Calculate Standard MACD Line (Value)
-    ema_short = EMA(closes, short_p)
-    ema_long = EMA(closes, long_p)
-    macd_val = [s - l for s, l in zip(ema_short, ema_long)]
-    
-    # 2. Calculate ATRe (ATR using EMA instead of RMA)
-    tr = [0.0] * n
-    tr[0] = highs[0] - lows[0]
-    for i in range(1, n):
-        hl = highs[i] - lows[i]
-        hc = abs(highs[i] - closes[i - 1])
-        lc = abs(lows[i] - closes[i - 1])
-        tr[i] = max(hl, hc, lc)
-        
-    # EMA of TR using 'long_p' as period (per Matriks formula: ATRe(up))
-    atre = EMA(tr, long_p)
-    
-    # 3. Calculate MACD-V
-    macdv = [0.0] * n
-    for i in range(n):
-        if atre[i] != 0:
-            macdv[i] = (macd_val[i] / atre[i]) * 100
-            
-    # 4. Signal Line
-    signal = EMA(macdv, signal_p)
-    
-    return macdv, signal

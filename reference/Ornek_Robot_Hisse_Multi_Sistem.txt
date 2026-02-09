@@ -1,0 +1,69 @@
+// Bu robot örnek amaçlı oluşturulmuştur. Kullanım sorumluluğu tamamen kullanıcıya aittir. Oluşacak sorunlardan İDealdata sorumlu tutulamaz.
+// DİKKAT!!! Robotlarınız için mutlaka sanal modda gerekli testlerin yapmayı unutmayın!!!
+// DİKKAT!!! Robotlarınızın düzgün çalıştığına emin olmadan gerçek modda çalıştırmayın!!!
+// DİKKAT!!! Hisse robotlarınızı brüt takas senetlerinde kullanmanız tavsiye edilmez!!!
+// DİKKAT!!!Aksi belirtilmedikçe tüm robotlar "PİYASA"(fiyatsız, bulduğu en iyi fiyattan eşleşerek) emir iletir!!!
+// Robot dosyaları portföy içerisindeki "Robot" sekmesinden sanal veya gerçek modda(emir iletimi) çalıştırılabilir.
+// Bu örnek robot kodu aynı sistemi kullanarak birden fazla hisse için belirtilen miktarlarda emir iletimi yapar.
+// Robot içeriği istenildiği gibi düzenlenebilir.
+
+var Sozluk = new Dictionary<string,double>();
+
+Sozluk["IMKBH'EREGL"] = 5; // 5 lot
+Sozluk["IMKBH'GARAN"] = 1; // 1 lot
+Sozluk["IMKBH'YKBNK"] = 2; // 2 lot
+Sozluk["IMKBH'GSRAY"] = 5; // 5 lot
+Sozluk["IMKBH'FENER"] = 1; // 1 lot
+Sozluk["IMKBH'BJKAS"] = 2; // 2 lot
+
+
+for (var No=0; No < Sozluk.Count; No++) 
+{ 
+   var EmirSembol = Sozluk.ElementAt(No).Key;
+   var Sembol = EmirSembol ;
+   var Periyot = "1"; // periyot
+   var SistemAdi = "MA50";
+   var MySistem = Sistem.SistemGetir(SistemAdi, Sembol, Periyot); //sistemin adı, grafik sembolü, grafiğin periyodu
+   var LotSize = Sozluk.ElementAt(No).Value;
+   if (MySistem == null) 
+   {
+      Sistem.Mesaj("Sistem Dosyası Okunamadı !");
+   }
+   else
+   {
+      var SonFiyat = Sistem.SonFiyat(EmirSembol);
+      var Anahtar = Sistem.Name + "," + EmirSembol;
+      double IslemFiyat = 0;
+      DateTime IslemTarih;
+      var Miktar = 0.0;
+      var Rezerv = "";
+      var Pozisyon = Sistem.PozisyonKontrolOku(Anahtar, out IslemFiyat, out IslemTarih);
+      var SonYon = Sistem.SonYonGetir(SistemAdi, Sembol, Periyot); //sistemin adı, grafik sembolü, grafiğin periyodu
+      if (Sistem.Saat.CompareTo("10:00:00") <= 0 || Sistem.Saat.CompareTo("18:04:59") >= 0)  // seans yok işlem yapma
+      {
+      }
+      else
+      {
+         if (SonYon == "F" && Pozisyon != 0)  // Flata Geç
+            Miktar = -Pozisyon;
+         else if (SonYon == "A" && Pozisyon != LotSize)  // Al
+            Miktar = LotSize - Pozisyon;
+         else if (SonYon == "S" && Pozisyon != -LotSize)  // Sat
+            Miktar = -LotSize - Pozisyon;
+         // Emir Gönder
+         var Islem = "";
+         if (Miktar > 0) {Islem = "ALIS"; Rezerv = "ALIŞ YAPILDI";}
+         if (Miktar < 0) {Islem = "SATIS"; Rezerv = "SATIŞ YAPILDI";}
+         if (Islem != "")
+         {
+            Sistem.PozisyonKontrolGuncelle(Anahtar, Miktar + Pozisyon, SonFiyat, Rezerv);
+            Sistem.EmirSembol = EmirSembol ;
+            Sistem.EmirIslem = Islem;
+            Sistem.EmirSuresi = "KIE"; // GUN, KIE, IKG
+            Sistem.EmirTipi = "Piyasa"; // Piyasa, Limitli, Piyasadan Limite
+            Sistem.EmirMiktari = Math.Abs(Miktar);
+            Sistem.EmirGonder();
+         }
+     }
+  }
+}

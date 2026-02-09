@@ -1,0 +1,208 @@
+// ===============================================================================================
+// ARS İNDİKATÖRÜ - ADAPTIVE REGIME SWITCH
+// ===============================================================================================
+// Geliştirici: asmeril
+// Versiyon: 2.0
+// Tarih: 2026-01-24
+// 
+// AÇIKLAMA:
+// ARS, fiyatın trend rejimini belirleyen bir histerizis filtresidir.
+// Küçük hareketleri görmezden gelir, sadece anlamlı trend değişimlerinde 
+// seviye değiştirir. Bu sayede whipsaw (sahte sinyal) sayısını azaltır.
+//
+// KULLANIM:
+// - 15dk, 60dk: Orijinal versiyon (ARS_Classic) harika çalışıyor
+// - 1dk, 5dk: Dinamik ATR versiyonu (ARS_Dynamic) önerilir
+// ===============================================================================================
+
+// ===============================================================================================
+// BÖLÜM 1: ARS CLASSIC - Orijinal Versiyon (15dk, 60dk için ideal)
+// ===============================================================================================
+// Parametreler
+var ARS_EMA_Period = 3;       // EMA periyodu
+var ARS_Band_Pct = 1.23;      // Band genişliği (%)
+var ARS_Round_Step = 0.025;   // Yuvarlama adımı
+
+// Hesaplama
+var T = Sistem.GrafikFiyatSec("Tipik");
+var ARS_K = ARS_Band_Pct / 100.0;
+var ARS_EMA = Sistem.MA(T, "Exp", ARS_EMA_Period);
+var ARS_Classic = Sistem.Liste(0);
+
+for (int i = 1; i < Sistem.BarSayisi; i++)
+{
+    float altBand = (float)(ARS_EMA[i] * (1 - ARS_K));
+    float ustBand = (float)(ARS_EMA[i] * (1 + ARS_K));
+    
+    if (altBand > ARS_Classic[i - 1])
+        ARS_Classic[i] = altBand;
+    else if (ustBand < ARS_Classic[i - 1])
+        ARS_Classic[i] = ustBand;
+    else
+        ARS_Classic[i] = ARS_Classic[i - 1];
+    
+    ARS_Classic[i] = Sistem.SayiYuvarla(ARS_Classic[i], ARS_Round_Step);
+}
+
+// ===============================================================================================
+// BÖLÜM 2: ARS DYNAMIC - ATR Adaptif Versiyon (1dk, 5dk için ideal)
+// ===============================================================================================
+// Parametreler
+var ARS_DYN_EMA_Period = 5;    // EMA periyodu (biraz daha uzun)
+var ARS_DYN_ATR_Period = 14;   // ATR periyodu
+var ARS_DYN_ATR_Mult = 0.8;    // ATR çarpanı (0.5-1.5 arası optimize edilebilir)
+var ARS_DYN_Min_Band = 0.003;  // Minimum band genişliği (%0.3)
+var ARS_DYN_Max_Band = 0.025;  // Maksimum band genişliği (%2.5)
+
+// Hesaplama
+var ATR = Sistem.AverageTrueRange(ARS_DYN_ATR_Period);
+var ARS_DYN_EMA = Sistem.MA(T, "Exp", ARS_DYN_EMA_Period);
+var ARS_Dynamic = Sistem.Liste(0);
+var ARS_BandWidth = Sistem.Liste(0);  // Debug için band genişliğini kaydet
+
+for (int i = 1; i < Sistem.BarSayisi; i++)
+{
+    // Dinamik band hesaplama: ATR / Fiyat × Çarpan
+    float dinamikK = (ATR[i] / ARS_DYN_EMA[i]) * (float)ARS_DYN_ATR_Mult;
+    
+    // Band genişliğini sınırla
+    dinamikK = Math.Max((float)ARS_DYN_Min_Band, Math.Min((float)ARS_DYN_Max_Band, dinamikK));
+    ARS_BandWidth[i] = dinamikK * 100;  // Yüzde olarak kaydet
+    
+    float altBand = ARS_DYN_EMA[i] * (1 - dinamikK);
+    float ustBand = ARS_DYN_EMA[i] * (1 + dinamikK);
+    
+    if (altBand > ARS_Dynamic[i - 1])
+        ARS_Dynamic[i] = altBand;
+    else if (ustBand < ARS_Dynamic[i - 1])
+        ARS_Dynamic[i] = ustBand;
+    else
+        ARS_Dynamic[i] = ARS_Dynamic[i - 1];
+    
+    // Dinamik yuvarlama: ATR'ye göre step belirle
+    float dinamikStep = ATR[i] * 0.1f;  // ATR'nin %10'u kadar yuvarlama
+    dinamikStep = Math.Max(0.01f, dinamikStep);  // Minimum 0.01
+    ARS_Dynamic[i] = Sistem.SayiYuvarla(ARS_Dynamic[i], dinamikStep);
+}
+
+// ===============================================================================================
+// BÖLÜM 3: ARS FAST - Ultra Hızlı Versiyon (Scalping, 1dk için)
+// ===============================================================================================
+// Parametreler
+var ARS_FAST_EMA_Period = 2;   // Çok kısa EMA
+var ARS_FAST_ATR_Period = 8;   // Kısa ATR
+var ARS_FAST_ATR_Mult = 0.5;   // Dar band
+
+// Hesaplama
+var ATR_Fast = Sistem.AverageTrueRange(ARS_FAST_ATR_Period);
+var ARS_FAST_EMA = Sistem.MA(T, "Exp", ARS_FAST_EMA_Period);
+var ARS_Fast = Sistem.Liste(0);
+
+for (int i = 1; i < Sistem.BarSayisi; i++)
+{
+    float dinamikK = (ATR_Fast[i] / ARS_FAST_EMA[i]) * (float)ARS_FAST_ATR_Mult;
+    dinamikK = Math.Max(0.002f, Math.Min(0.015f, dinamikK));  // Daha dar sınırlar
+    
+    float altBand = ARS_FAST_EMA[i] * (1 - dinamikK);
+    float ustBand = ARS_FAST_EMA[i] * (1 + dinamikK);
+    
+    if (altBand > ARS_Fast[i - 1])
+        ARS_Fast[i] = altBand;
+    else if (ustBand < ARS_Fast[i - 1])
+        ARS_Fast[i] = ustBand;
+    else
+        ARS_Fast[i] = ARS_Fast[i - 1];
+}
+
+// ===============================================================================================
+// BÖLÜM 4: ARS SİNYAL ÜRETİCİ
+// ===============================================================================================
+var C = Sistem.GrafikFiyatSec("Kapanis");
+var ARS_Signal = Sistem.Liste(0);  // 1 = Long, -1 = Short, 0 = Nötr
+
+// Hangi ARS versiyonunu kullanacağınızı seçin:
+var ARS_Active = ARS_Dynamic;  // Değiştir: ARS_Classic, ARS_Dynamic, ARS_Fast
+
+for (int i = 1; i < Sistem.BarSayisi; i++)
+{
+    // Basit sinyal: Fiyat ARS'ın üstünde = Long, altında = Short
+    if (C[i] > ARS_Active[i])
+        ARS_Signal[i] = 1;
+    else if (C[i] < ARS_Active[i])
+        ARS_Signal[i] = -1;
+    else
+        ARS_Signal[i] = 0;
+}
+
+// Rejim değişikliği tespiti (sinyal üretimi için)
+var ARS_CrossUp = Sistem.Liste(0);   // ARS yukarı kırıldı
+var ARS_CrossDown = Sistem.Liste(0); // ARS aşağı kırıldı
+
+for (int i = 1; i < Sistem.BarSayisi; i++)
+{
+    // Yukarı kırılma: Dün altındaydım, bugün üstündeyim
+    if (C[i-1] < ARS_Active[i-1] && C[i] > ARS_Active[i])
+        ARS_CrossUp[i] = 1;
+    
+    // Aşağı kırılma: Dün üstündeydim, bugün altındayım
+    if (C[i-1] > ARS_Active[i-1] && C[i] < ARS_Active[i])
+        ARS_CrossDown[i] = 1;
+}
+
+// ===============================================================================================
+// BÖLÜM 5: ÇİZİM
+// ===============================================================================================
+// ARS Classic - Mavi (15dk, 60dk için)
+Sistem.Cizgiler[3].Deger = ARS_Classic;
+Sistem.Cizgiler[3].Aciklama = "ARS_Classic";
+
+// ARS Dynamic - Yeşil (1dk, 5dk için)
+Sistem.Cizgiler[4].Deger = ARS_Dynamic;
+Sistem.Cizgiler[4].Aciklama = "ARS_Dynamic";
+
+// ARS Fast - Kırmızı (Scalping için)
+Sistem.Cizgiler[5].Deger = ARS_Fast;
+Sistem.Cizgiler[5].Aciklama = "ARS_Fast";
+
+// Band genişliği (Debug için - alt panelde göster)
+Sistem.Cizgiler[6].Deger = ARS_BandWidth;
+Sistem.Cizgiler[6].Aciklama = "Band_Width_%";
+
+// ===============================================================================================
+// BÖLÜM 6: BİLGİ PANELİ
+// ===============================================================================================
+var sonBar = Sistem.BarSayisi - 1;
+var arsKlasik = ARS_Classic[sonBar].ToString("0.00");
+var arsDinamik = ARS_Dynamic[sonBar].ToString("0.00");
+var arsFast = ARS_Fast[sonBar].ToString("0.00");
+var bandGen = ARS_BandWidth[sonBar].ToString("0.2");
+var sonKapanis = C[sonBar].ToString("0.00");
+
+string rejimKlasik = C[sonBar] > ARS_Classic[sonBar] ? "LONG ↑" : "SHORT ↓";
+string rejimDinamik = C[sonBar] > ARS_Dynamic[sonBar] ? "LONG ↑" : "SHORT ↓";
+string rejimFast = C[sonBar] > ARS_Fast[sonBar] ? "LONG ↑" : "SHORT ↓";
+
+string info = "=== ARS İNDİKATÖRÜ ===" + Environment.NewLine +
+              "Kapanış: " + sonKapanis + Environment.NewLine +
+              "------------------------" + Environment.NewLine +
+              "Classic: " + arsKlasik + " → " + rejimKlasik + Environment.NewLine +
+              "Dynamic: " + arsDinamik + " → " + rejimDinamik + Environment.NewLine +
+              "Fast: " + arsFast + " → " + rejimFast + Environment.NewLine +
+              "------------------------" + Environment.NewLine +
+              "Band %: " + bandGen;
+
+Sistem.Dortgen(1, 10, 30, 200, 140, Color.Black, Color.Black, Color.White);
+Sistem.GradientYaziEkle(info, 1, 15, 35, Color.White, Color.LightGray, "Consolas", 9);
+
+// ===============================================================================================
+// OPTIMIZASYON NOTLARI:
+// ===============================================================================================
+// ARS_DYN_ATR_Mult: 0.3 - 1.5 arası optimize edin
+// ARS_DYN_EMA_Period: 3 - 10 arası optimize edin
+// ARS_DYN_ATR_Period: 8 - 21 arası optimize edin
+//
+// 1dk için: ATR_Mult=0.5, EMA=3, ATR_Period=10
+// 5dk için: ATR_Mult=0.7, EMA=5, ATR_Period=14
+// 15dk için: Classic versiyonu kullanın
+// 60dk için: Classic versiyonu kullanın
+// ===============================================================================================

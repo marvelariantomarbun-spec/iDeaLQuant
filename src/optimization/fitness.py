@@ -14,125 +14,30 @@ import numpy as np
 @dataclass
 class FitnessConfig:
     """Fitness hesaplama konfigürasyonu"""
-    # Sermaye (DD oranı hesaplamak için)
     initial_capital: float = 10000.0
     
-    # İşlem sayısı limitleri
+    # İşlem maliyetleri (Puan bazlı, örn: 5.0 = 5 puan kayma+komisyon)
+    commission: float = 0.0
+    slippage: float = 0.0
+    
+    # İşlem sayısı limitleri (Overtrading engelleme)
     min_trades: int = 20
     ideal_min_trades: int = 50
-    max_trades: int = 500
+    overtrading_limit: int = 1500  # 1500 işlemden sonrası ağır cezalı
     
-    # Ortalama işlem karı limitleri (TL)
-    min_avg_trade: float = 30.0
-    ideal_avg_trade: float = 50.0
+    # Ortalama işlem karı (TL/Puan)
+    min_avg_profit: float = 10.0   # En az 10 puan/TL kar kalmalı
     
     # Risk limitleri
-    max_dd_ratio: float = 0.20  # Sermayenin max %20'si
-    ideal_calmar: float = 2.0   # Net Kar / Max DD
+    max_dd_ratio: float = 0.20
     
     # Ağırlıklar
-    pf_bonus_weight: float = 0.1
-    dd_penalty_weight: float = 0.5
-    trade_count_weight: float = 0.3
-    avg_trade_weight: float = 0.2
+    # Profit Factor (PF) limits
+    min_pf: float = 1.5    # Kullanıcı isteği: en az 1.50
+    max_pf: float = 3.0    # 3.0 üzeri genelde overfit/noise fitting
 
-
-def calculate_extended_metrics(
-    closes: np.ndarray,
-    entry_prices: list,
-    exit_prices: list,
-    directions: list,  # 1 for long, -1 for short
-    initial_capital: float = 10000.0
-) -> Dict[str, float]:
-    """
-    Backtest sonuçlarından genişletilmiş metrikler hesapla.
-    
-    Args:
-        closes: Kapanış fiyatları
-        entry_prices: Giriş fiyatları listesi
-        exit_prices: Çıkış fiyatları listesi
-        directions: İşlem yönleri (1=long, -1=short)
-        initial_capital: Başlangıç sermayesi
-    
-    Returns:
-        Dict: Tüm metrikler
-    """
-    trades = len(entry_prices)
-    
-    if trades == 0:
-        return {
-            'net_profit': 0,
-            'gross_profit': 0,
-            'gross_loss': 0,
-            'pf': 0,
-            'max_dd': 0,
-            'trades': 0,
-            'win_count': 0,
-            'loss_count': 0,
-            'win_rate': 0,
-            'avg_trade': 0,
-            'avg_win': 0,
-            'avg_loss': 0,
-            'risk_reward': 0,
-            'calmar_ratio': 0,
-            'fitness': 0
-        }
-    
-    # PnL hesapla
-    pnls = []
-    for i in range(trades):
-        if directions[i] == 1:
-            pnl = exit_prices[i] - entry_prices[i]
-        else:
-            pnl = entry_prices[i] - exit_prices[i]
-        pnls.append(pnl)
-    
-    pnls = np.array(pnls)
-    
-    # Temel metrikler
-    gross_profit = np.sum(pnls[pnls > 0])
-    gross_loss = np.abs(np.sum(pnls[pnls < 0]))
-    net_profit = gross_profit - gross_loss
-    
-    pf = (gross_profit / gross_loss) if gross_loss > 0 else 999.0
-    
-    # Win/Loss
-    win_count = np.sum(pnls > 0)
-    loss_count = np.sum(pnls < 0)
-    win_rate = (win_count / trades) * 100 if trades > 0 else 0
-    
-    # Ortalamalar
-    avg_trade = net_profit / trades if trades > 0 else 0
-    avg_win = np.mean(pnls[pnls > 0]) if win_count > 0 else 0
-    avg_loss = np.abs(np.mean(pnls[pnls < 0])) if loss_count > 0 else 0
-    risk_reward = (avg_win / avg_loss) if avg_loss > 0 else 999.0
-    
-    # Equity curve ve Max DD
-    equity = initial_capital + np.cumsum(pnls)
-    peak = np.maximum.accumulate(equity)
-    dd = peak - equity
-    max_dd = np.max(dd) if len(dd) > 0 else 0
-    
-    # Calmar Ratio
-    calmar_ratio = (net_profit / max_dd) if max_dd > 0 else 999.0
-    
-    return {
-        'net_profit': net_profit,
-        'gross_profit': gross_profit,
-        'gross_loss': gross_loss,
-        'pf': pf,
-        'max_dd': max_dd,
-        'trades': trades,
-        'win_count': int(win_count),
-        'loss_count': int(loss_count),
-        'win_rate': win_rate,
-        'avg_trade': avg_trade,
-        'avg_win': avg_win,
-        'avg_loss': avg_loss,
-        'risk_reward': risk_reward,
-        'calmar_ratio': calmar_ratio
-    }
-
+    # R^2 (Equity Curve Smoothness)
+    min_r2: float = 0.85   # Regresyon katsayısı (0-1 arası)
 
 def calculate_fitness(
     metrics: Dict[str, float],
@@ -140,13 +45,12 @@ def calculate_fitness(
 ) -> float:
     """
     Genişletilmiş çok faktörlü fitness hesapla.
-    
-    Args:
-        metrics: calculate_extended_metrics çıktısı
-        config: FitnessConfig (opsiyonel)
-    
-    Returns:
-        float: Fitness skoru
+    Kriterler:
+    1. Net Kâr (Maliyet düşülmüş)
+    2. Profit Factor (1.5 - 2.5 arası ideal)
+    3. İşlem Sayısı (50 - 1000 arası ideal)
+    4. Max Drawdown (%20 altı)
+    5. R^2 (Equity Smoothness) - Varsa
     """
     if config is None:
         config = FitnessConfig()
@@ -155,62 +59,52 @@ def calculate_fitness(
     pf = metrics.get('pf', 0)
     max_dd = metrics.get('max_dd', 0)
     trades = metrics.get('trades', 0)
-    avg_trade = metrics.get('avg_trade', 0)
-    calmar = metrics.get('calmar_ratio', 0)
-    win_rate = metrics.get('win_rate', 0)
     
-    # Negatif veya sıfır kar = düşük fitness
-    if net_profit <= 0:
-        return net_profit * 0.5  # Negatif fitness
+    # 0. Maliyet Düşümü
+    total_cost = trades * (config.commission + config.slippage)
+    adjusted_profit = net_profit - total_cost
     
-    # Base: Net Profit
-    fitness = net_profit
+    if adjusted_profit <= 0:
+        return adjusted_profit - 1000 # Zarar edenler dipte kalsın
     
-    # 1. Profit Factor Bonus (PF > 1.5)
-    if pf > 1.5:
-        pf_bonus = (pf - 1) * config.pf_bonus_weight
-        fitness *= (1 + min(pf_bonus, 0.5))  # Max %50 bonus
-    elif pf < 1.0:
-        fitness *= 0.5  # PF < 1 = kayıp veren strateji
+    fitness = adjusted_profit
     
-    # 2. Max DD Ceza
-    if max_dd > 0:
-        dd_ratio = max_dd / config.initial_capital
-        if dd_ratio > config.max_dd_ratio:
-            # Sermayenin %20'sinden fazla DD = ağır ceza
-            fitness *= (1 - min(config.dd_penalty_weight, dd_ratio))
-        else:
-            # Kabul edilebilir DD
-            fitness *= (1 - dd_ratio * 0.3)
-    
-    # 3. İşlem Sayısı Kontrolü
-    if trades < config.min_trades:
-        fitness *= 0.3  # Çok az işlem - güvenilmez
-    elif trades < config.ideal_min_trades:
-        ratio = trades / config.ideal_min_trades
-        fitness *= (0.7 + 0.3 * ratio)  # Kademeli azalma
-    elif trades > config.max_trades:
-        # Çok fazla işlem - komisyon riski
-        excess = (trades - config.max_trades) / config.max_trades
-        fitness *= (1 - min(0.3, excess * 0.1))
-    
-    # 4. Ortalama İşlem Karı
-    if avg_trade < config.min_avg_trade:
-        fitness *= 0.5  # Komisyon yerse zarar
-    elif avg_trade < config.ideal_avg_trade:
-        ratio = avg_trade / config.ideal_avg_trade
-        fitness *= (0.8 + 0.2 * ratio)
-    
-    # 5. Calmar Ratio (Risk-Adjusted Return)
-    if calmar > config.ideal_calmar:
-        fitness *= 1.15  # İyi risk/return bonusu
-    elif calmar < 1.0:
-        fitness *= 0.8  # Kötü risk/return
-    
-    # 6. Win Rate Bonus (opsiyonel - çok ağır değil)
-    if win_rate > 50:
-        fitness *= (1 + (win_rate - 50) * 0.002)  # Max %10 bonus
-    
+    # 1. Profit Factor "Sweet Spot" (Kullanıcı Talebi)
+    # 1.5 altı -> Ciddi ceza
+    # 1.5 - 2.5 -> Bonus
+    # 2.5 üzeri -> Azalan getiri (Overfit şüphesi)
+    if pf < 1.25:
+        fitness *= 0.1 # Çöp
+    elif pf < 1.5:
+        fitness *= 0.5 # Kabul edilebilir sınırın altı
+    elif 1.5 <= pf <= 2.5:
+        fitness *= (1 + (pf - 1.5)) # Bonus: Örn PF 2.0 -> %50 bonus
+    elif pf > 3.0:
+        fitness *= 0.8 # Overfit cezası (Şüphe)
+        
+    # 2. Max DD Limit
+    dd_ratio = max_dd / config.initial_capital
+    if dd_ratio > config.max_dd_ratio:
+        fitness *= (0.2 / dd_ratio) # Limit aşıldıkça puan erir
+        
+    # 3. İşlem Sayısı (İstatistiksel Güvenilirlik)
+    if trades < 50:
+        fitness *= (trades / 50) # Yetersiz veri cezası
+    elif trades > 1000:
+        fitness *= (1000 / trades) ** 2 # Overtrading - Sert Ceza
+        
+    # 4. İşlem Başı Ortalama Kar
+    avg_profit = adjusted_profit / trades if trades > 0 else 0
+    if avg_profit < config.min_avg_profit:
+        fitness *= (avg_profit / config.min_avg_profit) ** 2
+
+    # 5. Sharpe Ratio Bonusu (Yeni)
+    sharpe = metrics.get('sharpe', 0)
+    if sharpe > 2.0:
+        fitness *= 1.1 # %10 Bonus
+    elif sharpe < 0.5:
+        fitness *= 0.8 # Riskli
+
     return fitness
 
 
@@ -219,45 +113,73 @@ def quick_fitness(
     pf: float,
     max_dd: float,
     trades: int,
+    sharpe: float = 0.0,
     win_count: int = 0,
-    initial_capital: float = 10000.0
+    initial_capital: float = 10000.0,
+    commission: float = 0.0,
+    slippage: float = 0.0
 ) -> float:
-    """
-    Hızlı fitness hesaplama (backtest içinde kullanım için).
-    Tam metrik hesaplaması gerekmediğinde kullanılır.
-    """
-    if net_profit <= 0:
-        return net_profit * 0.5
+    """Hızlı hesaplama (Optimizer döngüleri için)"""
     
-    fitness = net_profit
+    # Kâr ve Maliyet
+    cost = trades * (commission + slippage)
+    adj_profit = net_profit - cost
     
-    # PF bonus
-    if pf > 1.5:
-        fitness *= (1 + (pf - 1) * 0.1)
-    elif pf < 1.0:
-        fitness *= 0.5
+    # Zarar varsa direkt ele (negatif puan)
+    if adj_profit <= 0: return -99999 + adj_profit
     
-    # DD ceza
-    if max_dd > 0:
-        dd_ratio = max_dd / initial_capital
-        fitness *= (1 - min(0.5, dd_ratio))
+    score = adj_profit
     
-    # Trade count
-    if trades < 20:
-        fitness *= 0.3
-    elif trades < 50:
-        fitness *= 0.7
-    elif trades > 500:
-        fitness *= 0.8
+    # --- PROFIT FACTOR FILTRESI (Kullanıcı: "1.5 altı olmaz, 2.0 üstü şüpheli") ---
+    if pf < 1.3:
+        score *= 0.1 # Ölü
+    elif pf < 1.5:
+        score *= 0.4 # Zayıf
+    elif pf > 3.0: 
+        score *= 0.8 # Aşırı yüksek PF (Overfit şüphesi) - Eskiden 2.5 idi, biraz gevşettik
+    else:
+        # 1.5 - 3.0 arası: En sevdiğimiz bölge
+        score *= 1.2 
+        
+    # --- OVERTRADING FILTRESI ---
+    if trades > 1500:
+        score *= (1500 / trades) ** 2 # Çok sert düşüş
+    elif trades < 50: # Alt limit
+        score *= 0.5 # İstatistiksel olarak anlamsız
+        
+    # --- DRAWDOWN FILTRESI ---
+    if max_dd > (initial_capital * 0.25):
+        score *= 0.5
+        
+    # --- AVG PROFIT FILTRESI ---
+    avg_pnl = adj_profit / trades if trades > 0 else 0
+    if avg_pnl < 15.0: # En az 15 puan işlem başı kar
+        score *= (avg_pnl / 15.0) 
+
+    # --- SHARPE RATIO BONUSU ---
+    if sharpe > 2.0:
+        score *= 1.15 # %15 Bonus (Yüksek risk/getiri kalitesi)
+    elif sharpe > 1.5:
+        score *= 1.05 # %5 Bonus
+    elif sharpe < 0.5:
+        score *= 0.9 # Düşük Sharpe cezası
+
+    return score
+
+def calculate_sharpe(returns: np.array, risk_free=0.0) -> float:
+    """Sharpe Oranı hesapla (Yıllıklandırılmış)"""
+    if len(returns) < 2: return 0.0
     
-    # Avg trade
-    avg_trade = net_profit / trades if trades > 0 else 0
-    if avg_trade < 30:
-        fitness *= 0.5
-    elif avg_trade < 50:
-        fitness *= 0.8
+    excess_returns = returns - risk_free/252
+    mean_excess = np.mean(excess_returns)
+    std_excess = np.std(excess_returns, ddof=1)
     
-    return fitness
+    if std_excess == 0: return 0.0
+    
+    # Günlük veriden yıllık Sharpe (karekök 252)
+    # Eğer trade bazlı ise trade sayısı üzerinden normalize edilmeli
+    # Biz burada basitçe mean/std * sqrt(N) kullanıyoruz
+    return (mean_excess / std_excess) * np.sqrt(len(returns))
 
 
 # Test

@@ -1,0 +1,209 @@
+//************* ROBOT: GERÇEK VİOP POZİSYON TAKİP & TELEGRAM BİLDİRİM V3 *************
+// KURULUM:
+// 1. Bu kodu Robot olarak kaydedin.
+// 2. iDeal Ana Menü -> Portföy -> Robot (veya Sanal Portföy) penceresini açın.
+// 3. Robotu seçin ve periyodu "1 Dakika" (veya daha sık) olarak ayarlayın.
+// 4. "Başlat" butonuna basın.
+
+// AYARLAR
+System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls12;
+var ApiToken = "8581068218:AAEcQ7_-Bl38JeIs1ifpvZusm4QXBz_uFBY";
+var ChatIdMain = "-1003352024161";
+var RaporGondermeAraligiDakika = 15;
+
+// Dosya Yolları
+string DosyaDebug = "C:\\iDeal\\VIOP_Pozisyon_Debug.txt";
+
+// Helper: Dosyaya Güvenli Yazma
+Action<string, string, bool> DosyayaYaz = (dosya, icerik, append) => {
+    for (int i = 0; i < 5; i++)
+    {
+        try
+        {
+            if (append) System.IO.File.AppendAllText(dosya, icerik);
+            else System.IO.File.WriteAllText(dosya, icerik);
+            break;
+        }
+        catch { System.Threading.Thread.Sleep(50); }
+    }
+};
+
+var Now = DateTime.Now;
+
+// ÖNEMLİ: Robot çok sık çalışıyorsa throttle uygula
+var KeyLastRun = "Viop_LastRun";
+var LastRunObj = Sistem.NesneGetir(KeyLastRun);
+DateTime LastRun = LastRunObj == null ? DateTime.MinValue : (DateTime)LastRunObj;
+
+// 5 saniyeden daha kısa sürede tekrar çalışmasını engelle
+if ((Now - LastRun).TotalSeconds < 5)
+{
+    return null;
+}
+Sistem.NesneKaydet(KeyLastRun, Now);
+
+// --- VIOP HESAP BİLGİLERİNİ OKU ---
+var ViopHesap = Sistem.ViopHesapOku();
+
+if (ViopHesap == null)
+{
+    return null; // Sessizce çık, log spam yapma
+}
+
+// --- HESAP BİLGİLERİ ---
+var ToplamTeminat = ViopHesap.TeminatToplam;
+var KullanilabilirTeminat = ViopHesap.TeminatKullanilabilir;
+var CekilebilirTeminat = ViopHesap.TeminatCekilebilir;
+
+// --- GERÇEKLEŞEN EMİR BİLDİRİMİ (Dakikada Bir Kontrol) ---
+var KeyLastOrderCheck = "Viop_LastOrderCheck";
+var LastOrderCheckObj = Sistem.NesneGetir(KeyLastOrderCheck);
+DateTime LastOrderCheck = LastOrderCheckObj == null ? DateTime.MinValue : (DateTime)LastOrderCheckObj;
+
+// En az 1 dakika geçtiyse
+if ((Now - LastOrderCheck).TotalSeconds >= 60)
+{
+    Sistem.NesneKaydet(KeyLastOrderCheck, Now);
+    DosyayaYaz(DosyaDebug, Now + " DEBUG: Emir kontrolü yapılıyor...\r\n", true);
+
+    try
+    {
+        var GerceklesenList = ViopHesap.GerceklesenEmirler;
+
+        if (GerceklesenList != null && GerceklesenList.Count > 0)
+        {
+            DosyayaYaz(DosyaDebug, Now + " INFO: " + GerceklesenList.Count + " adet gerçekleşen emir bulundu.\r\n", true);
+
+            // Cache: String olarak saklıyoruz
+            var KeyBildirilenEmirler = "Viop_Bildirilen_Emirler_Str_V3";
+            var BildirilenEmirlerStr = Sistem.NesneGetir(KeyBildirilenEmirler) as string;
+            if (BildirilenEmirlerStr == null) BildirilenEmirlerStr = "";
+
+            bool yeniBildirimVar = false;
+
+            for (int i = 0; i < GerceklesenList.Count; i++)
+            {
+                var emir = GerceklesenList[i];
+                
+                // EmirNo unique ID olarak kullanılır
+                string emirId = emir.OrderNo.ToString();
+                
+                // Delimiter ile güvenli kontrol
+                string aramaPattern = "|" + emirId + "|";
+                string cacheStr = "|" + BildirilenEmirlerStr + "|";
+                bool dahaOnceBildirildi = cacheStr.Contains(aramaPattern);
+
+                if (!dahaOnceBildirildi)
+                {
+                    try
+                    {
+                        // FIX: Tüm değerleri direkt string olarak al (format kullanma!)
+                        string sembol = emir.Symbol.ToString();
+                        string yon = emir.BuySell.ToString();
+                        string fiyat = emir.Price.ToString(); // Format YOK!
+                        string zaman = emir.OrderDate.ToString(); // Format YOK!
+                        
+                        // Miktar için farklı property dene
+                        string miktar = "1";
+                        try { miktar = emir.GerAmount.ToString(); } catch { }
+                        try { miktar = emir.Amount.ToString(); } catch { }
+
+                        string mesaj = "🔔 <b>EMİR GERÇEKLEŞTİ</b>\n\n";
+                        mesaj += "🔹 <b>" + sembol + "</b>\n";
+                        mesaj += "▪️ Yön: <b>" + yon + "</b>\n";
+                        mesaj += "▪️ Miktar: <b>" + miktar + "</b>\n";
+                        mesaj += "▪️ Fiyat: <b>" + fiyat + "</b>\n";
+                        mesaj += "▪️ Zaman: " + zaman + "\n";
+                        mesaj += "▪️ Emir No: " + emirId;
+
+                        // Telegram Gönder
+                        string url = "https://api.telegram.org/bot" + ApiToken + "/sendMessage?chat_id=" + ChatIdMain + "&text=" + System.Uri.EscapeDataString(mesaj) + "&parse_mode=HTML";
+                        System.Net.WebRequest.Create(url).GetResponse().Close();
+
+                        DosyayaYaz(DosyaDebug, Now + " SUCCESS: Emir bildirimi gonderildi: " + emirId + "\r\n", true);
+
+                        // Cache'e ekle
+                        if (BildirilenEmirlerStr.Length > 0) BildirilenEmirlerStr += "|";
+                        BildirilenEmirlerStr += emirId;
+                        yeniBildirimVar = true;
+                    }
+                    catch (Exception exEmir)
+                    {
+                        DosyayaYaz(DosyaDebug, Now + " ERROR Emir Bildirimi: " + exEmir.Message + "\r\n", true);
+                    }
+                }
+            }
+            
+            if (yeniBildirimVar)
+            {
+                // String çok uzarsa eski emirleri temizle
+                if (BildirilenEmirlerStr.Length > 5000)
+                {
+                    BildirilenEmirlerStr = BildirilenEmirlerStr.Substring(BildirilenEmirlerStr.Length - 4000);
+                }
+                Sistem.NesneKaydet(KeyBildirilenEmirler, BildirilenEmirlerStr);
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        DosyayaYaz(DosyaDebug, Now + " ERROR Emir Takip: " + ex.Message + "\r\n", true);
+    }
+}
+
+// --- POZİSYONLARI OKU ---
+var Pozisyonlar = ViopHesap.Pozisyonlar;
+
+// --- TELEGRAM RAPORU ---
+var KeyLastTelegram = "ViopPozTakip_LastTelegram";
+var LastTelegramObj = Sistem.NesneGetir(KeyLastTelegram);
+DateTime LastTelegram = LastTelegramObj == null ? DateTime.MinValue : (DateTime)LastTelegramObj;
+
+bool RaporZamaniGeldi = (Now - LastTelegram).TotalMinutes >= RaporGondermeAraligiDakika;
+
+if (RaporZamaniGeldi && Pozisyonlar != null && Pozisyonlar.Count > 0)
+{
+    Sistem.NesneKaydet(KeyLastTelegram, Now);
+    try
+    {
+        string mesaj = "📊 <b>VIOP POZİSYON RAPORU</b>\n\n";
+        mesaj += "⏰ " + Now.ToString("HH:mm") + "\n";
+        mesaj += "━━━━━━━━━━━━━━━━━━━━\n\n";
+
+        mesaj += "💰 <b>HESAP BİLGİLERİ</b>\n";
+        mesaj += "├ Toplam Teminat: " + ToplamTeminat.ToString("N0") + " TL\n";
+        mesaj += "├ Kullanılabilir: " + KullanilabilirTeminat.ToString("N0") + " TL\n";
+        mesaj += "└ Çekilebilir: " + CekilebilirTeminat.ToString("N0") + " TL\n\n";
+
+        mesaj += "📈 <b>AÇIK POZİSYONLAR (" + Pozisyonlar.Count + ")</b>\n";
+        mesaj += "<pre>";
+
+        decimal toplamAnlikKZ = 0;
+        for (int i = 0; i < Pozisyonlar.Count; i++)
+        {
+            var poz = Pozisyonlar[i];
+            string sembol = poz.Symbol.Replace("VIP'VIP-", "").Replace("VIP'", "");
+            double netMiktar = poz.NetAmount;
+            decimal anlikKZ = poz.ProfitAnlik;
+            string yon = netMiktar > 0 ? "L" : "S";
+
+            mesaj += sembol.PadRight(10) + " " + yon + " " + Math.Abs(netMiktar).ToString("0").PadLeft(3) + " ";
+            mesaj += (anlikKZ >= 0 ? "+" : "") + anlikKZ.ToString("0").PadLeft(6) + "₺\n";
+
+            toplamAnlikKZ += anlikKZ;
+        }
+        mesaj += "━━━━━━━━━━━━━━━━━━━━━━\n";
+        mesaj += "TOPLAM K/Z: " + (toplamAnlikKZ >= 0 ? "+" : "") + toplamAnlikKZ.ToString("N0") + "₺";
+        mesaj += "</pre>\n\n";
+        mesaj += "<i>" + RaporGondermeAraligiDakika + " dk güncellenir</i>";
+
+        string url = "https://api.telegram.org/bot" + ApiToken + "/sendMessage?chat_id=" + ChatIdMain + "&text=" + System.Uri.EscapeDataString(mesaj) + "&parse_mode=HTML";
+        System.Net.WebRequest.Create(url).GetResponse().Close();
+    }
+    catch (Exception ex)
+    {
+        DosyayaYaz(DosyaDebug, Now + " ERROR Telegram: " + ex.Message + "\r\n", true);
+    }
+}
+
+return null;

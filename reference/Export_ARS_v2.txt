@@ -1,0 +1,84 @@
+
+// =============================================================================
+// ARS Trend v2 - İndikatör ve Sinyal Export (Doğrulama İçin)
+// =============================================================================
+// Bu kodu IdealData'da yeni bir sistem olarak kaydedip 1DK grafikte çalıştırın.
+// Çıktı dosyası: D:\iDeal\ideal_ars_v2_data.csv
+// =============================================================================
+
+var V = Sistem.GrafikVerileri;
+var O = Sistem.GrafikFiyatSec("Acilis");
+var H = Sistem.GrafikFiyatSec("Yuksek");
+var L = Sistem.GrafikFiyatSec("Dusuk");
+var C = Sistem.GrafikFiyatSec("Kapanis");
+var T = Sistem.GrafikFiyatSec("Tipik");
+
+// --- 1DK PARAMETRELERİ (Strateji_ARS_Trend_v2.txt ile aynı) ---
+int ARS_EMA_Period = 3;
+int ARS_ATR_Period = 10;
+double ARS_ATR_Mult = 0.5;
+double ARS_Min_Band = 0.002;
+double ARS_Max_Band = 0.015;
+
+int MOMENTUM_Period = 5;
+int BREAKOUT_Period = 10;
+
+// --- İNDİKATÖR HESAPLAMA ---
+
+// 1. ARS (Dynamic)
+var ATR = Sistem.AverageTrueRange(ARS_ATR_Period);
+var ARS_EMA = Sistem.MA(T, "Exp", ARS_EMA_Period);
+var ARS = Sistem.Liste(0);
+
+for (int i = 1; i < Sistem.BarSayisi; i++)
+{
+    float dinamikK = (ATR[i] / ARS_EMA[i]) * (float)ARS_ATR_Mult;
+    dinamikK = Math.Max((float)ARS_Min_Band, Math.Min((float)ARS_Max_Band, dinamikK));
+    
+    float altBand = ARS_EMA[i] * (1 - dinamikK);
+    float ustBand = ARS_EMA[i] * (1 + dinamikK);
+    
+    if (altBand > ARS[i - 1]) ARS[i] = altBand;
+    else if (ustBand < ARS[i - 1]) ARS[i] = ustBand;
+    else ARS[i] = ARS[i - 1];
+    
+    float roundStep = Math.Max(0.01f, ATR[i] * 0.1f);
+    ARS[i] = Sistem.SayiYuvarla(ARS[i], roundStep);
+}
+
+// 2. Diğerleri
+var Momentum = Sistem.Momentum(MOMENTUM_Period);
+var HHV = Sistem.HHV(BREAKOUT_Period);
+var LLV = Sistem.LLV(BREAKOUT_Period);
+var RSI = Sistem.RSI(14);
+
+// --- DOSYAYA YAZMA ---
+var sb = new System.Text.StringBuilder();
+sb.AppendLine("Date;Time;Close;ARS;Momentum;HHV;LLV;RSI");
+
+// Son 5000 bar yeterli olur
+int start = Math.Max(50, Sistem.BarSayisi - 5000);
+
+for (int i = start; i < Sistem.BarSayisi; i++)
+{
+    string date = V[i].Date.ToString("dd.MM.yyyy");
+    string time = V[i].Date.ToString("HH:mm");
+    
+    sb.Append(date + ";" + time + ";");
+    sb.Append(C[i].ToString("0.00").Replace(",", ".") + ";");
+    sb.Append(ARS[i].ToString("0.000000").Replace(",", ".") + ";");  // 6 decimal precision for accurate comparison
+    sb.Append(Momentum[i].ToString("0.00").Replace(",", ".") + ";");
+    sb.Append(HHV[i].ToString("0.00").Replace(",", ".") + ";");
+    sb.Append(LLV[i].ToString("0.00").Replace(",", ".") + ";");
+    sb.Append(RSI[i].ToString("0.00").Replace(",", "."));
+    sb.AppendLine();
+}
+
+string path = @"D:\Projects\IdealQuant\data\ideal_ars_v2_data.csv";
+// Klasör yoksa hata verebilir, D:\iDeal\ altına da yazabiliriz ama proje yapısına uygun olsun
+try {
+    System.IO.File.WriteAllText(path, sb.ToString());
+    Sistem.Mesaj("OK: " + path);
+} catch (Exception ex) {
+    Sistem.Mesaj("Hata: " + ex.Message);
+}

@@ -1,0 +1,53 @@
+// Bu robot örnek amaçlı oluşturulmuştur. Kullanım sorumluluğu tamamen kullanıcıya aittir. Oluşacak sorunlardan İDealdata sorumlu tutulamaz.
+// DİKKAT!!! Robotlarınız için mutlaka sanal modda gerekli testlerin yapmayı unutmayın!!!
+// DİKKAT!!! Robotlarınızın düzgün çalıştığına emin olmadan gerçek modda çalıştırmayın!!!
+// DİKKAT!!!Aksi belirtilmedikçe tüm robotlar "PİYASA"(fiyatsız, bulduğu en iyi fiyattan eşleşerek) emir iletir!!!
+// Robot dosyaları portföy içerisindeki "Robot" sekmesinden sanal veya gerçek modda(emir iletimi) çalıştırılabilir.
+// Bu örnek robot kodu seçilen sisteme bakarak belirtilen periyot için belirtilen lot miktarı kadar işlem yapar. 
+// Robot içeriği istenildiği gibi düzenlenebilir.
+
+var LotSize = 1; //işlem adedi
+
+var MySistem = Sistem.SistemGetir("MA", "VIP'VIP-GARAN", "5"); //sistemin adı, grafik sembolü, grafiğin periyodu
+if (MySistem == null) 
+{
+   Sistem.Mesaj(Sistem.Name + "Hatalı Çalışıyor !");
+}
+else
+{
+   var EmirSembol = "VIP'VIP-GARAN";
+   var SonFiyat = Sistem.SonFiyat(EmirSembol);
+   var Anahtar = Sistem.Name + "," + EmirSembol;
+   double IslemFiyat = 0;
+   DateTime IslemTarih;
+   var Miktar = 0.0;
+   var Rezerv = "";
+   var Pozisyon = Sistem.PozisyonKontrolOku(Anahtar, out IslemFiyat, out IslemTarih);
+
+   var SonYon = MySistem.SonYon;//canlı bara dikkat!!!
+   if (Sistem.Saat.CompareTo("09:30:00") <= 0 || Sistem.Saat.CompareTo("18:14:59") >= 0)  // seans yok işlem yapma
+   {
+   }
+   else if (SonYon == "F" && Pozisyon != 0)  // Flata Geç
+      Miktar = -Pozisyon;
+   else if (SonYon == "A" && Pozisyon != LotSize)  // Al
+      Miktar = LotSize - Pozisyon;
+   else if (SonYon == "S" && Pozisyon != -LotSize)  // Sat
+      Miktar = -LotSize - Pozisyon;
+    // Emir Gönder
+    var Islem = "";
+    if (Miktar > 0) {Islem = "ALIS"; Rezerv = "ALIŞ YAPILDI";}
+    if (Miktar < 0) {Islem = "SATIS"; Rezerv = "SATIŞ YAPILDI";}
+    if (Islem != "")
+    {
+        Sistem.PozisyonKontrolGuncelle(Anahtar, Miktar + Pozisyon, SonFiyat, Rezerv);
+        Sistem.EmirSembol = EmirSembol ;
+        Sistem.EmirIslem = Islem;
+        Sistem.EmirSuresi = "KIE"; // GUN, KIE, IKG
+        Sistem.EmirTipi = "Piyasa"; // Piyasa, Limitli, Piyasadan Limite
+        Sistem.EmirMiktari = Math.Abs(Miktar);
+        Sistem.EmirGonder();
+    }
+}
+
+

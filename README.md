@@ -24,10 +24,12 @@ Trading Strategy Backtesting, Optimization, and Robust Parameter Selection Suite
 - 10-100x faster than IdealData
 
 ### 3. Robust Parameter Selector
-- Walk-Forward Analysis
+- **Smart Fitness Scoring** (PF, R², Stability)
+- Walk-Forward Analysis (70/30 Split)
 - Parameter Stability Scoring
 - Monte Carlo Simulation
 - Overfitting Detection
+- **Anti-Overtrading Guard**
 
 ## 📁 Project Structure
 

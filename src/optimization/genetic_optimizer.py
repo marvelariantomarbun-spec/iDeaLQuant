@@ -16,7 +16,7 @@ import pandas as pd
 from time import time
 from multiprocessing import Pool, cpu_count
 from dataclasses import dataclass
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any, Optional, Callable
 import random
 
 # Proje kök dizini
@@ -58,7 +58,7 @@ STRATEGY1_PARAMS = {
     'macdv_short': (8, 18, 1, True),
     'macdv_long': (20, 40, 2, True),
     'macdv_signal': (5, 15, 1, True),
-    'macdv_threshold': (-50.0, 50.0, 10.0, False),
+    'macdv_threshold': (0.0, 5.0, 0.5, False),  # MACDV sinyal farkı eşiği (gerçekçi aralık)
     # NetLot
     'netlot_period': (3, 10, 1, True),
     'netlot_threshold': (10.0, 50.0, 5.0, False),
@@ -104,18 +104,61 @@ STRATEGY2_PARAMS = {
     'volume_llv_period': (10, 21, 2, True),
 }
 
+# ARS Pulse Strategy (Strict Gatekeeper) - Strategy 3
+STRATEGY3_PARAMS = {
+    'ema_period': (1, 1000, 1, True),
+    'k_value': (0.1, 10.0, 0.1, False),
+    'macdv_k': (8, 21, 1, True),
+    'macdv_u': (20, 45, 1, True),
+    'macdv_sig': (5, 15, 1, True),
+    'netlot_period': (3, 10, 1, True),
+    'adx_th': (15, 45, 5, True),
+    'netlot_th': (5, 45, 5, True),
+}
+
 
 class ParameterSpace:
     """Parametre uzayı tanımı - Her iki strateji için"""
-    def __init__(self, strategy_index: int = 1):
+    def __init__(self, strategy_index: int = 1, narrowed_ranges: dict = None):
         """
         Args:
-            strategy_index: 0 = Strateji 1 (Gatekeeper), 1 = Strateji 2 (ARS Trend v2)
+            strategy_index: 0=Gatekeeper, 1=ARS Trend v2, 2=ARS Pulse
+            narrowed_ranges: Cascade modunda dar araliklar {param_name: (min, max)}
         """
         self.strategy_index = strategy_index
-        self.params = STRATEGY1_PARAMS if strategy_index == 0 else STRATEGY2_PARAMS
+        # Orijinal parametreleri kopyala
+        if strategy_index == 0:
+            base_params = STRATEGY1_PARAMS
+        elif strategy_index == 1:
+            base_params = STRATEGY2_PARAMS
+        else:
+            base_params = STRATEGY3_PARAMS
+            
+        self.params = {k: list(v) for k, v in base_params.items()}  # Mutable copy
+        
+        # Cascade: Dar aralik varsa uygula
+        if narrowed_ranges:
+            self._apply_narrowed_ranges(narrowed_ranges)
+        
         self.param_names = list(self.params.keys())
         self.n_params = len(self.param_names)
+    
+    def _apply_narrowed_ranges(self, narrowed_ranges: dict):
+        """Cascade modunda dar araliklari uygula"""
+        for param_name, (new_min, new_max) in narrowed_ranges.items():
+            if param_name in self.params:
+                original = self.params[param_name]
+                # original: [min, max, step, is_int]
+                orig_min, orig_max, step, is_int = original
+                
+                # Yeni araligi orijinal sinirlar icinde tut
+                final_min = max(new_min, orig_min)
+                final_max = min(new_max, orig_max)
+                
+                # Gecerlilik kontrolu
+                if final_min <= final_max:
+                    self.params[param_name] = [final_min, final_max, step, is_int]
+                    print(f"  [CASCADE] {param_name}: [{orig_min:.4g}-{orig_max:.4g}] => [{final_min:.4g}-{final_max:.4g}]")
         
     def random_individual(self) -> np.ndarray:
         """Rastgele birey oluştur"""
@@ -144,7 +187,9 @@ class ParameterSpace:
                 if random.random() < 0.5:
                     # Küçük mutasyon
                     delta = step * random.choice([-1, 1])
-                    new_genes[i] = np.clip(new_genes[i] + delta, min_val, max_val)
+                    new_val = np.clip(new_genes[i] + delta, min_val, max_val)
+                    # Period parametreleri için integer zorunluluğu
+                    new_genes[i] = int(round(new_val)) if is_int else new_val
                 else:
                     # Tamamen yeni değer
                     if is_int:
@@ -153,6 +198,7 @@ class ParameterSpace:
                         n_steps = int((max_val - min_val) / step) + 1
                         new_genes[i] = min_val + random.randint(0, n_steps - 1) * step
         return new_genes
+
     
     def crossover(self, parent1: np.ndarray, parent2: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """İki noktalı çaprazlama"""
@@ -176,27 +222,42 @@ class ParameterSpace:
 class FitnessEvaluator:
     """Fitness değerlendirici - Her iki strateji için backtest wrapper"""
     
-    def __init__(self, df: pd.DataFrame, strategy_index: int = 1):
+    def __init__(self, df: pd.DataFrame, strategy_index: int = 1, commission: float = 0.0, slippage: float = 0.0):
         """
         Args:
             df: Veri DataFrame'i
             strategy_index: 0 = Strateji 1 (Gatekeeper), 1 = Strateji 2 (ARS Trend v2)
+            commission: İşlem başı komisyon
+            slippage: İşlem başı kayma
         """
         self.df = df
         self.strategy_index = strategy_index
-        self.opens = df['Acilis'].values
-        self.highs = df['Yuksek'].values
-        self.lows = df['Dusuk'].values
-        self.closes = df['Kapanis'].values
-        self.typical = df['Tipik'].values
-        self.volumes = df['Lot'].values
+        self.commission = commission
+        self.slippage = slippage
+        
+        # Hem İngilizce hem Türkçe kolon isimlerini destekle
+        open_col = 'Acilis' if 'Acilis' in df.columns else 'Open'
+        high_col = 'Yuksek' if 'Yuksek' in df.columns else 'High'
+        low_col = 'Dusuk' if 'Dusuk' in df.columns else 'Low'
+        close_col = 'Kapanis' if 'Kapanis' in df.columns else 'Close'
+        vol_col = 'Lot' if 'Lot' in df.columns else 'Volume'
+        
+        self.opens = df[open_col].to_numpy().flatten()
+        self.highs = df[high_col].to_numpy().flatten()
+        self.lows = df[low_col].to_numpy().flatten()
+        self.closes = df[close_col].to_numpy().flatten()
+        self.typical = df['Tipik'].values.flatten() if 'Tipik' in df.columns else ((df[high_col] + df[low_col] + df[close_col]) / 3).values.flatten()
+        self.volumes = df[vol_col].values.flatten()
+        self.lots = df[vol_col].values.flatten()
         self.n = len(self.closes)
         
         # Tarih bilgisi
         if 'DateTime' in df.columns:
             self.dates = df['DateTime'].tolist()
+            self.times = df['DateTime'].tolist()
         else:
             self.dates = None
+            self.times = None
         
         # Cache for indicators
         self._indicator_cache = {}
@@ -211,71 +272,105 @@ class FitnessEvaluator:
         try:
             if self.strategy_index == 0:
                 return self._evaluate_strategy1(params)
-            else:
+            elif self.strategy_index == 1:
                 return self._evaluate_strategy2(params)
+            else:
+                return self._evaluate_strategy3(params)
         except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"DEBUG: Genetic Eval Failed: {str(e)}")
             return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'fitness': -999999}
+
+    def _evaluate_strategy3(self, params: Dict[str, Any]) -> Dict[str, float]:
+        """Strateji 3 (ARS Pulse) için fitness hesapla"""
+        from src.strategies.ars_pulse_strategy import ARSPulseStrategy
+        from src.optimization.hybrid_group_optimizer import fast_backtest
+        from src.optimization.fitness import quick_fitness
+        
+        # Data preparation for ARSPulseStrategy
+        closes = self.closes
+        highs = self.highs
+        lows = self.lows
+        opens = self.opens
+        df = pd.DataFrame({
+            'Kapanis': closes,
+            'Yuksek': highs,
+            'Dusuk': lows,
+            'Acilis': opens
+        })
+        
+        # Run Strategy
+        strat = ARSPulseStrategy(**params)
+        signals, _ = strat.run(df)
+        
+        # Convert signals to entry/exit for fast_backtest
+        # (This is a simplification, ARSPulseStrategy.run already handles the state machine)
+        # But fast_backtest expects raw signals + exits.
+        # Actually, ARSPulseStrategy returns position signals (1, -1, 0).
+        # We need to adapt it for the core backtest engine.
+        
+        # Position-to-Trade calculation logic
+        np_val, trades, pf, dd, sharpe = fast_backtest(closes, signals, (signals == 0), (signals == 0), self.commission, self.slippage)
+        
+        fitness = quick_fitness(
+            np_val, pf, dd, trades,
+            initial_capital=10000.0,
+            commission=self.commission,
+            slippage=self.slippage
+        )
+        
+        return {
+            'net_profit': np_val,
+            'trades': trades,
+            'pf': pf,
+            'max_dd': dd,
+            'fitness': fitness
+        }
     
     def _evaluate_strategy1(self, params: Dict[str, Any]) -> Dict[str, float]:
         """Strateji 1 (Gatekeeper) için fitness hesapla"""
-        from src.strategies.score_based import ScoreBasedStrategy, ScoreConfig
+        from src.strategies.score_based import ScoreBasedStrategy
+        from src.optimization.hybrid_group_optimizer import fast_backtest
+        from src.optimization.fitness import quick_fitness
         
-        # ScoreConfig oluştur
-        config = ScoreConfig(
-            ars_period=int(params.get('ars_period', 3)),
-            ars_k=float(params.get('ars_k', 0.01)),
-            adx_period=int(params.get('adx_period', 17)),
-            adx_threshold=float(params.get('adx_threshold', 25.0)),
-            macdv_short=int(params.get('macdv_short', 13)),
-            macdv_long=int(params.get('macdv_long', 28)),
-            macdv_signal=int(params.get('macdv_signal', 8)),
-            macdv_threshold=float(params.get('macdv_threshold', 0.0)),
-            netlot_period=int(params.get('netlot_period', 5)),
-            netlot_threshold=float(params.get('netlot_threshold', 20.0)),
-            ars_mesafe_threshold=float(params.get('ars_mesafe_threshold', 0.25)),
-            bb_period=int(params.get('bb_period', 20)),
-            bb_std=float(params.get('bb_std', 2.0)),
-            bb_width_multiplier=float(params.get('bb_width_multiplier', 0.8)),
-            bb_avg_period=int(params.get('bb_avg_period', 50)),
-            yatay_ars_bars=int(params.get('yatay_ars_bars', 10)),
-            yatay_adx_threshold=float(params.get('yatay_adx_threshold', 20.0)),
-            filter_score_threshold=int(params.get('filter_score_threshold', 2)),
-            min_score=int(params.get('min_score', 3)),
-            exit_score=int(params.get('exit_score', 3)),
+        # Kendi cache'imizi oluştur (from_config_dict için)
+        class SimpleCache:
+            def __init__(self, evaluator):
+                self.opens = evaluator.opens
+                self.highs = evaluator.highs
+                self.lows = evaluator.lows
+                self.closes = evaluator.closes
+                self.typical = evaluator.typical
+                self.lots = evaluator.volumes
+                self.volumes = evaluator.volumes
+                self.dates = evaluator.dates
+                self.times = evaluator.dates
+                self.n = evaluator.n
+                self.df = evaluator.df
+        
+        cache = SimpleCache(self)
+        
+        # Strateji oluştur ve sinyal üret
+        strategy = ScoreBasedStrategy.from_config_dict(cache, params)
+        signals, exits_long, exits_short = strategy.generate_all_signals()
+        
+        # Backtest
+        np_val, trades, pf, dd, sharpe = fast_backtest(self.closes, signals, exits_long, exits_short, self.commission, self.slippage)
+        
+        # Fitness hesapla (fitness.py'deki standart mantık)
+        fitness = quick_fitness(
+            np_val, pf, dd, trades, 
+            initial_capital=10000.0,
+            commission=self.commission,
+            slippage=self.slippage
         )
-        
-        # Strateji çalıştır
-        strategy = ScoreBasedStrategy(
-            opens=self.opens.tolist(),
-            highs=self.highs.tolist(),
-            lows=self.lows.tolist(),
-            closes=self.closes.tolist(),
-            volumes=self.volumes.tolist(),
-            dates=self.dates,
-            config=config
-        )
-        
-        result = strategy.run_backtest()
-        
-        # Fitness hesapla
-        net_profit = result.get('net_profit', 0)
-        pf = result.get('profit_factor', 0)
-        max_dd = result.get('max_drawdown', 0)
-        trades = result.get('total_trades', 0)
-        
-        fitness = net_profit
-        if pf > 1.5:
-            fitness *= (1 + (pf - 1) * 0.1)
-        if max_dd > 0:
-            fitness *= (1 - min(0.5, max_dd / 10000))
-        if trades < 10:
-            fitness *= 0.5
         
         return {
-            'net_profit': net_profit,
+            'net_profit': np_val,
             'trades': trades,
             'pf': pf,
-            'max_dd': max_dd,
+            'max_dd': dd,
             'fitness': fitness
         }
     
@@ -358,7 +453,8 @@ class FitnessEvaluator:
     def _run_backtest_s2(self, ars, atr, dinamikK, mom, hhv, llv,
                       mfi, mfi_hhv, mfi_llv, vol_hhv,
                       atr_sl, atr_tp, atr_trail,
-                      exit_confirm_bars, exit_confirm_mult, volume_mult, brk_p) -> Dict[str, float]:
+                      exit_confirm_bars, exit_confirm_mult, volume_mult, brk_p,
+                      commission: float = 0.0, slippage: float = 0.0) -> Dict[str, float]:
         """Strateji 2 için hızlı backtest"""
         n = self.n
         closes = self.closes
@@ -389,6 +485,10 @@ class FitnessEvaluator:
         
         current_trend = 0
         warmup = max(brk_p, 60)
+        
+        # Sharpe hesabı için getirileri tut
+        trade_returns = []
+
         
         for i in range(warmup, n):
             if trend[i] != 0:
@@ -427,6 +527,8 @@ class FitnessEvaluator:
                 
                 if exit_signal:
                     pnl = closes[i] - entry_price
+                    trade_returns.append(pnl)
+
                     if pnl > 0:
                         gross_profit += pnl
                     else:
@@ -471,6 +573,8 @@ class FitnessEvaluator:
                 
                 if exit_signal:
                     pnl = entry_price - closes[i]
+                    trade_returns.append(pnl)
+
                     if pnl > 0:
                         gross_profit += pnl
                     else:
@@ -515,15 +619,25 @@ class FitnessEvaluator:
                         bars_against_trend = 0
                         trades += 1
         
-        net_profit = gross_profit - gross_loss
-        pf = (gross_profit / gross_loss) if gross_loss > 0 else 999
+        # Maliyetleri düş
+        cost_per_trade = commission + slippage
+        net_profit = gross_profit - gross_loss - (trades * cost_per_trade)
+        pf = (gross_profit / (gross_loss + trades * cost_per_trade)) if (gross_loss + trades * cost_per_trade) > 0 else 999
         
-        # Fitness hesapla (çok faktörlü)
-        fitness = net_profit
-        if pf > 1.5:
-            fitness *= (1 + (pf - 1) * 0.1)
-        if max_dd > 0:
-            fitness *= (1 - min(0.5, max_dd / 10000))
+        # Fitness hesapla (fitness.py'deki standart mantık)
+        # Sharpe hesapla
+        from src.optimization.fitness import quick_fitness, calculate_sharpe
+        sharpe = 0.0
+        if len(trade_returns) > 1:
+            sharpe = calculate_sharpe(np.array(trade_returns))
+
+        fitness = quick_fitness(
+            net_profit + (trades * cost_per_trade), # quick_fitness'a brüt karı veriyoruz, o maliyeti düşecek
+            pf, max_dd, trades,
+            sharpe=sharpe,
+            commission=commission,
+            slippage=slippage
+        )
         if trades < 10:
             fitness *= 0.5
         
@@ -539,29 +653,54 @@ class FitnessEvaluator:
 # ==============================================================================
 # GENETIC ALGORITHM ENGINE
 # ==============================================================================
+# Global variable for pool workers to avoid data copying (pickling)
+_global_evaluator: Optional['FitnessEvaluator'] = None
+
+def _init_pool(df, strategy_index, commission=0.0, slippage=0.0):
+    global _global_evaluator
+    _global_evaluator = FitnessEvaluator(df, strategy_index, commission, slippage)
+
+def _evaluate_individual(individual_and_param_space):
+    individual, param_space = individual_and_param_space
+    params = param_space.decode(individual)
+    result = _global_evaluator.evaluate(params)
+    return individual, result
+
 class GeneticOptimizer:
     """Genetik Algoritma Optimizasyon Motoru - Her iki strateji için"""
     
-    def __init__(self, df: pd.DataFrame, config: Optional[GeneticConfig] = None, strategy_index: int = 1):
+    def __init__(self, df: pd.DataFrame, config: Optional[GeneticConfig] = None, 
+                 strategy_index: int = 1, n_parallel: int = 4,
+                 commission: float = 0.0, slippage: float = 0.0,
+                 is_cancelled_callback: Optional[Callable[[], bool]] = None,
+                 narrowed_ranges: dict = None):
         """
         Args:
             df: Veri DataFrame'i
             config: Genetik algoritma konfigürasyonu
             strategy_index: 0 = Strateji 1, 1 = Strateji 2
+            n_parallel: Paralel işlem sayısı
+            narrowed_ranges: Cascade modu için dar parametre aralıkları
         """
         self.df = df
         self.config = config or GeneticConfig()
         self.strategy_index = strategy_index
-        self.param_space = ParameterSpace(strategy_index)
-        self.evaluator = FitnessEvaluator(df, strategy_index)
+        self.n_parallel = n_parallel
+        self.commission = commission
+        self.slippage = slippage
+        self.param_space = ParameterSpace(strategy_index, narrowed_ranges)  # Cascade destegi
+        self.evaluator = FitnessEvaluator(df, strategy_index, commission, slippage)
+        self.is_cancelled_callback = is_cancelled_callback
         
         self.population: List[np.ndarray] = []
         self.fitness_scores: List[float] = []
         self.best_individual: Optional[np.ndarray] = None
         self.best_fitness: float = -float('inf')
         self.best_params: Optional[Dict] = None
+        self.best_result: Optional[Dict] = None
         
         self.generation_history: List[Dict] = []
+        self.on_generation_complete = None # Callback function(gen, max_gen, best_fitness)
         
     def initialize_population(self):
         """İlk popülasyonu oluştur"""
@@ -570,21 +709,39 @@ class GeneticOptimizer:
             for _ in range(self.config.population_size)
         ]
         
-    def evaluate_population(self):
+    def evaluate_population(self, pool: Optional[Pool] = None):
         """Tüm popülasyonu değerlendir"""
-        self.fitness_scores = []
+        self.fitness_scores = [0] * len(self.population)
         
-        for individual in self.population:
-            params = self.param_space.decode(individual)
-            result = self.evaluator.evaluate(params)
-            self.fitness_scores.append(result['fitness'])
+        if self.n_parallel > 1:
+            tasks = [(ind, self.param_space) for ind in self.population]
             
-            # En iyi bireyi güncelle
-            if result['fitness'] > self.best_fitness:
-                self.best_fitness = result['fitness']
-                self.best_individual = individual.copy()
-                self.best_params = params.copy()
-                self.best_result = result
+            if pool:
+                results = pool.map(_evaluate_individual, tasks)
+            else:
+                with Pool(processes=self.n_parallel, initializer=_init_pool, 
+                         initargs=(self.df, self.strategy_index, self.commission, self.slippage)) as p:
+                    results = p.map(_evaluate_individual, tasks)
+                
+            for i, (individual, result) in enumerate(results):
+                self.fitness_scores[i] = result['fitness']
+                if result['fitness'] > self.best_fitness:
+                    self.best_fitness = result['fitness']
+                    self.best_individual = individual.copy()
+                    self.best_params = self.param_space.decode(individual)
+                    self.best_result = result.copy()
+        else:
+            # Single-threaded
+            for i, individual in enumerate(self.population):
+                params = self.param_space.decode(individual)
+                result = self.evaluator.evaluate(params)
+                self.fitness_scores[i] = result['fitness']
+                
+                if result['fitness'] > self.best_fitness:
+                    self.best_fitness = result['fitness']
+                    self.best_individual = individual.copy()
+                    self.best_params = params.copy()
+                    self.best_result = result.copy()
                 
     def tournament_selection(self) -> np.ndarray:
         """Turnuva seçimi"""
@@ -596,7 +753,7 @@ class GeneticOptimizer:
         """Bir nesil evrimleştir"""
         new_population = []
         
-        # Elitizm - en iyi bireyleri koru
+        # Elitizm
         n_elite = max(1, int(self.config.population_size * self.config.elite_ratio))
         elite_indices = np.argsort(self.fitness_scores)[-n_elite:]
         for idx in elite_indices:
@@ -604,17 +761,14 @@ class GeneticOptimizer:
         
         # Yeni bireyler oluştur
         while len(new_population) < self.config.population_size:
-            # Seçim
             parent1 = self.tournament_selection()
             parent2 = self.tournament_selection()
             
-            # Çaprazlama
             if random.random() < self.config.crossover_rate:
                 child1, child2 = self.param_space.crossover(parent1, parent2)
             else:
                 child1, child2 = parent1.copy(), parent2.copy()
             
-            # Mutasyon
             if random.random() < self.config.mutation_rate:
                 child1 = self.param_space.mutate(child1)
             if random.random() < self.config.mutation_rate:
@@ -631,49 +785,55 @@ class GeneticOptimizer:
         start_time = time()
         
         if verbose:
-            print(f"Genetik Algoritma Başlıyor...")
-            print(f"  Popülasyon: {self.config.population_size}")
+            print(f"Genetik Algoritma Basliyor...")
+            print(f"  Populasyon: {self.config.population_size}")
             print(f"  Nesil: {self.config.generations}")
-            print(f"  Parametre: {self.param_space.n_params}")
+            print(f"  Paralel: {self.n_parallel}")
         
-        # İlk popülasyon
-        self.initialize_population()
-        self.evaluate_population()
-        
-        no_improve_count = 0
-        prev_best = self.best_fitness
-        
-        for gen in range(self.config.generations):
-            # Evrim
-            self.evolve()
-            self.evaluate_population()
+        # Pool'u bir kez oluştur ve tüm run boyunca kullan
+        pool = None
+        if self.n_parallel > 1:
+            pool = Pool(processes=self.n_parallel, initializer=_init_pool, initargs=(self.df, self.strategy_index))
             
-            # İstatistikler
-            mean_fitness = np.mean(self.fitness_scores)
-            max_fitness = max(self.fitness_scores)
+        try:
+            # İlk popülasyon
+            self.initialize_population()
+            self.evaluate_population(pool=pool)
             
-            self.generation_history.append({
-                'generation': gen + 1,
-                'mean_fitness': mean_fitness,
-                'max_fitness': max_fitness,
-                'best_fitness': self.best_fitness
-            })
-            
-            if verbose and (gen + 1) % 5 == 0:
-                print(f"  Nesil {gen+1:3d}: Best={self.best_fitness:,.0f} Mean={mean_fitness:,.0f}")
-            
-            # Erken durdurma kontrolü
-            improvement = (self.best_fitness - prev_best) / max(abs(prev_best), 1)
-            if improvement < self.config.min_improvement:
-                no_improve_count += 1
-            else:
-                no_improve_count = 0
+            no_improve_count = 0
             prev_best = self.best_fitness
             
-            if no_improve_count >= self.config.early_stop_generations:
-                if verbose:
-                    print(f"  Erken Durdurma (Nesil {gen+1})")
-                break
+            for gen in range(self.config.generations):
+                # İptal kontrolü
+                if self.is_cancelled_callback and self.is_cancelled_callback():
+                    if verbose: print("Optimizasyon kullanici tarafindan durduruldu.")
+                    break
+
+                # Evrim
+                self.evolve()
+                self.evaluate_population(pool=pool)
+                
+                # Progress callback
+                if self.on_generation_complete:
+                    self.on_generation_complete(gen + 1, self.config.generations, self.best_fitness)
+                
+                if verbose and (gen + 1) % 5 == 0:
+                    print(f"  Nesil {gen+1:3d}: Best={self.best_fitness:,.0f}")
+                
+                # Erken durdurma kontrolü
+                improvement = (self.best_fitness - prev_best) / max(abs(prev_best), 1)
+                if improvement < self.config.min_improvement:
+                    no_improve_count += 1
+                else:
+                    no_improve_count = 0
+                prev_best = self.best_fitness
+                
+                if no_improve_count >= self.config.early_stop_generations:
+                    break
+        finally:
+            if pool:
+                pool.close()
+                pool.join()
         
         elapsed = time() - start_time
         
@@ -687,14 +847,14 @@ class GeneticOptimizer:
         }
         
         if verbose:
-            print(f"\nSonuç:")
-            print(f"  Süre: {elapsed:.1f}sn")
+            print(f"\nSonuc:")
+            print(f"  Sure: {elapsed:.1f}sn")
             print(f"  Best Fitness: {self.best_fitness:,.0f}")
             print(f"  Net Kar: {self.best_result['net_profit']:,.0f}")
             print(f"  PF: {self.best_result['pf']:.2f}")
-            print(f"  İşlem: {self.best_result['trades']}")
+            print(f"  Islem: {self.best_result['trades']}")
             print(f"  MaxDD: {self.best_result['max_dd']:,.0f}")
-            print(f"\nEn İyi Parametreler:")
+            print(f"\nEn Iyi Parametreler:")
             for k, v in self.best_params.items():
                 print(f"  {k}: {v}")
         
@@ -707,7 +867,7 @@ class GeneticOptimizer:
 def load_data() -> pd.DataFrame:
     """Veri yükle"""
     csv_path = "d:/Projects/IdealQuant/data/VIP_X030T_1dk_.csv"
-    print("Veri Yükleniyor...")
+    print("Veri yukleniyor...")
     
     df = pd.read_csv(csv_path, sep=';', decimal=',', encoding='cp1254', header=None, low_memory=False)
     df.columns = ['Tarih', 'Saat', 'Acilis', 'Yuksek', 'Dusuk', 'Kapanis', 'Ortalama', 'Hacim', 'Lot']
@@ -719,7 +879,7 @@ def load_data() -> pd.DataFrame:
     df['Tipik'] = (df['Yuksek'] + df['Dusuk'] + df['Kapanis']) / 3
     df.dropna(inplace=True)
     
-    print(f"Veri Hazır: {len(df)} Bar")
+    print(f"Veri Hazir: {len(df)} Bar")
     return df
 
 
@@ -748,7 +908,7 @@ def run_genetic_optimization():
     
     os.makedirs("d:/Projects/IdealQuant/results", exist_ok=True)
     result_df.to_csv("d:/Projects/IdealQuant/results/genetic_optimizer_result.csv", index=False)
-    print("\nSonuç kaydedildi: results/genetic_optimizer_result.csv")
+    print("\nSonuc kaydedildi: results/genetic_optimizer_result.csv")
     
     return result
 
@@ -757,4 +917,4 @@ if __name__ == "__main__":
     try:
         run_genetic_optimization()
     except KeyboardInterrupt:
-        print("\nİptal edildi.")
+        print("\nIptal edildi.")

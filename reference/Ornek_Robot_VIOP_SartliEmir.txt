@@ -1,0 +1,40 @@
+var Sembol = "VIP'F_AKBNK0520";
+
+if (Sistem.ZamanKontrolSaniye(Sembol) >= 10)
+{
+   Sistem.ZamanKontrolGuncelle(Sembol);
+   var Miktar = 1;
+      Sistem.EmirSembol = Sembol;
+      Sistem.EmirIslem = "Alış";     
+      Sistem.EmirMiktari = Miktar;
+      Sistem.EmirSuresi = "GUN";      // GUN, SNS, IKG
+      Sistem.EmirTipi = "Limitli";        // KPY, KIE, GIE, SAR
+      Sistem.EmirFiyati = 5.10;
+      Sistem.EmirSartSembol=Sembol;
+      Sistem.EmirSartBool = true;
+      Sistem.EmirSartFiyat= 4.50;
+      Sistem.EmirSartTipi="ALIŞ >= Şart Fiyat";
+      Sistem.EmirGonder();
+}
+
+
+
+var Sembol = "VIP'F_AKBNK0520";
+
+if (Sistem.ZamanKontrolSaniye(Sembol) >= 10)
+{
+   Sistem.ZamanKontrolGuncelle(Sembol);
+   var Miktar = 1;
+      Sistem.EmirSembol = Sembol;
+      Sistem.EmirIslem = "Alış";     
+      Sistem.EmirMiktari = Miktar;
+      Sistem.EmirSuresi = "KIE";      // GUN, SNS, IKG
+      Sistem.EmirTipi = "Piyasa";        // KPY, KIE, GIE, SAR
+      Sistem.EmirSartSembol=Sembol;
+      Sistem.EmirSartBool=true;
+      Sistem.EmirSartFiyat= 4.50;
+      Sistem.EmirSartTipi="ALIŞ >= Şart Fiyat";
+      Sistem.EmirGonder();
+}
+
+

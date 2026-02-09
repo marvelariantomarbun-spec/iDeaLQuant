@@ -1,0 +1,330 @@
+// ===============================================================================================
+// 1DK İNDİKATÖR ARAŞTIRMA - QQEF, RVI, QSTICK, NET HACİM, YATAY TESPİT
+// ===============================================================================================
+// Bu dosya araştırma amaçlıdır. Hangi indikatörlerin 1dk'da işe yaradığını test ediyoruz.
+// Tarih: 2026-01-24
+// ===============================================================================================
+
+// ===============================================================================================
+// OPTİMİZE EDİLEBİLİR PARAMETRELER
+// ===============================================================================================
+var MIN_ONAY_SKORU = 4;      // Kaç indikatör hizalanmalı? (3-6 arası optimize et)
+var QQEF_PERIOD = 14;        // QQEF RSI periyodu (8-21)
+var QQEF_SMOOTH = 5;         // QQEF düzgünleştirme (3-8)
+var RVI_PERIOD = 10;         // RVI periyodu (5-15)
+var QSTICK_PERIOD = 8;       // Qstick periyodu (5-12)
+var NETLOT_ESIK = 10;        // NetLot eşik değeri (5-20)
+var ADX_PERIOD = 14;         // ADX periyodu (10-20)
+var ADX_ESIK = 20;           // ADX trend eşiği (15-30)
+
+var V = Sistem.GrafikVerileri;
+var O = Sistem.GrafikFiyatSec("Acilis");
+var H = Sistem.GrafikFiyatSec("Yuksek");
+var L = Sistem.GrafikFiyatSec("Dusuk");
+var C = Sistem.GrafikFiyatSec("Kapanis");
+var T = Sistem.GrafikFiyatSec("Tipik");
+
+// ===============================================================================================
+// 1. ARS (Referans olarak)
+// ===============================================================================================
+var ARS_K = 0.0123;
+var ARS_EMA = Sistem.MA(T, "Exp", 3);
+var ARS = Sistem.Liste(0);
+
+for (int i = 1; i < Sistem.BarSayisi; i++)
+{
+    float altBand = (float)(ARS_EMA[i] * (1 - ARS_K));
+    float ustBand = (float)(ARS_EMA[i] * (1 + ARS_K));
+    
+    if (altBand > ARS[i - 1]) ARS[i] = altBand;
+    else if (ustBand < ARS[i - 1]) ARS[i] = ustBand;
+    else ARS[i] = ARS[i - 1];
+}
+
+// ===============================================================================================
+// 2. YATAY PİYASA TESPİTİ
+// ===============================================================================================
+
+// Yöntem 1: ARS değişim tespiti (ARS kaç bardır aynı?)
+var ARS_DegismeDurumu = Sistem.Liste(0);  // 1=değişiyor, 0=sabit
+int yatayEsik = 10;  // 10 bar boyunca ARS değişmediyse yatay
+
+for (int i = yatayEsik; i < Sistem.BarSayisi; i++)
+{
+    bool arsAyni = true;
+    for (int j = 1; j <= yatayEsik; j++)
+    {
+        if (ARS[i] != ARS[i - j]) { arsAyni = false; break; }
+    }
+    ARS_DegismeDurumu[i] = arsAyni ? 0 : 1;  // 0=yatay, 1=trendde
+}
+
+// Yöntem 2: Fiyat-ARS mesafesi (çok yakınsa yatay)
+var ARS_Mesafe = Sistem.Liste(0);
+float yatayMesafeEsik = 0.15f;  // %0.15'den az mesafe = yatay
+
+for (int i = 1; i < Sistem.BarSayisi; i++)
+{
+    ARS_Mesafe[i] = Math.Abs(C[i] - ARS[i]) / ARS[i] * 100;
+}
+
+// Yöntem 3: ADX < 20 = Yatay piyasa
+var ADX14 = Sistem.ADX(ADX_PERIOD);
+float adxYatayEsik = 20.0f;
+
+// Yöntem 4: Bollinger Band Genişliği (dar = yatay)
+var BBUp = Sistem.BollingerUp("Simple", 20, 2);
+var BBDown = Sistem.BollingerDown("Simple", 20, 2);
+var BBMid = Sistem.BollingerMid("Simple", 20, 2);
+var BBWidth = Sistem.Liste(0);
+var BBWidth_MA = Sistem.Liste(0);
+
+for (int i = 1; i < Sistem.BarSayisi; i++)
+{
+    BBWidth[i] = ((BBUp[i] - BBDown[i]) / BBMid[i]) * 100;
+}
+var BBWidth_Avg = Sistem.MA(BBWidth, "Simple", 50);
+
+// ===============================================================================================
+// 3. NET HACİM (Alış - Satış baskısı)
+// ===============================================================================================
+var NetLot = Sistem.Liste(0);
+
+// Close > Open ise alış baskısı, Close < Open ise satış baskısı
+for (int i = 1; i < Sistem.BarSayisi; i++)
+{
+    float barHacim = (H[i] - L[i]) > 0 ? (C[i] - O[i]) / (H[i] - L[i]) : 0;
+    NetLot[i] = barHacim * 100;  // -100 ile +100 arası
+}
+
+var NetLot_MA = Sistem.MA(NetLot, "Simple", 5);
+
+// ===============================================================================================
+// 4. QQEF (Quantitative Qualitative Estimation Filter)
+// ===============================================================================================
+// RSI bazlı ama daha düzgün
+var QQEF = Sistem.QQEF(QQEF_PERIOD, QQEF_SMOOTH);  // (RSIPeriod, Smoothing)
+var QQES = Sistem.QQES(QQEF_PERIOD, QQEF_SMOOTH);  // Sinyal çizgisi
+
+// QQEF kullanımı:
+// QQEF > QQES ve QQEF > 50 → Boğa
+// QQEF < QQES ve QQEF < 50 → Ayı
+
+// ===============================================================================================
+// 5. RVI (Relative Vigor Index)
+// ===============================================================================================
+var RVI = Sistem.RelativeVigorIndex(RVI_PERIOD);
+var RVI_Signal = Sistem.RelativeVigorIndexSignal(RVI_PERIOD);
+
+// RVI kullanımı:
+// RVI > RVI_Signal → Boğa momentumu
+// RVI < RVI_Signal → Ayı momentumu
+// Değer 0'ın üstünde/altında önemli
+
+// ===============================================================================================
+// 6. QSTICK (Ortalama bar yönü)
+// ===============================================================================================
+var Qstick = Sistem.Qstick(QSTICK_PERIOD);
+
+// Qstick kullanımı:
+// Qstick > 0 → Bar'lar ortalama yeşil (alış baskısı)
+// Qstick < 0 → Bar'lar ortalama kırmızı (satış baskısı)
+// Qstick'in yönü momentumu gösterir
+
+// ===============================================================================================
+// 7. ChaikinMoneyFlow (Para akışı)
+// ===============================================================================================
+var CMF = Sistem.ChaikinMoneyFlow(20);
+
+// CMF > 0 → Para girişi
+// CMF < 0 → Para çıkışı
+
+// ===============================================================================================
+// 8. BİRLEŞİK YATAY FİLTRE
+// ===============================================================================================
+var YatayFiltre = Sistem.Liste(0);  // 0=işlem yapma, 1=işlem yap
+
+for (int i = 50; i < Sistem.BarSayisi; i++)
+{
+    bool arsHareketli = ARS_DegismeDurumu[i] == 1;  // ARS değişiyor
+    bool yetkiliMesafe = ARS_Mesafe[i] > yatayMesafeEsik;  // Fiyat ARS'dan uzak
+    bool gucluTrend = ADX14[i] > adxYatayEsik;  // ADX yeterli
+    bool volatilVar = BBWidth[i] > BBWidth_Avg[i] * 0.8;  // BB dar değil
+    
+    // En az 2 koşul sağlanmalı
+    int skor = 0;
+    if (arsHareketli) skor++;
+    if (yetkiliMesafe) skor++;
+    if (gucluTrend) skor++;
+    if (volatilVar) skor++;
+    
+    YatayFiltre[i] = (skor >= 2) ? 1 : 0;
+}
+
+// ===============================================================================================
+// 9. ÖZET SINYAL ÜRETİCİ (Düzeltilmiş - Pozisyon Takipli)
+// ===============================================================================================
+var SinyalTest = Sistem.Liste(0);
+var LongSkor = Sistem.Liste(0);
+var ShortSkor = Sistem.Liste(0);
+
+for (int i = 1; i < V.Count; i++) Sistem.Yon[i] = "";
+
+var SonYon = "";  // Pozisyon takibi: "", "A", "S"
+
+for (int i = 50; i < Sistem.BarSayisi; i++)
+{
+    var Sinyal = "";
+    
+    // LONG koşulları
+    bool arsLong = C[i] > ARS[i];
+    bool qqefLong = QQEF[i] > QQES[i] && QQEF[i] > 50;
+    bool rviLong = RVI[i] > RVI_Signal[i];
+    bool qstickLong = Qstick[i] > 0;
+    bool netLotLong = NetLot_MA[i] > NETLOT_ESIK;
+    bool adxGuclu = ADX14[i] > ADX_ESIK;
+    
+    // SHORT koşulları
+    bool arsShort = C[i] < ARS[i];
+    bool qqefShort = QQEF[i] < QQES[i] && QQEF[i] < 50;
+    bool rviShort = RVI[i] < RVI_Signal[i];
+    bool qstickShort = Qstick[i] < 0;
+    bool netLotShort = NetLot_MA[i] < -NETLOT_ESIK;
+    
+    // Scoring (ADX dahil = 6 indikatör)
+    int longScore = 0;
+    if (arsLong) longScore++;
+    if (qqefLong) longScore++;
+    if (rviLong) longScore++;
+    if (qstickLong) longScore++;
+    if (netLotLong) longScore++;
+    if (adxGuclu) longScore++;
+    
+    int shortScore = 0;
+    if (arsShort) shortScore++;
+    if (qqefShort) shortScore++;
+    if (rviShort) shortScore++;
+    if (qstickShort) shortScore++;
+    if (netLotShort) shortScore++;
+    if (adxGuclu) shortScore++;
+    
+    LongSkor[i] = longScore;
+    ShortSkor[i] = shortScore;
+    
+    // === ÇIKIŞ MANTIĞI ===
+    if (SonYon == "A")  // Long pozisyonda
+    {
+        // ARS altına düştü veya short sinyali güçlü = çık
+        if (arsShort || shortScore >= 4)
+            Sinyal = "F";
+    }
+    else if (SonYon == "S")  // Short pozisyonda
+    {
+        // ARS üstüne çıktı veya long sinyali güçlü = çık
+        if (arsLong || longScore >= 4)
+            Sinyal = "F";
+    }
+    
+    // === GİRİŞ MANTIĞI (sadece FLAT pozisyondayken) ===
+    if (Sinyal == "" && SonYon != "A" && SonYon != "S")
+    {
+        // YatayFiltre kontrolü
+        if (YatayFiltre[i] == 1)
+        {
+            if (longScore >= MIN_ONAY_SKORU && shortScore < 2) 
+            {
+                Sinyal = "A";
+                SinyalTest[i] = 1;
+            }
+            else if (shortScore >= MIN_ONAY_SKORU && longScore < 2) 
+            {
+                Sinyal = "S";
+                SinyalTest[i] = -1;
+            }
+        }
+    }
+    
+    // Sinyal kaydet
+    if (Sinyal != "" && SonYon != Sinyal)
+    {
+        SonYon = Sinyal;
+        Sistem.Yon[i] = SonYon;
+    }
+}
+
+// ===============================================================================================
+// ÇİZİMLER
+// ===============================================================================================
+
+// Panel 1: Fiyat + ARS
+Sistem.Cizgiler[3].Deger = ARS;
+Sistem.Cizgiler[3].Aciklama = "ARS";
+
+// Panel 2: QQEF ve sinyal
+Sistem.Cizgiler[4].Deger = QQEF;
+Sistem.Cizgiler[4].Aciklama = "QQEF";
+
+Sistem.Cizgiler[5].Deger = QQES;
+Sistem.Cizgiler[5].Aciklama = "QQES";
+
+// Panel 3: RVI
+Sistem.Cizgiler[6].Deger = RVI;
+Sistem.Cizgiler[6].Aciklama = "RVI";
+
+Sistem.Cizgiler[7].Deger = RVI_Signal;
+Sistem.Cizgiler[7].Aciklama = "RVI_Sig";
+
+// Panel 4: Qstick
+Sistem.Cizgiler[8].Deger = Qstick;
+Sistem.Cizgiler[8].Aciklama = "Qstick";
+
+// Panel 5: Net Lot
+Sistem.Cizgiler[9].Deger = NetLot_MA;
+Sistem.Cizgiler[9].Aciklama = "NetLot_MA";
+
+// Panel 6: ADX
+Sistem.Cizgiler[10].Deger = ADX14;
+Sistem.Cizgiler[10].Aciklama = "ADX";
+
+// ===============================================================================================
+// BİLGİ PANELİ
+// ===============================================================================================
+var son = Sistem.BarSayisi - 1;
+
+string yatayDurum = YatayFiltre[son] == 1 ? "İŞLEM YAP" : "YATAY-BEKLE";
+string trendYon = C[son] > ARS[son] ? "LONG ↑" : "SHORT ↓";
+string qqefYon = QQEF[son] > QQES[son] ? "Boğa" : "Ayı";
+string rviYon = RVI[son] > RVI_Signal[son] ? "Boğa" : "Ayı";
+string qstickYon = Qstick[son] > 0 ? "Alış" : "Satış";
+string netYon = NetLot_MA[son] > 0 ? "Pozitif" : "Negatif";
+
+string info = "═══ 1DK ARAŞTIRMA ═══" + Environment.NewLine +
+              "───────────────────────" + Environment.NewLine +
+              "Piyasa: " + yatayDurum + Environment.NewLine +
+              "ARS Trend: " + trendYon + Environment.NewLine +
+              "───────────────────────" + Environment.NewLine +
+              "QQEF: " + qqefYon + " (" + QQEF[son].ToString("0.0") + ")" + Environment.NewLine +
+              "RVI: " + rviYon + Environment.NewLine +
+              "Qstick: " + qstickYon + Environment.NewLine +
+              "NetLot: " + netYon + Environment.NewLine +
+              "ADX: " + ADX14[son].ToString("0.0") + Environment.NewLine +
+              "───────────────────────" + Environment.NewLine +
+              "BB Width: " + BBWidth[son].ToString("0.2") + "%" + Environment.NewLine +
+              "ARS Mesafe: " + ARS_Mesafe[son].ToString("0.2") + "%";
+
+Color panelRenk = YatayFiltre[son] == 1 ? Color.DarkGreen : Color.DarkRed;
+Sistem.Dortgen(1, 500, 30, 200, 200, panelRenk, Color.Black, Color.White);
+Sistem.GradientYaziEkle(info, 1, 505, 35, Color.White, Color.LightGray, "Consolas", 9);
+
+// ===============================================================================================
+// NOTLAR:
+// ===============================================================================================
+// Bu dosyayı 1dk grafikte çalıştırın ve indikatörleri gözlemleyin.
+// 
+// Sorulacak sorular:
+// 1. QQEF sinyalleri ne kadar erken geliyor?
+// 2. RVI kırılımları güvenilir mi?
+// 3. Qstick trend değişimlerini erken yakalıyor mu?
+// 4. NetLot pozitif/negatif geçişleri anlamlı mı?
+// 5. Yatay filtre gereksiz işlemleri engelliyor mu?
+// ===============================================================================================

@@ -28,7 +28,7 @@ def load_data():
     csv_path = "d:/Projects/IdealQuant/data/VIP_X030T_1dk_.csv"
     try:
         if current_process().name == 'MainProcess':
-            print("Veri Yükleniyor...")
+            print("Veri yukleniyor...")
             
         df = pd.read_csv(csv_path, sep=';', decimal=',', encoding='cp1254', header=None, low_memory=False)
         df.columns = ['Tarih', 'Saat', 'Acilis', 'Yuksek', 'Dusuk', 'Kapanis', 'Ortalama', 'Hacim', 'Lot']
@@ -39,7 +39,7 @@ def load_data():
         df.dropna(inplace=True)
         
         if current_process().name == 'MainProcess':
-            print(f"Veri Hazır: {len(df)} Bar")
+            print(f"Veri Hazir: {len(df)} Bar")
             
         return df
     except Exception as e:
@@ -368,7 +368,7 @@ def solve_chunk(args):
 
 # --- OPTIMIZATION MANAGER ---
 def run_parallel_stage(stage_name, params_grid):
-    print(f"\\n--- {stage_name} BAŞLIYOR ---")
+    print(f"\n--- {stage_name} BASLIYOR ---")
     
     ars_emas = params_grid['ars_emas']
     ars_atr_ps = params_grid['ars_atr_ps']
@@ -381,7 +381,7 @@ def run_parallel_stage(stage_name, params_grid):
             for m in ars_atr_ms:
                 tasks.append((e, p, m, params_grid))
                 
-    print(f"Toplam Görev: {len(tasks)}")
+    print(f"Toplam Gorev: {len(tasks)}")
     
     final_results = []
     start_time = time()
@@ -391,13 +391,13 @@ def run_parallel_stage(stage_name, params_grid):
             final_results.extend(res)
             
     elapsed = time() - start_time
-    print(f"Bitti. Süre: {elapsed:.1f}sn. Bulunan: {len(final_results)}")
+    print(f"Bitti. Sure: {elapsed:.1f}sn. Bulunan: {len(final_results)}")
     
     return final_results
 
 def run_strategy2_optimization():
     if not os.path.exists("d:/Projects/IdealQuant/data/VIP_X030T_1dk_.csv"):
-        print("Veri dosyası yok!")
+        print("Veri dosyasi yok!")
         return
 
     # --- STAGE 1: BROAD SPECTRUM ---
@@ -424,7 +424,7 @@ def run_strategy2_optimization():
     df1['Score'] = df1['NP'] * df1['PF'] / (1 + df1['DD']/1000)
     best = df1.nlargest(1, 'Score').iloc[0]
     
-    print(f"\\nSTAGE 1 BEST:\\n{best.to_string()}")
+    print(f"\nSTAGE 1 BEST:\n{best.to_string()}")
     
     # --- STAGE 2: LOCAL ---
     # Zoom in around best params
@@ -452,7 +452,7 @@ def run_strategy2_optimization():
     
     df2 = pd.DataFrame(results2)
     df2.sort_values('NP', ascending=False).to_csv("d:/Projects/IdealQuant/results/strategy2_final_results.csv", index=False)
-    print("Sonuçlar kaydedildi.")
+    print("Sonuclar kaydedildi.")
 
 if __name__ == "__main__":
     import multiprocessing
@@ -460,4 +460,4 @@ if __name__ == "__main__":
     try:
         run_strategy2_optimization()
     except KeyboardInterrupt:
-        print("İptal edildi.")
+        print("Iptal edildi.")

@@ -39,6 +39,7 @@ class Database:
         
         self.db_path = get_db_path()
         self._create_tables()
+        self._migrate_tables()
         self._initialized = True
     
     def _get_connection(self) -> sqlite3.Connection:
@@ -64,7 +65,9 @@ class Database:
                 status TEXT DEFAULT 'pending',
                 notes TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                commission REAL DEFAULT 0,
+                slippage REAL DEFAULT 0
             )
         """)
         
@@ -123,7 +126,31 @@ class Database:
         """)
         
         conn.commit()
+    
+        conn.commit()
         conn.close()
+
+    def _migrate_tables(self):
+        """Eksik kolonları ekle (Migration)"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # processes tablosuna commission ve slippage ekle
+            cursor.execute("PRAGMA table_info(processes)")
+            columns = [info[1] for info in cursor.fetchall()]
+            
+            if 'commission' not in columns:
+                cursor.execute("ALTER TABLE processes ADD COLUMN commission REAL DEFAULT 0")
+                
+            if 'slippage' not in columns:
+                cursor.execute("ALTER TABLE processes ADD COLUMN slippage REAL DEFAULT 0")
+                
+            conn.commit()
+        except Exception as e:
+            print(f"Migration error: {e}")
+        finally:
+            conn.close()
     
     # =========================================================================
     # PROCESS CRUD
@@ -139,8 +166,8 @@ class Database:
         cursor = conn.cursor()
         
         cursor.execute("""
-            INSERT INTO processes (process_id, symbol, period, data_file, data_rows, status)
-            VALUES (?, ?, ?, ?, ?, 'pending')
+            INSERT INTO processes (process_id, symbol, period, data_file, data_rows, status, commission, slippage)
+            VALUES (?, ?, ?, ?, ?, 'pending', 0, 0)
         """, (process_id, symbol, period, data_file, data_rows))
         
         conn.commit()
@@ -217,6 +244,37 @@ class Database:
         
         conn.commit()
         conn.close()
+
+    def update_process_costs(self, process_id: str, commission: float, slippage: float):
+        """Süreç için komisyon ve kayma değerlerini güncelle"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE processes SET commission = ?, slippage = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE process_id = ?
+        """, (commission, slippage, process_id))
+        conn.commit()
+        conn.close()
+
+    def get_process_costs(self, process_id: str) -> Dict[str, float]:
+        """Sürecin maliyet ayarlarını getir"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT commission, slippage FROM processes WHERE process_id = ?", (process_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return {'commission': row['commission'], 'slippage': row['slippage']}
+        return {'commission': 0.0, 'slippage': 0.0}
+
+    def get_process_data_file(self, process_id: str) -> Optional[str]:
+        """Sürecin veri dosyası yolunu getir"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT data_file FROM processes WHERE process_id = ?", (process_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return row['data_file'] if row else None
     
     # =========================================================================
     # OPTIMIZATION RESULTS CRUD
@@ -586,6 +644,78 @@ class Database:
         conn.commit()
         conn.close()
 
+    def delete_process(self, process_id: str) -> bool:
+        """Süreci ve ilişkili tüm verileri sil"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # 1. Validation Results (Optimization ID üzerinden bağlı)
+            cursor.execute("""
+                DELETE FROM validation_results 
+                WHERE optimization_id IN (
+                    SELECT id FROM optimization_results WHERE process_id = ?
+                )
+            """, (process_id,))
+            
+            # 2. Optimization Results
+            cursor.execute("DELETE FROM optimization_results WHERE process_id = ?", (process_id,))
+            
+            # 3. Group Optimization Results
+            cursor.execute("DELETE FROM group_optimization_results WHERE process_id = ?", (process_id,))
+            
+            # 4. Process
+            cursor.execute("DELETE FROM processes WHERE process_id = ?", (process_id,))
+            
+            conn.commit()
+            return True
+            
+        except Exception as e:
+            print(f"Delete process error: {e}")
+            conn.rollback()
+            return False
+            
+        finally:
+            conn.close()
+
+    def clear_database(self) -> bool:
+        """Tüm veritabanını temizle (Tabloları boşalt)"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Tabloları sırayla sil (Foreign Key sırasına dikkat ederek)
+            cursor.execute("DELETE FROM validation_results")
+            cursor.execute("DELETE FROM group_optimization_results")
+            cursor.execute("DELETE FROM optimization_results")
+            cursor.execute("DELETE FROM processes")
+            
+            # Auto-increment sayaçlarını sıfırla
+            cursor.execute("DELETE FROM sqlite_sequence")
+            
+            conn.commit()
+            self.vacuum()  # Alanı geri kazan
+            return True
+            
+        except Exception as e:
+            print(f"Clear database error: {e}")
+            conn.rollback()
+            return False
+            
+        finally:
+            conn.close()
+
+    def vacuum(self):
+        """Veritabanını optimize et (VACUUM)"""
+        conn = self._get_connection()
+        try:
+            conn.execute("VACUUM")
+        except Exception as e:
+            print(f"Vacuum error: {e}")
+        finally:
+            conn.close()
+
 
 # Singleton instance
 db = Database()
+    
