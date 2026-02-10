@@ -29,9 +29,10 @@ class StrategyConfigV2:
     ars_min_band: float = 0.002
     ars_max_band: float = 0.015
     
-    # 2. Grup: Giriş Filtreleri (7)
+    # 2. Grup: Giriş Filtreleri (8)
     momentum_period: int = 5
     momentum_threshold: float = 100.0
+    momentum_base: float = 200.0  # Momentum skala baz değeri (LONG > threshold, SHORT < base-threshold)
     breakout_period: int = 10
     mfi_period: int = 14
     mfi_hhv_period: int = 14
@@ -544,7 +545,7 @@ class ARSTrendStrategyV2:
             # SHORT GİRİŞ
             elif self.trend_yonu[i] == -1:
                 yeni_dip = self.lows[i] <= self.llv[i-1] and self.llv[i] < self.llv[i-1]
-                negatif_mom = self.momentum[i] < (200 - cfg.momentum_threshold)
+                negatif_mom = self.momentum[i] < (cfg.momentum_base - cfg.momentum_threshold)
                 
                 # MFI Breakout - MFI yeni dip yapıyor
                 mfi_onay = self.mfi[i] <= self.mfi_llv[i-1]
@@ -575,6 +576,7 @@ class ARSTrendStrategyV2:
             ars_max_band=config_dict.get('ars_max_band', 0.015),
             momentum_period=config_dict.get('momentum_period', 5),
             momentum_threshold=config_dict.get('momentum_threshold', 100.0),
+            momentum_base=config_dict.get('momentum_base', 200.0),
             breakout_period=config_dict.get('breakout_period', 10),
             mfi_period=config_dict.get('mfi_period', 14),
             mfi_hhv_period=config_dict.get('mfi_hhv_period', 14),

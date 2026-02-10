@@ -20,6 +20,7 @@ var ars_max_band = 0.015;
 // 2. Grup: Giriş Filtreleri (Default)
 var momentum_period = 5;
 var momentum_threshold = 100.0;
+var momentum_base = 200.0;  // Momentum skala baz değeri
 var breakout_period = 10;
 var mfi_period = 14;
 var mfi_hhv_period = 14;
@@ -180,7 +181,7 @@ for (int i = 50; i < Veriler.Count; i++)
         else if (trend == -1)
         {
             var price_ok = (C[i] < LLV[i-1] || L[i] < LLV[i-1]);
-            var mom_ok = Mom[i] < (200 - momentum_threshold); // Momentum short mantığı
+            var mom_ok = Mom[i] < (momentum_base - momentum_threshold); // Momentum short mantığı
             var mfi_ok = MFI[i] <= MFI_LLV[i-1];
             var vol_ok = V[i] >= Vol_HHV[i-1] * 0.8;
             
