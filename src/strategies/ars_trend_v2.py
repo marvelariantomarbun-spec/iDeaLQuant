@@ -21,7 +21,7 @@ from .holidays import (
 
 @dataclass
 class StrategyConfigV2:
-    """ARS Trend v2 Strateji Konfigürasyonu (v4.1 - 21 Parametre)"""
+    """ARS Trend v2 Strateji Konfigürasyonu (v4.2 - 22 Parametre)"""
     # 1. Grup: ARS Parametreleri (5)
     ars_ema_period: int = 3
     ars_atr_period: int = 10

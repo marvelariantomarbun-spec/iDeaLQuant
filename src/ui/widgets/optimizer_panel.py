@@ -75,6 +75,7 @@ STRATEGY1_PARAM_GROUPS = {
         'params': {
             'min_score': {'label': 'Min Skor', 'type': 'int', 'default': 3, 'min': 2, 'max': 4, 'step': 1},
             'exit_score': {'label': 'Cikis Skor', 'type': 'int', 'default': 3, 'min': 2, 'max': 4, 'step': 1},
+            'contrary_score_max': {'label': 'Karşıt Skor Max', 'type': 'int', 'default': 2, 'min': 1, 'max': 3, 'step': 1},
         },
         'is_cascaded': True
     }
@@ -98,6 +99,7 @@ STRATEGY2_PARAM_GROUPS = {
         'params': {
             'momentum_period': {'label': 'Momentum Periyot', 'type': 'int', 'default': 5, 'min': 3, 'max': 10, 'step': 1},
             'momentum_threshold': {'label': 'Momentum Esik', 'type': 'float', 'default': 100.0, 'min': 50.0, 'max': 200.0, 'step': 25.0},
+            'momentum_base': {'label': 'Momentum Baz', 'type': 'float', 'default': 200.0, 'min': 100.0, 'max': 300.0, 'step': 25.0},
             'breakout_period': {'label': 'Breakout Periyot', 'type': 'int', 'default': 10, 'min': 5, 'max': 30, 'step': 5},
             'mfi_period': {'label': 'MFI Periyot', 'type': 'int', 'default': 14, 'min': 10, 'max': 21, 'step': 2},
             'mfi_hhv_period': {'label': 'MFI HHV', 'type': 'int', 'default': 14, 'min': 10, 'max': 21, 'step': 2},

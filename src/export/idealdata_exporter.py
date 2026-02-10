@@ -480,6 +480,8 @@ Sistem.YaziEkle(info, 1, 15, 35, Color.Yellow, "Tahoma", 10);
             'ars_min_band': params.get('ars_min_band', 0.002),
             'ars_max_band': params.get('ars_max_band', 0.015),
             'momentum_p': int(params.get('momentum_period', 5)),
+            'momentum_threshold': params.get('momentum_threshold', 100.0),
+            'momentum_base': params.get('momentum_base', 200.0),
             'breakout_p': int(params.get('breakout_period', 10)),
             'mfi_p': int(params.get('mfi_period', 14)),
             'mfi_hhv_p': int(params.get('mfi_hhv_period', 14)),
@@ -521,6 +523,8 @@ double ARS_Max_Band = {p['ars_max_band']};
 
 // --- GİRİŞ SİNYALİ PARAMETRELER ---
 int MOMENTUM_Period = {p['momentum_p']};
+double MOMENTUM_THRESHOLD = {p['momentum_threshold']};
+double MOMENTUM_BASE = {p['momentum_base']};
 int BREAKOUT_Period = {p['breakout_p']};
 double VOLUME_MULT = {p['volume_mult']};
 
@@ -777,7 +781,7 @@ for (int i = warmupBars; i < V.Count; i++)
         if (TrendYonu[i] == 1)
         {{
             bool yeniZirve = H[i] >= HHV[i-1] && HHV[i] > HHV[i-1];
-            bool pozitifMomentum = Momentum[i] > 100;
+            bool pozitifMomentum = Momentum[i] > MOMENTUM_THRESHOLD;
             bool mfiOnay = MFI[i] >= MFI_HHV[i-1];
             bool volumeOnay = Lot[i] >= Vol_HHV[i-1] * (float)VOLUME_MULT;
             if (yeniZirve && pozitifMomentum && mfiOnay && volumeOnay) Sinyal = "A";
@@ -785,7 +789,7 @@ for (int i = warmupBars; i < V.Count; i++)
         else if (TrendYonu[i] == -1)
         {{
             bool yeniDip = L[i] <= LLV[i-1] && LLV[i] < LLV[i-1];
-            bool negatifMomentum = Momentum[i] < 100;
+            bool negatifMomentum = Momentum[i] < (MOMENTUM_BASE - MOMENTUM_THRESHOLD);
             bool mfiOnay = MFI[i] <= MFI_LLV[i-1];
             bool volumeOnay = Lot[i] >= Vol_HHV[i-1] * (float)VOLUME_MULT;
             if (yeniDip && negatifMomentum && mfiOnay && volumeOnay) Sinyal = "S";
@@ -833,6 +837,157 @@ Sistem.Cizgiler[1].Aciklama = "HHV";
 
 Sistem.Cizgiler[2].Deger = LLV;
 Sistem.Cizgiler[2].Aciklama = "LLV";
+
+// ===============================================================================================
+// PERFORMANS PANELİ (Detaylı)
+// ===============================================================================================
+bool GetiriTarihcesiGoster = true;
+bool DetayPerformans = true;
+string GetiriTarih = "01.01.2024";
+float GetiriKayma = 0.0f;
+
+var renk = Color.Black;
+DateTime dateBaslangicTarih = DateTime.ParseExact(GetiriTarih, "dd.MM.yyyy", System.Globalization.CultureInfo.CurrentCulture);
+if (dateBaslangicTarih < V[0].Date) dateBaslangicTarih = V[0].Date;
+
+Sistem.GetiriHesapla(dateBaslangicTarih.ToString("dd.MM.yyyy"), GetiriKayma);
+
+// Bugünkü getiri kutusu
+int ilksatirYy = 240;
+var gunluk_getiri = Sistem.GetiriKZGunSonu[Sistem.GetiriKZGunSonu.Count - 1] - Sistem.GetiriKZGun[Sistem.GetiriKZGun.Count - 1];
+var kzbugunx = gunluk_getiri.ToString("0.0");
+if (gunluk_getiri > 0) renk = Color.Green; else if (gunluk_getiri < 0) renk = Color.Red;
+
+Sistem.Dortgen(1, 10, ilksatirYy - 5, 90, 25, renk, Color.Black, Color.White);
+Sistem.GradientYaziEkle("Bugün", 1, 15, ilksatirYy, Color.White, Color.White, "Tahoma", 8);
+Sistem.GradientYaziEkle(kzbugunx, 1, 60, ilksatirYy, Color.Yellow, Color.DarkOrange, "Tahoma", 8);
+
+if (Sistem.Parametreler[3] == "X")
+{{
+    int ilksatirY = 33;
+    var Sure = ((DateTime.Now - dateBaslangicTarih).TotalDays / 30.4);
+    var SureTxt = Sure.ToString("0.0");
+    var kzSure = Sistem.GetiriKZGunSonu[Sistem.GetiriKZGunSonu.Count - 1].ToString("0.0");
+    var kzbugun = (Sistem.GetiriKZGunSonu[Sistem.GetiriKZGunSonu.Count - 1] - Sistem.GetiriKZGun[Sistem.GetiriKZGun.Count - 1]).ToString("0.0");
+    var yuzde_kz = (Sistem.GetiriKZGunSonu[Sistem.GetiriKZGunSonu.Count - 1] * 100.0f) / O[0];
+    var kzSure_yuzde = "  %" + yuzde_kz.ToString("0.0");
+
+    var kzbuay = Sistem.GetiriBuAy.ToString("0.0");
+    var kz30 = Sistem.GetiriBirAy.ToString("0.0");
+    string ToplamIslem = Sistem.GetiriToplamIslem.ToString("0");
+    string OrtalamaIslem = (((double)Sistem.GetiriToplamIslem) / Sure).ToString("0");
+    var KarliIslemOran = Sistem.GetiriKarIslemOran.ToString("0.00");
+    var MutluGun = Sistem.GetiriMutluGun.ToString();
+    var MutsuzGun = Sistem.GetiriMutsuzGun.ToString();
+    Sistem.GetiriMaxDDHesapla(GetiriTarih, DateTime.Now.ToString("dd.MM.yyyy"));
+    var MaxDD = Sistem.GetiriMaxDD.ToString("0.0");
+    var MaxDDTarihi = Sistem.GetiriMaxDDTarih.ToString("dd.MM.yyyy");
+    var ProfitFactor = Sistem.ProfitFactor.ToString("0.00");
+
+    // Getiri çizgileri
+    Sistem.Cizgiler[3].Deger = Sistem.GetiriKZGun;
+    Sistem.Cizgiler[3].Aciklama = "Gün KZ";
+    Sistem.Cizgiler[3].ActiveBool = true;
+    
+    Sistem.Cizgiler[4].Deger = Sistem.GetiriKZGunSonu;
+    Sistem.Cizgiler[4].Aciklama = "Gün Sonu KZ";
+    Sistem.Cizgiler[4].ActiveBool = true;
+    
+    Sistem.DolguEkle(3, 4, Color.Red, Color.Green);
+    
+    Sistem.Cizgiler[5].Deger = Sistem.GetiriKZAy;
+    Sistem.Cizgiler[5].Aciklama = "Aylık Getiri";
+    Sistem.Cizgiler[5].ActiveBool = true;
+
+    if (GetiriTarihcesiGoster)
+    {{
+        // Geçmiş dönem getiri hesaplamaları
+        var Date5Ay = DateTime.Now.AddDays(-5);
+        int Date5AyBarNo = 0;
+        for (int i = V.Count - 1; i > 0; i--)
+            if (V[i].Date <= Date5Ay) {{ Date5AyBarNo = i; break; }}
+        var kz5 = (Sistem.GetiriKZ[Sistem.GetiriKZ.Count - 1] - Sistem.GetiriKZ[Date5AyBarNo]).ToString("0.0");
+
+        var Date60 = DateTime.Now.AddDays(-60);
+        int Date60BarNo = 0;
+        for (int i = V.Count - 1; i > 0; i--)
+            if (V[i].Date <= Date60) {{ Date60BarNo = i; break; }}
+        var kz60 = (Sistem.GetiriKZ[Sistem.GetiriKZ.Count - 1] - Sistem.GetiriKZ[Date60BarNo]).ToString("0.0");
+
+        var Date90 = DateTime.Now.AddDays(-90);
+        int Date90BarNo = 0;
+        for (int i = V.Count - 1; i > 0; i--)
+            if (V[i].Date <= Date90) {{ Date90BarNo = i; break; }}
+        var kz90 = (Sistem.GetiriKZ[Sistem.GetiriKZ.Count - 1] - Sistem.GetiriKZ[Date90BarNo]).ToString("0.0");
+
+        var Date180 = DateTime.Now.AddDays(-180);
+        int Date180BarNo = 0;
+        for (int i = V.Count - 1; i > 0; i--)
+            if (V[i].Date <= Date180) {{ Date180BarNo = i; break; }}
+        var kz180 = (Sistem.GetiriKZ[Sistem.GetiriKZ.Count - 1] - Sistem.GetiriKZ[Date180BarNo]).ToString("0.0");
+
+        var DateYilBasi = new DateTime(DateTime.Now.Year, 1, 1);
+        int DateYilBasiBarNo = 0;
+        for (int i = V.Count - 1; i > 0; i--)
+            if (V[i].Date <= DateYilBasi) {{ DateYilBasiBarNo = i; break; }}
+        var kzBuYil = (Sistem.GetiriKZ[Sistem.GetiriKZ.Count - 1] - Sistem.GetiriKZ[DateYilBasiBarNo]).ToString("0.0");
+
+        var Date1Yil = DateTime.Now.AddYears(-1);
+        int Date1YilBarNo = 0;
+        for (int i = V.Count - 1; i > 0; i--)
+            if (V[i].Date <= Date1Yil) {{ Date1YilBarNo = i; break; }}
+        var kz1Yil = (Sistem.GetiriKZ[Sistem.GetiriKZ.Count - 1] - Sistem.GetiriKZ[Date1YilBarNo]).ToString("0.0");
+
+        string Labels = SureTxt + " Ay" + Environment.NewLine +
+                        "Bugün" + Environment.NewLine +
+                        "Bu Hafta" + Environment.NewLine +
+                        "Bu Ay" + Environment.NewLine +
+                        "30 Gün" + Environment.NewLine +
+                        "60 Gün" + Environment.NewLine +
+                        "90 Gün" + Environment.NewLine +
+                        "180 Gün" + Environment.NewLine +
+                        "Bu Yıl" + Environment.NewLine +
+                        "Son 1 Yıl";
+
+        string Results = kzSure + kzSure_yuzde + Environment.NewLine +
+                         kzbugun + Environment.NewLine +
+                         kz5 + Environment.NewLine +
+                         kzbuay + Environment.NewLine +
+                         kz30 + Environment.NewLine +
+                         kz60 + Environment.NewLine +
+                         kz90 + Environment.NewLine +
+                         kz180 + Environment.NewLine +
+                         kzBuYil + Environment.NewLine +
+                         kz1Yil;
+
+        Sistem.Dortgen(2, 10, ilksatirY - 8, 230, 180, Color.Black, Color.Black, Color.White);
+        Sistem.GradientYaziEkle(Labels, 2, 20, ilksatirY, Color.White, Color.White, "Tahoma", 10);
+        Sistem.GradientYaziEkle(Results, 2, 90, ilksatirY, Color.Yellow, Color.DarkOrange, "Tahoma", 10);
+    }}
+
+    if (DetayPerformans)
+    {{
+        string Labels2 = "İşlem / Ortalama" + Environment.NewLine +
+                         "Karlı İşlem Oranı" + Environment.NewLine +
+                         "Profit Factor" + Environment.NewLine +
+                         "Mutlu Gün" + Environment.NewLine +
+                         "Mutsuz Gün" + Environment.NewLine +
+                         "MaxDD" + Environment.NewLine +
+                         "MaxDD Tarihi";
+
+        string Results2 = ToplamIslem + " / " + OrtalamaIslem + Environment.NewLine +
+                          "%" + KarliIslemOran + Environment.NewLine +
+                          ProfitFactor + Environment.NewLine +
+                          MutluGun + Environment.NewLine +
+                          MutsuzGun + Environment.NewLine +
+                          MaxDD + Environment.NewLine +
+                          MaxDDTarihi;
+
+        Sistem.Dortgen(2, 250, ilksatirY - 8, 220, 130, Color.Black, Color.Black, Color.White);
+        Sistem.GradientYaziEkle(Labels2, 2, 260, ilksatirY, Color.White, Color.White, "Tahoma", 10);
+        Sistem.GradientYaziEkle(Results2, 2, 385, ilksatirY, Color.Yellow, Color.DarkOrange, "Tahoma", 10);
+    }}
+}}
 '''
         return code
 
