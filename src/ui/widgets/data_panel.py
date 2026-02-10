@@ -305,6 +305,7 @@ class DataPanel(QWidget):
                 df = df.rename(columns=rename_map)
             
             self.df = df
+            self.df_raw = df.copy()  # Filtre için ham veriyi sakla
             self._update_preview()
             
             # Süreç oluştur - tam dosya yolunu hesapla
@@ -385,6 +386,7 @@ class DataPanel(QWidget):
             df = df.dropna(subset=['DateTime']).reset_index(drop=True)
             
             self.df = df
+            self.df_raw = df.copy()  # Filtre için ham veriyi sakla
             self._update_preview()
             
             # CSV dosya adından sembol ve periyot çıkar
