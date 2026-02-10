@@ -129,6 +129,67 @@ STRATEGY2_PARAM_GROUPS = {
     }
 }
 
+# ==============================================================================
+# TIMEFRAME-ADAPTIVE PARAMETER SCALING
+# ==============================================================================
+# Periyot (lookback) parametreleri: timeframe'e gore olceklenmeli
+# Esik/carpan/skor parametreleri: dimensionless, olceklenmez
+
+SCALABLE_PARAMS = {
+    # Strateji 1
+    'ars_period', 'adx_period', 'macdv_short', 'macdv_long', 'macdv_signal',
+    'netlot_period', 'bb_period', 'bb_avg_period', 'yatay_ars_bars',
+    # Strateji 2
+    'ars_ema_period', 'ars_atr_period', 'momentum_period', 'breakout_period',
+    'mfi_period', 'mfi_hhv_period', 'mfi_llv_period', 'volume_hhv_period',
+    'atr_exit_period', 'volume_llv_period',
+    # Ozel (kapali - scoring bar sayisi, exit bar sayisi)
+    # 'exit_confirm_bars' → cok kisa, olcekleme gereksiz
+}
+
+REFERENCE_PERIOD = 5  # dk - Stratejilerin orijinal tasarim periyodu
+
+def scale_param_groups(param_groups: dict, current_period_dk: int) -> dict:
+    """Parametre gruplarini timeframe'e gore olcekle.
+    
+    Formul: scale_factor = REFERENCE_PERIOD / current_period_dk
+    Sadece SCALABLE_PARAMS icindeki parametrelere uygulanir.
+    """
+    if current_period_dk == REFERENCE_PERIOD:
+        return param_groups  # 5dk = referans, degisiklik yok
+    
+    import copy
+    scaled = copy.deepcopy(param_groups)
+    scale = REFERENCE_PERIOD / current_period_dk
+    
+    for group_name, group_config in scaled.items():
+        for param_name, param_config in group_config['params'].items():
+            if param_name not in SCALABLE_PARAMS:
+                continue
+            
+            is_int = param_config['type'] == 'int'
+            
+            raw_min = param_config['min'] * scale
+            raw_max = param_config['max'] * scale
+            raw_default = param_config['default'] * scale
+            raw_step = param_config['step'] * scale
+            
+            if is_int:
+                param_config['min'] = max(2, round(raw_min))
+                param_config['max'] = max(3, round(raw_max))
+                param_config['default'] = max(param_config['min'], round(raw_default))
+                param_config['step'] = max(1, round(raw_step))
+            else:
+                param_config['min'] = max(0.001, round(raw_min, 4))
+                param_config['max'] = max(param_config['min'] + 0.001, round(raw_max, 4))
+                param_config['default'] = max(param_config['min'], round(raw_default, 4))
+                param_config['step'] = max(0.001, round(raw_step, 4))
+            
+            # default, min-max araliginda olmali
+            param_config['default'] = min(param_config['default'], param_config['max'])
+    
+    return scaled
+
 
 class ParameterGroupWidget(QGroupBox):
     """Tek bir parametre grubu widget'ı"""
@@ -714,6 +775,16 @@ class OptimizerPanel(QWidget):
         
         top_row.addSpacing(20)
         
+        # Periyot secimi (timeframe scaling icin)
+        top_row.addWidget(QLabel("Periyot:"))
+        self.period_combo = QComboBox()
+        self.period_combo.addItems(["1 dk", "5 dk", "15 dk", "60 dk"])
+        self.period_combo.setCurrentText("5 dk")
+        self.period_combo.currentIndexChanged.connect(self._on_period_changed)
+        top_row.addWidget(self.period_combo)
+        
+        top_row.addSpacing(10)
+        
         # Strateji seçimi
         top_row.addWidget(QLabel("Strateji:"))
         self.strategy_combo = QComboBox()
@@ -965,6 +1036,15 @@ class OptimizerPanel(QWidget):
         
         params_text.setText("\n".join(lines) if lines else "Parametre bulunamadi")
     
+    def _get_current_period_dk(self) -> int:
+        """Secili periyodu dakika olarak dondur."""
+        text = self.period_combo.currentText()
+        return int(text.split()[0])  # "5 dk" -> 5
+    
+    def _on_period_changed(self, index: int):
+        """Periyot degistiginde parametre araliklerini yeniden olcekle."""
+        self._on_strategy_changed(self.strategy_combo.currentIndex())
+    
     def _on_strategy_changed(self, index: int):
         """Strateji değiştiğinde parametre gruplarını güncelle"""
         # Mevcut grupları temizle
@@ -974,8 +1054,10 @@ class OptimizerPanel(QWidget):
                 item.widget().deleteLater()
         self.group_widgets.clear()
         
-        # Yeni grupları ekle
-        param_groups = STRATEGY1_PARAM_GROUPS if index == 0 else STRATEGY2_PARAM_GROUPS
+        # Yeni grupları ekle (timeframe'e gore olceklenmis)
+        base_groups = STRATEGY1_PARAM_GROUPS if index == 0 else STRATEGY2_PARAM_GROUPS
+        period_dk = self._get_current_period_dk()
+        param_groups = scale_param_groups(base_groups, period_dk)
         
         for group_name, group_config in param_groups.items():
             group_widget = ParameterGroupWidget(group_name, group_config)

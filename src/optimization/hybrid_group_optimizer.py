@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 from src.indicators.core import EMA, ATR, ADX, SMA, ARS, NetLot, MACDV
 from src.strategies.score_based import ScoreBasedStrategy
 from src.strategies.ars_trend_v2 import ARSTrendStrategyV2
-from src.optimization.fitness import quick_fitness
+from src.optimization.fitness import quick_fitness, calculate_sharpe
 
 # Opsiyonel: Veritabanı entegrasyonu
 try:
