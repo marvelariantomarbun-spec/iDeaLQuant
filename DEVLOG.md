@@ -1,6 +1,24 @@
-# 📓 IdealQuant - Geliştirme Günlüğü
+
+## 2026-02-11 (Optimizer Denetimi & UI Revizyonu)
+
+### ✅ Yapılanlar
+- **Optimizer Audit & Critical Fixes:**
+  - **Bayesian Fix:** `quick_fitness` argüman sırası düzeltildi (Win Count vs Sharpe).
+  - **GA Pool Fix:** Paralel işlemlerde komisyon/kayma aktarımı sağlandı.
+  - **Double Counting:** Net kârdan mükerrer maliyet düşülmesi hatası giderildi.
+  - **Cache Key Fix:** Bayesian MFI LLV/HHV anahtar çakışması düzeltildi.
+  
+- **UI & UX İyileştirmeleri:**
+  - **Dual Timers:** "Tümünü Çalıştır" modunda hem adım süresi hem de **Genel Toplam** süresi eklendi.
+  - **Tabular Parameters:** Parametre gösterimi düz metinden strateji gruplarına göre ayrılmış tablo yapısına geçirildi.
+  - **Progress Bar:** %98'de takılma sorunu giderildi, artık tamamlandığında %100 oluyor.
+
+### 📌 Mevcut Durum
+- **Aktif Faz:** Faz 6 - Desktop UI Testi & İyileştirme
+- **Sıradaki Adım:** PyInstaller Build & Son Kullanıcı Testi
 
 ---
+
 
 ## 2026-02-06 (Cuma Gece - Gelişmiş Fitness)
 

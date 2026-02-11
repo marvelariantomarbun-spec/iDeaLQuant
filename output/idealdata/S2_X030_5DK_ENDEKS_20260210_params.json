@@ -1,0 +1,10 @@
+{
+  "ars_ema": 3,
+  "ars_atr_p": 14,
+  "ars_atr_m": 0.5,
+  "momentum_p": 8,
+  "breakout_p1": 8,
+  "mfi_p": 14,
+  "atr_sl_mult": 2.0,
+  "atr_tp_mult": 3.0
+}

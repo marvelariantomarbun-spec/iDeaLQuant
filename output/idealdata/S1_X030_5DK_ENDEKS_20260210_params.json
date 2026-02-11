@@ -1,0 +1,7 @@
+{
+  "adx_period": 14,
+  "adx_threshold": 25,
+  "macdv_fast": 12,
+  "macdv_slow": 26,
+  "long_score_threshold": 3
+}
