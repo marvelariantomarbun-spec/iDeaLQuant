@@ -159,8 +159,7 @@ class BayesianObjective:
             result['pf'],
             result['max_dd'],
             result['trades'],
-            result.get('win_count', 0),
-            self.fitness_config.initial_capital,
+            sharpe=result.get('sharpe', 0.0),
             commission=self.commission,
             slippage=self.slippage
         )
@@ -269,7 +268,7 @@ class BayesianObjective:
             
             sharpe = calculate_sharpe(np.array(trade_returns), trades_per_year=trades_per_year_metric)
             
-        fit = quick_fitness(net_profit + (trades * cost_per_trade), pf, max_dd, trades, 
+        fit = quick_fitness(net_profit, pf, max_dd, trades, 
                            sharpe=sharpe,
                            commission=commission, slippage=slippage)
         
@@ -354,8 +353,8 @@ class BayesianObjective:
             highs.tolist(), lows.tolist(), closes.tolist(), volumes.tolist(), params['mfi_p'])))
         mfi_hhv = cache.get(f"mfi_hhv_{params['mfi_p']}_{params['mfi_hhv_p']}", 
                            lambda: np.array(HHV(mfi.tolist(), params['mfi_hhv_p'])))
-        mfi_llv = cache.get(f"mfi_llv_{params['mfi_p']}_{params['mfi_hhv_p']}", 
-                           lambda: np.array(LLV(mfi.tolist(), params['mfi_hhv_p'])))
+        mfi_llv = cache.get(f"mfi_llv_{params['mfi_p']}_{params['mfi_llv_p']}", 
+                           lambda: np.array(LLV(mfi.tolist(), params['mfi_llv_p'])))
         vol_hhv = cache.get(f"vol_hhv_{params['vol_p']}", lambda: np.array(HHV(volumes.tolist(), params['vol_p'])))
         
         # Çıkış parametreleri
@@ -522,7 +521,7 @@ class BayesianObjective:
         if len(trade_returns) > 1:
             sharpe = calculate_sharpe(np.array(trade_returns))
             
-        fit = quick_fitness(net_profit + (trades * cost_per_trade), pf, max_dd, trades, 
+        fit = quick_fitness(net_profit, pf, max_dd, trades, 
                            sharpe=sharpe,
                            commission=commission, slippage=slippage)
         

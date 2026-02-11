@@ -981,16 +981,20 @@ class OptimizerPanel(QWidget):
             # Alt kısım: Parametreler
             params_group = QGroupBox("Secili Sonucun Parametreleri")
             params_layout = QVBoxLayout(params_group)
-            params_layout.setContentsMargins(5, 5, 5, 5)
+            params_layout.setContentsMargins(2, 2, 2, 2)
             
-            params_text = QTextEdit()
-            params_text.setReadOnly(True)
-            params_text.setMaximumHeight(120)
-            params_text.setStyleSheet("font-family: Consolas, monospace; font-size: 9pt;")
-            params_text.setPlaceholderText("Sonuc tablosundan bir satir secin...")
-            params_layout.addWidget(params_text)
+            params_table = QTableWidget()
+            params_table.setColumnCount(3)
+            params_table.setHorizontalHeaderLabels(["Grup", "Parametre", "Değer"])
+            params_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+            params_table.setAlternatingRowColors(True)
+            params_table.verticalHeader().setVisible(False)
+            params_table.setMaximumHeight(180)
+            params_table.setMinimumHeight(100)
+            params_layout.addWidget(params_table)
+            
             splitter.addWidget(params_group)
-            self.method_params_text[method] = params_text
+            self.method_params_text[method] = params_table # Reusing reference name for now
             
             # Splitter oranları
             splitter.setSizes([250, 120])
@@ -1004,12 +1008,12 @@ class OptimizerPanel(QWidget):
         return group
     
     def _on_result_selected(self, method: str):
-        """Sonuç tablosunda satır seçildiğinde parametreleri göster"""
+        """Sonuç tablosunda satır seçildiğinde parametreleri tablo halinde göster"""
         table = self.method_tables.get(method)
-        params_text = self.method_params_text.get(method)
+        params_table = self.method_params_text.get(method) # Table widget
         results = self.method_results.get(method, [])
         
-        if not table or not params_text or not results:
+        if not table or not params_table or not results:
             return
         
         selected_rows = table.selectionModel().selectedRows()
@@ -1021,20 +1025,59 @@ class OptimizerPanel(QWidget):
             return
         
         result = results[row_idx]
+        params = result.get('params', result)
         
-        # Performans metrikleri dışındaki tüm parametreleri göster
-        excluded_keys = {'net_profit', 'trades', 'pf', 'max_dd', 'sharpe', 'fitness', 'group', 'win_count', 'win_rate'}
-        params = {k: v for k, v in result.items() if k not in excluded_keys}
+        # Strateji bazlı grup tanımını al
+        strategy_idx = self.strategy_combo.currentIndex()
+        group_defs = STRATEGY1_PARAM_GROUPS if strategy_idx == 0 else STRATEGY2_PARAM_GROUPS
         
-        # Formatla
-        lines = []
-        for key, value in sorted(params.items()):
-            if isinstance(value, float):
-                lines.append(f"{key}: {value:.4f}")
-            else:
-                lines.append(f"{key}: {value}")
+        # Tabloyu doldur
+        params_table.setRowCount(0)
         
-        params_text.setText("\n".join(lines) if lines else "Parametre bulunamadi")
+        # Bulunan tüm parametreler
+        all_params = set(params.keys())
+        processed_params = set()
+        
+        # Gruplar halinde ekle
+        for group_id, group_info in group_defs.items():
+            group_label = group_info.get('label', group_id)
+            group_params = group_info.get('params', {})
+            
+            for p_name, p_info in group_params.items():
+                if p_name in params:
+                    p_label = p_info.get('label', p_name)
+                    val = params[p_name]
+                    
+                    row = params_table.rowCount()
+                    params_table.insertRow(row)
+                    
+                    # Grup ismi (Sadece grubun ilk parametresinde gösterilsin)
+                    group_item = QTableWidgetItem(group_label if p_name == list(group_params.keys())[0] else "")
+                    group_item.setBackground(Qt.lightGray if p_name == list(group_params.keys())[0] else Qt.transparent)
+                    
+                    val_str = f"{val:.4f}" if isinstance(val, float) else str(val)
+                    
+                    params_table.setItem(row, 0, group_item)
+                    params_table.setItem(row, 1, QTableWidgetItem(p_label))
+                    params_table.setItem(row, 2, QTableWidgetItem(val_str))
+                    
+                    processed_params.add(p_name)
+        
+        # Kalan parametreleri (eğer varsa) 'Diğer' grubuna ekle
+        remaining = all_params - processed_params - {'net_profit', 'trades', 'pf', 'max_dd', 'sharpe', 'fitness', 'group', 'win_count', 'win_rate', 'params', 'test_net', 'test_pf'}
+        if remaining:
+            first = True
+            for p_name in sorted(list(remaining)):
+                val = params[p_name]
+                row = params_table.rowCount()
+                params_table.insertRow(row)
+                params_table.setItem(row, 0, QTableWidgetItem("Diger" if first else ""))
+                params_table.setItem(row, 1, QTableWidgetItem(p_name))
+                val_str = f"{val:.4f}" if isinstance(val, float) else str(val)
+                params_table.setItem(row, 2, QTableWidgetItem(val_str))
+                first = False
+        
+        params_table.resizeRowsToContents()
     
     def _get_current_period_dk(self) -> int:
         """Secili periyodu dakika olarak dondur."""
@@ -1261,6 +1304,9 @@ class OptimizerPanel(QWidget):
         # Kuyruğu doldur
         self.optimization_queue = ["Hibrit Grup", "Genetik", "Bayesian"]
         
+        # Genelbaşlangıç zamanı
+        self.total_start_time = time.time()
+        
         # İlkini başlat
         self._start_next_in_queue()
         
@@ -1296,7 +1342,14 @@ class OptimizerPanel(QWidget):
         elapsed = self._get_elapsed_str()
         msg = getattr(self, 'current_message', 'Çalışıyor...')
         eta = getattr(self, 'current_eta', '--:--')
-        self.status_label.setText(f"{msg} (Geçen: {elapsed} - Kalan: {eta})")
+        
+        # Toplam süre (Queue modunda ise)
+        total_info = ""
+        if hasattr(self, 'total_start_time') and getattr(self, 'optimization_queue', None) is not None:
+            total_elapsed = time.time() - self.total_start_time
+            total_info = f"\n[GENEL TOPLAM] Süre: {self._format_time(total_elapsed)}"
+            
+        self.status_label.setText(f"{msg} (Geçen: {elapsed} - Kalan: {eta}){total_info}")
 
     def _get_elapsed_str(self) -> str:
         if not hasattr(self, 'start_time'):
@@ -1357,6 +1410,7 @@ class OptimizerPanel(QWidget):
     def _on_finished(self):
         self.worker = None
         self.timer.stop()
+        self.progress_bar.setValue(100)
         
         final_time = self._get_elapsed_str()
         
@@ -1367,10 +1421,17 @@ class OptimizerPanel(QWidget):
             from PySide6.QtCore import QTimer
             QTimer.singleShot(1000, self._start_next_in_queue)
         else:
+            total_time_str = ""
+            if hasattr(self, 'total_start_time'):
+                total_elapsed = time.time() - self.total_start_time
+                total_time_str = f" | Toplam Süre: {self._format_time(total_elapsed)}"
+                # Temizle
+                self.total_start_time = None
+                
             self.start_btn.setEnabled(True)
             self.run_all_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)
-            self.status_label.setText(f"Optimizasyon Tamamlandı (Toplam Süre: {final_time})")
+            self.status_label.setText(f"Optimizasyon Tamamlandı (Adım Süresi: {final_time}{total_time_str})")
     
     def _display_results(self, results: list, method: str = None):
         """Sonuçları ilgili tab'a yaz"""

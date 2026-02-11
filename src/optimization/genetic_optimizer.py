@@ -660,7 +660,7 @@ class FitnessEvaluator:
             sharpe = calculate_sharpe(np.array(trade_returns), trades_per_year=trades_per_year_metric)
 
         fitness = quick_fitness(
-            net_profit + (trades * cost_per_trade), # quick_fitness'a brüt karı veriyoruz, o maliyeti düşecek
+            net_profit,
             pf, max_dd, trades,
             sharpe=sharpe,
             commission=commission,
@@ -821,7 +821,7 @@ class GeneticOptimizer:
         # Pool'u bir kez oluştur ve tüm run boyunca kullan
         pool = None
         if self.n_parallel > 1:
-            pool = Pool(processes=self.n_parallel, initializer=_init_pool, initargs=(self.df, self.strategy_index))
+            pool = Pool(processes=self.n_parallel, initializer=_init_pool, initargs=(self.df, self.strategy_index, self.commission, self.slippage))
             
         try:
             # İlk popülasyon
