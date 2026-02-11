@@ -1,4 +1,22 @@
 
+## 2026-02-12 (Veri Yükleme Fix & Optimizer Denetimi)
+
+### ✅ Yapılanlar
+- **Veri Yükleme & Dropdown Fix:**
+  - `OptimizerPanel` dropdown seçiminde eski süreçlerin sonuçlarını veritabanından çekme mantığı eklendi.
+  - Veritabanına `sharpe` sütunu eklendi ve otomatik migration (sütun ekleme) sistemi kuruldu.
+- **UI & Parametre Paneli:**
+  - "Seçili Sonucun Parametre Ayrıntıları" panelinin boş gelme sorunu (widget lookup bug) düzeltildi.
+- **Optimizer Denetimi & Temizlik:**
+  - GA ve Bayesian optimizer'larda 200+ satırlık ölü kod ve ulaşılamaz bloklar temizlendi.
+  - `ARSPulseStrategy` projenin bir parçası olmadığı için `archive/` klasörüne taşındı ve tüm referansları silindi.
+
+### 📌 Mevcut Durum
+- **Aktif Faz:** Faz 6 - Desktop UI Testi & İyileştirme
+- **Sıradaki Adım:** PyInstaller Build & Son Kullanıcı Testi
+
+---
+
 ## 2026-02-11 (Optimizer Denetimi & UI Revizyonu)
 
 ### ✅ Yapılanlar

@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QProgressBar, QTableWidget,
     QTableWidgetItem, QHeaderView, QComboBox, QSpinBox,
     QDoubleSpinBox, QFormLayout, QMessageBox, QSplitter,
-    QScrollArea, QCheckBox, QFrame
+    QScrollArea, QCheckBox, QFrame, QGridLayout
 )
 from PySide6.QtCore import Signal, Qt, QThread
 from typing import Dict, List, Any
@@ -563,6 +563,7 @@ class OptimizationWorker(QThread):
                 'trades': best.get('trades', 0),
                 'pf': best.get('pf', 0),
                 'max_dd': best.get('max_dd', 0),
+                'sharpe': best.get('sharpe', 0),
                 'fitness': best.get('fitness', 0),
                 **best_params
             }
@@ -589,7 +590,7 @@ class OptimizationWorker(QThread):
         else:
             self._emit_progress(5, f"Bayesian Optimizer baslatiliyor ({strategy_name})...")
         
-        n_trials = 100  # Deneme sayısı
+        n_trials = 500  # Deneme sayısı (Artırıldı)
         
         self._emit_progress(10, f"Optuna calismasi olusturuluyor...")
         optimizer = BayesianOptimizer(
@@ -625,6 +626,7 @@ class OptimizationWorker(QThread):
                 'trades': best.get('trades', 0),
                 'pf': best.get('pf', 0),
                 'max_dd': best.get('max_dd', 0),
+                'sharpe': best.get('sharpe', 0),
                 'fitness': best.get('fitness', 0),
                 **best_params
             }
@@ -956,48 +958,64 @@ class OptimizerPanel(QWidget):
         self.method_tables = {}  # Her metod için tablo
         self.method_params_text = {}  # Her metod için parametre gösterimi
         self.method_results = {}  # Her metod için sonuç verisi
+        self.method_grid_panels = {}  # Her metod için grid paneli referansı
         
         method_names = ["Hibrit Grup", "Genetik", "Bayesian"]
         
         for method in method_names:
-            # Her tab için bir Splitter (üst: tablo, alt: parametreler)
+            # Her tab icin basitleştirilmiş layout
             tab_widget = QWidget()
             tab_layout = QVBoxLayout(tab_widget)
             tab_layout.setContentsMargins(2, 2, 2, 2)
+            tab_layout.setSpacing(2)
             
+            # Splitter: Tablo üstte (kompakt), Params altta (geniş)
             splitter = QSplitter(Qt.Vertical)
             
-            # Üst kısım: Sonuç tablosu
+            # Üst kısım: Sonuç tablosu (kompakt - sadece satır kadar yer kaplar)
             table = QTableWidget()
             table.setAlternatingRowColors(True)
             table.setSortingEnabled(True)
             table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
             table.setSelectionBehavior(QTableWidget.SelectRows)
             table.setSelectionMode(QTableWidget.SingleSelection)
+            table.setMaximumHeight(120)  # Kompakt tablo
             table.itemSelectionChanged.connect(lambda m=method: self._on_result_selected(m))
             splitter.addWidget(table)
             self.method_tables[method] = table
             
-            # Alt kısım: Parametreler
-            params_group = QGroupBox("Secili Sonucun Parametreleri")
-            params_layout = QVBoxLayout(params_group)
-            params_layout.setContentsMargins(2, 2, 2, 2)
+            # Alt kısım: Parametreler - Scrollable ve Grid Panel
+            from PySide6.QtWidgets import QScrollArea
+            scroll_area = QScrollArea()
+            scroll_area.setWidgetResizable(True)
+            scroll_area.setFrameShape(QFrame.NoFrame)
             
-            params_table = QTableWidget()
-            params_table.setColumnCount(3)
-            params_table.setHorizontalHeaderLabels(["Grup", "Parametre", "Değer"])
-            params_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-            params_table.setAlternatingRowColors(True)
-            params_table.verticalHeader().setVisible(False)
-            params_table.setMaximumHeight(180)
-            params_table.setMinimumHeight(100)
-            params_layout.addWidget(params_table)
+            scroll_content = QWidget()
+            self.method_params_text[method] = scroll_content
+            scroll_layout = QVBoxLayout(scroll_content)
+            scroll_layout.setContentsMargins(5, 2, 5, 2)
+            scroll_layout.setSpacing(6)
             
-            splitter.addWidget(params_group)
-            self.method_params_text[method] = params_table # Reusing reference name for now
+            params_group = QGroupBox("Seçili Sonucun Parametre Ayrıntıları")
+            params_group.setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #555; margin-top: 6px; padding: 8px; }")
+            params_group_layout = QVBoxLayout(params_group)
             
-            # Splitter oranları
-            splitter.setSizes([250, 120])
+            # Parametrelerin gösterileceği grid alanı
+            grid_panel = QWidget()
+            grid_layout = QGridLayout(grid_panel)
+            grid_layout.setSpacing(8)
+            params_group_layout.addWidget(grid_panel)
+            self.method_grid_panels[method] = grid_panel
+            
+            scroll_layout.addWidget(params_group)
+            scroll_layout.addStretch()
+            
+            scroll_area.setWidget(scroll_content)
+            splitter.addWidget(scroll_area)
+            
+            # Splitter oranlari: Tablo %25, Params %75
+            splitter.setStretchFactor(0, 1)
+            splitter.setStretchFactor(1, 3)
             
             tab_layout.addWidget(splitter)
             self.results_tab_widget.addTab(tab_widget, method)
@@ -1008,34 +1026,45 @@ class OptimizerPanel(QWidget):
         return group
     
     def _on_result_selected(self, method: str):
-        """Sonuç tablosunda satır seçildiğinde parametreleri tablo halinde göster"""
+        """Sonuç tablosunda satır seçildiğinde parametreleri grid paneline yerleştir"""
         table = self.method_tables.get(method)
-        params_table = self.method_params_text.get(method) # Table widget
+        params_container = self.method_params_text.get(method) # Scroll content container
         results = self.method_results.get(method, [])
         
-        if not table or not params_table or not results:
+        if not table or not params_container or not results:
             return
-        
+            
         selected_rows = table.selectionModel().selectedRows()
         if not selected_rows:
             return
-        
+            
         row_idx = selected_rows[0].row()
         if row_idx >= len(results):
             return
-        
+            
         result = results[row_idx]
         params = result.get('params', result)
         
+        # Grid panelini direkt referanstan al
+        grid_panel = self.method_grid_panels.get(method)
+        if not grid_panel: return
+        grid_layout = grid_panel.layout()
+        if not grid_layout: return
+        
+        # Mevcut widgetları temizle
+        while grid_layout.count():
+            item = grid_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+                
         # Strateji bazlı grup tanımını al
         strategy_idx = self.strategy_combo.currentIndex()
         group_defs = STRATEGY1_PARAM_GROUPS if strategy_idx == 0 else STRATEGY2_PARAM_GROUPS
         
-        # Tabloyu doldur
-        params_table.setRowCount(0)
+        row = 0
+        col = 0
+        max_cols = 4 # Yan yana 4 parametre
         
-        # Bulunan tüm parametreler
-        all_params = set(params.keys())
         processed_params = set()
         
         # Gruplar halinde ekle
@@ -1043,41 +1072,85 @@ class OptimizerPanel(QWidget):
             group_label = group_info.get('label', group_id)
             group_params = group_info.get('params', {})
             
+            # Bu gruptan en az bir parametre var mı?
+            valid_group = any(p in params for p in group_params)
+            if not valid_group: continue
+            
+            # Grup Başlığı (Yeni satır)
+            if col != 0: 
+                row += 1
+                col = 0
+            
+            header = QLabel(f"--- {group_label} ---")
+            header.setStyleSheet("color: #aaa; font-style: italic; margin-top: 5px;")
+            grid_layout.addWidget(header, row, 0, 1, max_cols)
+            row += 1
+            
             for p_name, p_info in group_params.items():
                 if p_name in params:
                     p_label = p_info.get('label', p_name)
                     val = params[p_name]
-                    
-                    row = params_table.rowCount()
-                    params_table.insertRow(row)
-                    
-                    # Grup ismi (Sadece grubun ilk parametresinde gösterilsin)
-                    group_item = QTableWidgetItem(group_label if p_name == list(group_params.keys())[0] else "")
-                    group_item.setBackground(Qt.lightGray if p_name == list(group_params.keys())[0] else Qt.transparent)
-                    
                     val_str = f"{val:.4f}" if isinstance(val, float) else str(val)
                     
-                    params_table.setItem(row, 0, group_item)
-                    params_table.setItem(row, 1, QTableWidgetItem(p_label))
-                    params_table.setItem(row, 2, QTableWidgetItem(val_str))
+                    # Parametre etiketi ve değeri
+                    param_widget = QWidget()
+                    p_layout = QHBoxLayout(param_widget)
+                    p_layout.setContentsMargins(0, 0, 0, 0)
                     
+                    lbl = QLabel(f"{p_label}:")
+                    lbl.setStyleSheet("color: #ddd;")
+                    val_lbl = QLabel(val_str)
+                    val_lbl.setStyleSheet("color: #4CAF50; font-weight: bold;")
+                    
+                    p_layout.addWidget(lbl)
+                    p_layout.addWidget(val_lbl)
+                    p_layout.addStretch()
+                    
+                    grid_layout.addWidget(param_widget, row, col)
                     processed_params.add(p_name)
-        
+                    
+                    col += 1
+                    if col >= max_cols:
+                        col = 0
+                        row += 1
+            
+            if col != 0:
+                col = 0
+                row += 1
+
         # Kalan parametreleri (eğer varsa) 'Diğer' grubuna ekle
-        remaining = all_params - processed_params - {'net_profit', 'trades', 'pf', 'max_dd', 'sharpe', 'fitness', 'group', 'win_count', 'win_rate', 'params', 'test_net', 'test_pf'}
+        all_params = set(params.keys())
+        remaining = all_params - processed_params - {'net_profit', 'trades', 'pf', 'max_dd', 'sharpe', 'fitness', 'group', 'win_count', 'win_rate', 'params', 'test_net', 'test_pf', 'test_trades', 'test_dd', 'test_sharpe'}
+        
         if remaining:
-            first = True
+            if col != 0: row += 1; col = 0
+            header = QLabel("--- Diğer Parametreler ---")
+            header.setStyleSheet("color: #aaa; font-style: italic; margin-top: 5px;")
+            grid_layout.addWidget(header, row, 0, 1, max_cols)
+            row += 1
+            col = 0
+            
             for p_name in sorted(list(remaining)):
                 val = params[p_name]
-                row = params_table.rowCount()
-                params_table.insertRow(row)
-                params_table.setItem(row, 0, QTableWidgetItem("Diger" if first else ""))
-                params_table.setItem(row, 1, QTableWidgetItem(p_name))
                 val_str = f"{val:.4f}" if isinstance(val, float) else str(val)
-                params_table.setItem(row, 2, QTableWidgetItem(val_str))
-                first = False
-        
-        params_table.resizeRowsToContents()
+                
+                param_widget = QWidget()
+                p_layout = QHBoxLayout(param_widget)
+                p_layout.setContentsMargins(0, 0, 0, 0)
+                
+                lbl = QLabel(f"{p_name}:")
+                val_lbl = QLabel(val_str)
+                val_lbl.setStyleSheet("color: #4CAF50; font-weight: bold;")
+                
+                p_layout.addWidget(lbl)
+                p_layout.addWidget(val_lbl)
+                p_layout.addStretch()
+                
+                grid_layout.addWidget(param_widget, row, col)
+                col += 1
+                if col >= max_cols:
+                    col = 0
+                    row += 1
     
     def _get_current_period_dk(self) -> int:
         """Secili periyodu dakika olarak dondur."""
@@ -1127,10 +1200,55 @@ class OptimizerPanel(QWidget):
             self.current_process_id = processes[0]['process_id']
     
     def _on_process_changed(self, text: str):
-        """Süreç seçimi değiştiğinde"""
+        """Süreç seçimi değiştiğinde veritabanından eski sonuçları yükle"""
         idx = self.process_combo.currentIndex()
-        if idx >= 0:
-            self.current_process_id = self.process_combo.itemData(idx)
+        if idx < 0: return
+        
+        self.current_process_id = self.process_combo.itemData(idx)
+        if not self.current_process_id: return
+        
+        # UI temizle
+        for method in self.method_tables.keys():
+            self.method_tables[method].setRowCount(0)
+            self.method_results[method] = []
+        
+        # Veritabanından yükle
+        results = db.get_optimization_results(self.current_process_id)
+        if not results: return
+        
+        # Metoda göre grupla ve göster
+        method_map = {
+            'hibrit': 'Hibrit Grup',
+            'genetik': 'Genetik',
+            'bayesian': 'Bayesian'
+        }
+        
+        grouped_results = {}
+        for res in results:
+            method_key = res.get('method', '').lower()
+            ui_method = method_map.get(method_key, method_key.capitalize())
+            
+            if ui_method not in grouped_results:
+                grouped_results[ui_method] = []
+            
+            # DB formatından UI formatına çevir
+            formatted_res = {
+                'net_profit': res.get('net_profit', 0),
+                'trades': res.get('total_trades', 0),
+                'pf': res.get('profit_factor', 0),
+                'max_dd': res.get('max_drawdown', 0),
+                'win_rate': res.get('win_rate', 0),
+                'sharpe': res.get('sharpe', 0),
+                'fitness': res.get('fitness', 0),
+                'test_net': res.get('test_net', 0),
+                'test_pf': res.get('test_pf', 0),
+                'test_sharpe': res.get('test_sharpe', 0),
+                'params': res.get('params', {})
+            }
+            grouped_results[ui_method].append(formatted_res)
+            
+        for ui_method, res_list in grouped_results.items():
+            self._display_results(res_list, ui_method)
     
     def set_process(self, process_id: str):
         """DataPanel'den gelen süreç ID'sini ayarla"""
@@ -1396,7 +1514,11 @@ class OptimizerPanel(QWidget):
                     'profit_factor': best.get('pf', best.get('profit_factor', 0)),
                     'total_trades': best.get('trades', best.get('total_trades', 0)),
                     'win_rate': best.get('win_rate', 0),
-                    'fitness': best.get('fitness', 0)
+                    'sharpe': best.get('sharpe', 0),
+                    'fitness': best.get('fitness', 0),
+                    'test_net': best.get('test_net', 0),
+                    'test_pf': best.get('test_pf', 0),
+                    'test_sharpe': best.get('test_sharpe', 0)
                 }
             )
         

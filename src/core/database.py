@@ -84,7 +84,11 @@ class Database:
                 profit_factor REAL DEFAULT 0,
                 total_trades INTEGER DEFAULT 0,
                 win_rate REAL DEFAULT 0,
+                sharpe REAL DEFAULT 0,
                 fitness REAL DEFAULT 0,
+                test_net REAL DEFAULT 0,
+                test_pf REAL DEFAULT 0,
+                test_sharpe REAL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (process_id) REFERENCES processes(process_id),
                 UNIQUE(process_id, strategy_index, method)
@@ -145,6 +149,18 @@ class Database:
                 
             if 'slippage' not in columns:
                 cursor.execute("ALTER TABLE processes ADD COLUMN slippage REAL DEFAULT 0")
+                
+            # optimization_results tablosuna sharpe ekle
+            cursor.execute("PRAGMA table_info(optimization_results)")
+            columns_opt = [info[1] for info in cursor.fetchall()]
+            if 'sharpe' not in columns_opt:
+                cursor.execute("ALTER TABLE optimization_results ADD COLUMN sharpe REAL DEFAULT 0")
+            if 'test_net' not in columns_opt:
+                cursor.execute("ALTER TABLE optimization_results ADD COLUMN test_net REAL DEFAULT 0")
+            if 'test_pf' not in columns_opt:
+                cursor.execute("ALTER TABLE optimization_results ADD COLUMN test_pf REAL DEFAULT 0")
+            if 'test_sharpe' not in columns_opt:
+                cursor.execute("ALTER TABLE optimization_results ADD COLUMN test_sharpe REAL DEFAULT 0")
                 
             conn.commit()
         except Exception as e:
@@ -293,8 +309,9 @@ class Database:
         cursor.execute("""
             INSERT INTO optimization_results 
                 (process_id, strategy_index, method, params, net_profit, 
-                 max_drawdown, profit_factor, total_trades, win_rate, fitness)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 max_drawdown, profit_factor, total_trades, win_rate, sharpe, fitness,
+                 test_net, test_pf, test_sharpe)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(process_id, strategy_index, method) 
             DO UPDATE SET
                 params = excluded.params,
@@ -303,16 +320,24 @@ class Database:
                 profit_factor = excluded.profit_factor,
                 total_trades = excluded.total_trades,
                 win_rate = excluded.win_rate,
+                sharpe = excluded.sharpe,
                 fitness = excluded.fitness,
+                test_net = excluded.test_net,
+                test_pf = excluded.test_pf,
+                test_sharpe = excluded.test_sharpe,
                 created_at = CURRENT_TIMESTAMP
         """, (
             process_id, strategy_index, method, params_json,
             result.get('net_profit', 0),
-            result.get('max_drawdown', 0),
-            result.get('profit_factor', 0),
-            result.get('total_trades', 0),
+            result.get('max_drawdown', result.get('max_dd', 0)),
+            result.get('profit_factor', result.get('pf', 0)),
+            result.get('total_trades', result.get('trades', 0)),
             result.get('win_rate', 0),
-            result.get('fitness', 0)
+            result.get('sharpe', 0),
+            result.get('fitness', 0),
+            result.get('test_net', 0),
+            result.get('test_pf', 0),
+            result.get('test_sharpe', 0)
         ))
         
         conn.commit()

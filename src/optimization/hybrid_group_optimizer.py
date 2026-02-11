@@ -425,8 +425,8 @@ def _evaluate_params_static(params: Dict[str, Any], strategy_index: int, commiss
             
     np_val, trades, pf, dd, sharpe = fast_backtest(g_cache.closes, signals, exits_long, exits_short, commission, slippage, trading_days=trading_days)
     
-    # Fitness hesapla
-    fit = quick_fitness(np_val, pf, dd, trades, sharpe=sharpe, commission=commission, slippage=slippage)
+    # Fitness hesapla - Maliyetler np_val icinde dusuruldu, çift sayımı önlemek için 0.0 gonderilmeli
+    fit = quick_fitness(np_val, pf, dd, trades, sharpe=sharpe, commission=0.0, slippage=0.0)
     
     return {'net_profit': np_val, 'trades': trades, 'pf': pf, 'max_dd': dd, 'sharpe': sharpe, 'fitness': fit}
 

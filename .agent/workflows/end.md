@@ -38,6 +38,9 @@ git add -A
 
 # Commit with descriptive message
 git commit -m "feat/fix/docs: <description>"
+
+# Push to remote repository
+git push
 ```
 
 ## 3. Final Verification
@@ -54,6 +57,7 @@ git status
 git add -A
 git status
 git commit -m "<type>: <message>"
+git push
 ```
 
 ## Common Commit Types

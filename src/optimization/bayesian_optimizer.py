@@ -106,8 +106,7 @@ class BayesianObjective:
         elif strategy_index == 1:
             base_params = STRATEGY2_PARAMS
         else:
-            from src.optimization.genetic_optimizer import STRATEGY3_PARAMS
-            base_params = STRATEGY3_PARAMS
+            raise ValueError(f"Geçersiz strategy_index: {strategy_index}. Sadece 0 (Gatekeeper) ve 1 (ARS Trend v2) desteklenir.")
             
         self.param_defs = {k: list(v) for k, v in base_params.items()}  # Mutable copy
         
@@ -151,18 +150,10 @@ class BayesianObjective:
         elif self.strategy_index == 1:
             result = self._evaluate_strategy2(params)
         else:
-            result = self._evaluate_strategy3(params)
+            raise ValueError(f"Geçersiz strategy_index: {self.strategy_index}")
         
-        # Fitness hesapla
-        fitness = quick_fitness(
-            result['net_profit'],
-            result['pf'],
-            result['max_dd'],
-            result['trades'],
-            sharpe=result.get('sharpe', 0.0),
-            commission=self.commission,
-            slippage=self.slippage
-        )
+        # Fitness degerini kullan (her _evaluate_strategy* icinde zaten hesaplandi)
+        fitness = result.get('fitness', -999999)
         
         # En iyi sonucu sakla
         if fitness > self.best_fitness:
@@ -172,46 +163,7 @@ class BayesianObjective:
         
         return fitness
     
-    def _evaluate_strategy3(self, params: Dict[str, Any]) -> Dict[str, float]:
-        """Strateji 3 (ARS Pulse) için fitness hesapla"""
-        try:
-            from src.strategies.ars_pulse_strategy import ARSPulseStrategy
-            from src.optimization.hybrid_group_optimizer import fast_backtest
-            from src.optimization.fitness import quick_fitness
-            
-            # Data preparation
-            df = pd.DataFrame({
-                'Kapanis': self.cache.closes,
-                'Yuksek': self.cache.highs,
-                'Dusuk': self.cache.lows,
-                'Acilis': self.cache.opens
-            })
-            
-            # Run Strategy
-            strat = ARSPulseStrategy(**params)
-            signals, _ = strat.run(df)
-            
-            # Trading days calculation
-            trading_days = 252.0
-            if self.cache.dates and len(self.cache.dates) > 1:
-                try:
-                    trading_days = (self.cache.dates[-1] - self.cache.dates[0]).days
-                except: pass
-            
-            # Backtest
-            np_val, trades, pf, dd, sharpe = fast_backtest(self.cache.closes, signals, (signals == 0), (signals == 0), self.commission, self.slippage, trading_days=trading_days)
-            
-            return {
-                'net_profit': np_val,
-                'trades': trades,
-                'pf': pf,
-                'max_dd': dd,
-                'fitness': np_val, # Simple fitness
-                'win_count': trades // 2
-            }
-        except Exception as e:
-            return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'win_count': 0}
-    
+
     def _evaluate_strategy1(self, params: Dict[str, Any]) -> Dict[str, float]:
         """Strateji 1 için fitness hesapla - ScoreBasedStrategy kullanarak"""
         try:
@@ -232,77 +184,60 @@ class BayesianObjective:
             # Backtest
             np_val, trades, pf, dd, sharpe = fast_backtest(self.cache.closes, signals, exits_long, exits_short, self.commission, self.slippage, trading_days=trading_days)
             
-            # Fitness hesapla
-            fit = quick_fitness(np_val, pf, dd, trades, sharpe=sharpe, commission=self.commission, slippage=self.slippage)
+            # Fitness hesapla - Maliyetler np_val icinde dusuruldu
+            fit = quick_fitness(np_val, pf, dd, trades, sharpe=sharpe, commission=0.0, slippage=0.0)
             
             return {
                 'net_profit': np_val,
                 'trades': trades,
                 'pf': pf,
                 'max_dd': dd,
+                'sharpe': sharpe,
                 'fitness': fit,
                 'win_count': trades // 2  # Yaklaşık
             }
         except Exception as e:
             return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'win_count': 0}
 
-    # ... (skipping _evaluate_strategy2 wrapper) ...
-
-    def _run_backtest(self, params: Dict[str, Any], commission: float = 0.0, slippage: float = 0.0) -> Dict[str, float]:
-        # ... (initial part of _run_backtest remains same until end) ...
-        # ... (skipping to the end where sharpe is calculated) ...
-        
-        # Fitness hesapla
-        from src.optimization.fitness import quick_fitness
-        
-        sharpe = 0.0
-        if len(trade_returns) > 1:
+    def _evaluate_strategy2(self, params: Dict[str, Any]) -> Dict[str, float]:
+        """Strateji 2 (ARS Trend v2) için fitness hesapla - Gercek strateji kullanarak"""
+        try:
+            from src.strategies.ars_trend_v2 import ARSTrendStrategyV2
+            from src.optimization.hybrid_group_optimizer import fast_backtest
+            
+            # Gercek strateji sinifini kullan (Seans saati, tatil filtreleri vb. icin)
+            strategy = ARSTrendStrategyV2.from_config_dict(self.cache, params)
+            signals, exits_long, exits_short = strategy.generate_all_signals()
+            
+            # Trading days calculation
             trading_days = 252.0
             if self.cache.dates and len(self.cache.dates) > 1:
                 try:
-                   trading_days = (self.cache.dates[-1] - self.cache.dates[0]).days
+                    trading_days = (self.cache.dates[-1] - self.cache.dates[0]).days
                 except: pass
             
-            if trading_days < 1: trading_days = 252.0
-            trades_per_year_metric = len(trade_returns) * (252.0 / trading_days)
+            # Backtest
+            np_val, trades, pf, dd, sharpe = fast_backtest(
+                self.cache.closes, signals, exits_long, exits_short, 
+                self.commission, self.slippage, trading_days=trading_days
+            )
             
-            sharpe = calculate_sharpe(np.array(trade_returns), trades_per_year=trades_per_year_metric)
+            # Fitness - Maliyetler np_val icinde
+            fit = quick_fitness(
+                np_val, pf, dd, trades, sharpe=sharpe,
+                commission=0.0, slippage=0.0
+            )
             
-        fit = quick_fitness(net_profit, pf, max_dd, trades, 
-                           sharpe=sharpe,
-                           commission=commission, slippage=slippage)
-        
-        return {
-            'net_profit': net_profit,
-            'trades': trades,
-            'pf': pf,
-            'max_dd': max_dd,
-            'fitness': fit,
-            'win_count': 0 # TODO: Gerçek win_count
-        }
-    
-    def _evaluate_strategy2(self, params: Dict[str, Any]) -> Dict[str, float]:
-        """Strateji 2 için fitness hesapla - inline backtest"""
-        # Yeni parametre isimlerini eski isimlere map'le (mevcut _run_backtest uyumluluğu için)
-        mapped_params = {
-            'ars_ema': params.get('ars_ema_period', 3),
-            'ars_atr_p': params.get('ars_atr_period', 10),
-            'ars_atr_m': params.get('ars_atr_mult', 0.5),
-            'momentum_p': params.get('momentum_period', 5),
-            'breakout_p1': params.get('breakout_period', 10),
-            'breakout_p2': params.get('breakout_period', 10) + 10,  # Offset
-            'breakout_p3': params.get('breakout_period', 10) + 30,  # Offset 
-            'mfi_p': params.get('mfi_period', 14),
-            'mfi_hhv_p': params.get('mfi_hhv_period', 14),
-            'vol_p': params.get('volume_hhv_period', 14),
-            'atr_exit_p': params.get('atr_exit_period', 14),
-            'atr_sl_mult': params.get('atr_sl_mult', 2.0),
-            'atr_tp_mult': params.get('atr_tp_mult', 5.0),
-            'atr_trail_mult': params.get('atr_trail_mult', 2.0),
-            'exit_confirm_bars': params.get('exit_confirm_bars', 2),
-            'exit_confirm_mult': params.get('exit_confirm_mult', 1.0),
-        }
-        return self._run_backtest(mapped_params, self.commission, self.slippage)
+            return {
+                'net_profit': np_val,
+                'trades': trades,
+                'pf': pf,
+                'max_dd': dd,
+                'sharpe': sharpe,
+                'fitness': fit
+            }
+        except Exception as e:
+            return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'fitness': -999999}
     
     def _run_backtest(self, params: Dict[str, Any], commission: float = 0.0, slippage: float = 0.0) -> Dict[str, float]:
         """Backtest çalıştır (Planlanmış Mimari v4.1)"""
@@ -544,7 +479,7 @@ class BayesianOptimizer:
     def __init__(
         self, 
         df: pd.DataFrame, 
-        n_trials: int = 100,
+        n_trials: int = 500,
         fitness_config: Optional[FitnessConfig] = None,
         strategy_index: int = 1,
         seed: int = 42,
@@ -651,7 +586,7 @@ class BayesianOptimizer:
 # ==============================================================================
 # MAIN
 # ==============================================================================
-def run_bayesian_optimization(n_trials: int = 100) -> Dict[str, Any]:
+def run_bayesian_optimization(n_trials: int = 500) -> Dict[str, Any]:
     """Ana fonksiyon"""
     print("Veri yukleniyor...")
     df = load_data()
@@ -675,6 +610,6 @@ def run_bayesian_optimization(n_trials: int = 100) -> Dict[str, Any]:
 
 if __name__ == "__main__":
     try:
-        run_bayesian_optimization(n_trials=100)
+        run_bayesian_optimization(n_trials=500)
     except KeyboardInterrupt:
         print("\nIptal edildi.")

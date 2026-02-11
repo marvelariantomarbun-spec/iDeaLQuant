@@ -104,17 +104,6 @@ STRATEGY2_PARAMS = {
     'volume_llv_period': (10, 21, 2, True),
 }
 
-# ARS Pulse Strategy (Strict Gatekeeper) - Strategy 3
-STRATEGY3_PARAMS = {
-    'ema_period': (1, 1000, 1, True),
-    'k_value': (0.1, 10.0, 0.1, False),
-    'macdv_k': (8, 21, 1, True),
-    'macdv_u': (20, 45, 1, True),
-    'macdv_sig': (5, 15, 1, True),
-    'netlot_period': (3, 10, 1, True),
-    'adx_th': (15, 45, 5, True),
-    'netlot_th': (5, 45, 5, True),
-}
 
 
 class ParameterSpace:
@@ -132,7 +121,7 @@ class ParameterSpace:
         elif strategy_index == 1:
             base_params = STRATEGY2_PARAMS
         else:
-            base_params = STRATEGY3_PARAMS
+            raise ValueError(f"Geçersiz strategy_index: {strategy_index}. Sadece 0 (Gatekeeper) ve 1 (ARS Trend v2) desteklenir.")
             
         self.params = {k: list(v) for k, v in base_params.items()}  # Mutable copy
         
@@ -275,70 +264,14 @@ class FitnessEvaluator:
             elif self.strategy_index == 1:
                 return self._evaluate_strategy2(params)
             else:
-                return self._evaluate_strategy3(params)
+                raise ValueError(f"Geçersiz strategy_index: {self.strategy_index}")
         except Exception as e:
             import traceback
             traceback.print_exc()
             print(f"DEBUG: Genetic Eval Failed: {str(e)}")
             return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'fitness': -999999}
 
-    def _evaluate_strategy3(self, params: Dict[str, Any]) -> Dict[str, float]:
-        """Strateji 3 (ARS Pulse) için fitness hesapla"""
-        from src.strategies.ars_pulse_strategy import ARSPulseStrategy
-        from src.optimization.hybrid_group_optimizer import fast_backtest
-        from src.optimization.fitness import quick_fitness
-        
-        # Data preparation for ARSPulseStrategy
-        closes = self.closes
-        highs = self.highs
-        lows = self.lows
-        opens = self.opens
-        df = pd.DataFrame({
-            'Kapanis': closes,
-            'Yuksek': highs,
-            'Dusuk': lows,
-            'Acilis': opens
-        })
-        
-        # Run Strategy
-        strat = ARSPulseStrategy(**params)
-        signals, _ = strat.run(df)
-        
-        # Convert signals to entry/exit for fast_backtest
-        # (This is a simplification, ARSPulseStrategy.run already handles the state machine)
-        # But fast_backtest expects raw signals + exits.
-        # Actually, ARSPulseStrategy returns position signals (1, -1, 0).
-        # We need to adapt it for the core backtest engine.
-        
-        # Trading days calculation
-        trading_days = 252.0
-        if self.dates and len(self.dates) > 1:
-            try:
-                start_date = self.dates[0]
-                end_date = self.dates[-1]
-                if hasattr(start_date, 'date'):
-                    trading_days = (end_date - start_date).days
-            except:
-                pass
 
-        # Position-to-Trade calculation logic
-        np_val, trades, pf, dd, sharpe = fast_backtest(closes, signals, (signals == 0), (signals == 0), self.commission, self.slippage, trading_days=trading_days)
-        
-        fitness = quick_fitness(
-            np_val, trades, pf, dd, sharpe=sharpe,
-            initial_capital=10000.0,
-            commission=self.commission,
-            slippage=self.slippage
-        )
-        
-        return {
-            'net_profit': np_val,
-            'trades': trades,
-            'pf': pf,
-            'max_dd': dd,
-            'fitness': fitness
-        }
-    
     def _evaluate_strategy1(self, params: Dict[str, Any]) -> Dict[str, float]:
         """Strateji 1 (Gatekeeper) için fitness hesapla"""
         from src.strategies.score_based import ScoreBasedStrategy
@@ -377,12 +310,12 @@ class FitnessEvaluator:
         # Backtest
         np_val, trades, pf, dd, sharpe = fast_backtest(self.closes, signals, exits_long, exits_short, self.commission, self.slippage, trading_days=trading_days)
         
-        # Fitness hesapla (fitness.py'deki standart mantık)
+        # Fitness hesapla - Maliyetler np_val icinde dusuruldu, commission/slippage=0.0 gonderilmeli
         fitness = quick_fitness(
-            np_val, trades, pf, dd, sharpe=sharpe,
+            np_val, pf, dd, trades, sharpe=sharpe,
             initial_capital=10000.0,
-            commission=self.commission,
-            slippage=self.slippage
+            commission=0.0,
+            slippage=0.0
         )
         
         return {
@@ -390,292 +323,70 @@ class FitnessEvaluator:
             'trades': trades,
             'pf': pf,
             'max_dd': dd,
+            'sharpe': sharpe,
             'fitness': fitness
         }
     
     def _evaluate_strategy2(self, params: Dict[str, Any]) -> Dict[str, float]:
-        """Strateji 2 (ARS Trend v2) için fitness hesapla - inline backtest"""
+        """Strateji 2 (ARS Trend v2) için fitness hesapla"""
         try:
-            # Parametreleri çıkar (yeni isimlerle)
-            ars_ema = int(params.get('ars_ema_period', 3))
-            ars_atr_p = int(params.get('ars_atr_period', 10))
-            ars_atr_m = float(params.get('ars_atr_mult', 0.5))
-            mom_p = int(params.get('momentum_period', 5))
-            brk_p = int(params.get('breakout_period', 10))
-            mfi_p = int(params.get('mfi_period', 14))
-            mfi_hhv_p = int(params.get('mfi_hhv_period', 14))
-            mfi_llv_p = int(params.get('mfi_llv_period', 14))
-            vol_hhv_p = int(params.get('volume_hhv_period', 14))
-            atr_exit_p = int(params.get('atr_exit_period', 14))
-            atr_sl_mult = float(params.get('atr_sl_mult', 2.0))
-            atr_tp_mult = float(params.get('atr_tp_mult', 5.0))
-            atr_trail_mult = float(params.get('atr_trail_mult', 2.0))
-            exit_confirm_bars = int(params.get('exit_confirm_bars', 2))
-            exit_confirm_mult = float(params.get('exit_confirm_mult', 1.0))
-            volume_mult = float(params.get('volume_mult', 0.8))
+            from src.strategies.ars_trend_v2 import ARSTrendStrategyV2
+            from src.optimization.hybrid_group_optimizer import fast_backtest
+            from src.optimization.fitness import quick_fitness
             
-            # İndikatörleri hesapla (cached)
-            ars = self._get_cached(
-                f'ars_{ars_ema}_{ars_atr_p}_{ars_atr_m:.2f}',
-                lambda: np.array(ARS_Dynamic(
-                    self.typical.tolist(), self.highs.tolist(), 
-                    self.lows.tolist(), self.closes.tolist(),
-                    ema_period=ars_ema, atr_period=ars_atr_p, atr_mult=ars_atr_m,
-                    min_k=0.002, max_k=0.015
-                ))
-            )
-            
-            # ATR (çıkış için)
-            from src.indicators.core import ATR as ATR_fn, EMA
-            atr = self._get_cached(f'atr_{atr_exit_p}', lambda: np.array(ATR_fn(
-                self.highs.tolist(), self.lows.tolist(), self.closes.tolist(), atr_exit_p)))
-            
-            # EMA (dinamikK hesaplaması için)
-            ars_ema_arr = self._get_cached(f'ema_{ars_ema}', lambda: np.array(EMA(self.typical.tolist(), ars_ema)))
-            
-            # dinamikK hesapla
-            n = self.n
-            dinamikK = np.zeros(n)
-            for i in range(n):
-                if ars_ema_arr[i] > 0:
-                    dinamikK[i] = (atr[i] / ars_ema_arr[i]) * ars_atr_m
-                    dinamikK[i] = max(0.002, min(0.015, dinamikK[i]))
-                else:
-                    dinamikK[i] = 0.002
-            
-            mom = self._get_cached(f'mom_{mom_p}', lambda: np.array(Momentum(self.closes.tolist(), mom_p)))
-            
-            # Tek periyot için HHV/LLV (basitleştirildi)
-            hhv = self._get_cached(f'hhv_{brk_p}', lambda: np.array(HHV(self.highs.tolist(), brk_p)))
-            llv = self._get_cached(f'llv_{brk_p}', lambda: np.array(LLV(self.lows.tolist(), brk_p)))
-            
-            mfi = self._get_cached(f'mfi_{mfi_p}', lambda: np.array(MoneyFlowIndex(
-                self.highs.tolist(), self.lows.tolist(), self.closes.tolist(), self.volumes.tolist(), mfi_p
-            )))
-            mfi_hhv = self._get_cached(f'mfi_hhv_{mfi_p}_{mfi_hhv_p}', lambda: np.array(HHV(mfi.tolist(), mfi_hhv_p)))
-            mfi_llv = self._get_cached(f'mfi_llv_{mfi_p}_{mfi_llv_p}', lambda: np.array(LLV(mfi.tolist(), mfi_llv_p)))
-            vol_hhv = self._get_cached(f'vol_hhv_{vol_hhv_p}', lambda: np.array(HHV(self.volumes.tolist(), vol_hhv_p)))
-            
-            # Backtest
-            result = self._run_backtest_s2(
-                ars, atr, dinamikK, mom, hhv, llv,
-                mfi, mfi_hhv, mfi_llv, vol_hhv,
-                atr_sl_mult, atr_tp_mult, atr_trail_mult,
-                exit_confirm_bars, exit_confirm_mult, volume_mult, brk_p
-            )
-            
-            return result
-            
-        except Exception as e:
-            return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'fitness': -999999}
-    
-    def _run_backtest_s2(self, ars, atr, dinamikK, mom, hhv, llv,
-                      mfi, mfi_hhv, mfi_llv, vol_hhv,
-                      atr_sl, atr_tp, atr_trail,
-                      exit_confirm_bars, exit_confirm_mult, volume_mult, brk_p,
-                      commission: float = 0.0, slippage: float = 0.0) -> Dict[str, float]:
-        """Strateji 2 için hızlı backtest"""
-        n = self.n
-        closes = self.closes
-        highs = self.highs
-        lows = self.lows
-        volumes = self.volumes
-        
-        # Trend yönü
-        trend = np.zeros(n, dtype=np.int32)
-        for i in range(n):
-            if closes[i] > ars[i]:
-                trend[i] = 1
-            elif closes[i] < ars[i]:
-                trend[i] = -1
-        
-        pos = 0
-        entry_price = 0.0
-        extreme_price = 0.0
-        entry_atr = 0.0
-        bars_against_trend = 0
-        
-        gross_profit = 0.0
-        gross_loss = 0.0
-        trades = 0
-        max_dd = 0.0
-        peak_equity = 0.0
-        current_equity = 0.0
-        
-        current_trend = 0
-        warmup = max(brk_p, 60)
-        
-        # Sharpe hesabı için getirileri tut
-        trade_returns = []
+            # Simple wrapper for cache
+            class SimpleCache:
+                def __init__(self, evaluator):
+                    self.opens = evaluator.opens
+                    self.highs = evaluator.highs
+                    self.lows = evaluator.lows
+                    self.closes = evaluator.closes
+                    self.typical = evaluator.typical
+                    self.lots = evaluator.volumes
+                    self.volumes = evaluator.volumes
+                    self.dates = evaluator.dates
+                    self.times = evaluator.dates
+                    self.n = evaluator.n
+                    self.df = evaluator.df
 
-        
-        for i in range(warmup, n):
-            if trend[i] != 0:
-                current_trend = trend[i]
+            cache = SimpleCache(self)
             
-            current_dinamikK = dinamikK[i]
+            # Gercek strateji sinifini kullan (Seans saati, tatil filtreleri vb. icin)
+            strategy = ARSTrendStrategyV2.from_config_dict(cache, params)
+            signals, exits_long, exits_short = strategy.generate_all_signals()
             
-            # ========== EXIT LOGIC ==========
-            if pos == 1:
-                if closes[i] > extreme_price:
-                    extreme_price = closes[i]
-                
-                exit_signal = False
-                
-                # 1. Çift Teyitli Trend Dönüşü
-                if current_trend == -1:
-                    bars_against_trend += 1
-                    distance_threshold = ars[i] * (1 - current_dinamikK * exit_confirm_mult)
-                    distance_ok = closes[i] < distance_threshold
-                    if bars_against_trend >= exit_confirm_bars and distance_ok:
-                        exit_signal = True
-                else:
-                    bars_against_trend = 0
-                
-                # 2. Take Profit (ATR bazlı)
-                if closes[i] >= entry_price + entry_atr * atr_tp:
-                    exit_signal = True
-                
-                # 3. Stop Loss (ATR bazlı)
-                if closes[i] <= entry_price - entry_atr * atr_sl:
-                    exit_signal = True
-                
-                # 4. Trailing Stop
-                if closes[i] < extreme_price - entry_atr * atr_trail:
-                    exit_signal = True
-                
-                if exit_signal:
-                    pnl = closes[i] - entry_price
-                    trade_returns.append(pnl)
-
-                    if pnl > 0:
-                        gross_profit += pnl
-                    else:
-                        gross_loss += abs(pnl)
-                    current_equity += pnl
-                    pos = 0
-                    bars_against_trend = 0
-                    
-                    if current_equity > peak_equity:
-                        peak_equity = current_equity
-                    dd = peak_equity - current_equity
-                    if dd > max_dd:
-                        max_dd = dd
-                        
-            elif pos == -1:
-                if closes[i] < extreme_price:
-                    extreme_price = closes[i]
-                
-                exit_signal = False
-                
-                # 1. Çift Teyitli Trend Dönüşü
-                if current_trend == 1:
-                    bars_against_trend += 1
-                    distance_threshold = ars[i] * (1 + current_dinamikK * exit_confirm_mult)
-                    distance_ok = closes[i] > distance_threshold
-                    if bars_against_trend >= exit_confirm_bars and distance_ok:
-                        exit_signal = True
-                else:
-                    bars_against_trend = 0
-                
-                # 2. Take Profit (ATR bazlı)
-                if closes[i] <= entry_price - entry_atr * atr_tp:
-                    exit_signal = True
-                
-                # 3. Stop Loss (ATR bazlı)
-                if closes[i] >= entry_price + entry_atr * atr_sl:
-                    exit_signal = True
-                
-                # 4. Trailing Stop
-                if closes[i] > extreme_price + entry_atr * atr_trail:
-                    exit_signal = True
-                
-                if exit_signal:
-                    pnl = entry_price - closes[i]
-                    trade_returns.append(pnl)
-
-                    if pnl > 0:
-                        gross_profit += pnl
-                    else:
-                        gross_loss += abs(pnl)
-                    current_equity += pnl
-                    pos = 0
-                    bars_against_trend = 0
-                    
-                    if current_equity > peak_equity:
-                        peak_equity = current_equity
-                    dd = peak_equity - current_equity
-                    if dd > max_dd:
-                        max_dd = dd
-            
-            # ========== ENTRY LOGIC (simplified single period) ==========
-            if pos == 0:
-                if current_trend == 1:
-                    price_ok = closes[i] > hhv[i-1] or highs[i] > hhv[i-1]
-                    mom_ok = mom[i] > 100
-                    mfi_ok = mfi[i] >= mfi_hhv[i-1]
-                    vol_ok = volumes[i] >= vol_hhv[i-1] * volume_mult
-                    
-                    if price_ok and mom_ok and mfi_ok and vol_ok:
-                        pos = 1
-                        entry_price = closes[i]
-                        extreme_price = closes[i]
-                        entry_atr = atr[i] if atr[i] > 0 else 1.0
-                        bars_against_trend = 0
-                        trades += 1
-                        
-                elif current_trend == -1:
-                    price_ok = closes[i] < llv[i-1] or lows[i] < llv[i-1]
-                    mom_ok = mom[i] < 100
-                    mfi_ok = mfi[i] <= mfi_llv[i-1]
-                    vol_ok = volumes[i] >= vol_hhv[i-1] * volume_mult
-                    
-                    if price_ok and mom_ok and mfi_ok and vol_ok:
-                        pos = -1
-                        entry_price = closes[i]
-                        extreme_price = closes[i]
-                        entry_atr = atr[i] if atr[i] > 0 else 1.0
-                        bars_against_trend = 0
-                        trades += 1
-        
-        # Maliyetleri düş
-        cost_per_trade = commission + slippage
-        net_profit = gross_profit - gross_loss - (trades * cost_per_trade)
-        pf = (gross_profit / (gross_loss + trades * cost_per_trade)) if (gross_loss + trades * cost_per_trade) > 0 else 999
-        
-        # Fitness hesapla (fitness.py'deki standart mantık)
-        # Sharpe hesapla
-        from src.optimization.fitness import quick_fitness, calculate_sharpe
-        sharpe = 0.0
-        if len(trade_returns) > 1:
+            # Trading days calculation
             trading_days = 252.0
             if self.dates and len(self.dates) > 1:
                 try:
-                   trading_days = (self.dates[-1] - self.dates[0]).days
+                    trading_days = (self.dates[-1] - self.dates[0]).days
                 except: pass
             
-            if trading_days < 1: trading_days = 252.0
-            trades_per_year_metric = len(trade_returns) * (252.0 / trading_days)
+            # Backtest (Hibrit ile ayni fonksiyonu kullan)
+            np_val, trades, pf, dd, sharpe = fast_backtest(
+                self.closes, signals, exits_long, exits_short, 
+                self.commission, self.slippage, trading_days=trading_days
+            )
             
-            sharpe = calculate_sharpe(np.array(trade_returns), trades_per_year=trades_per_year_metric)
+            # Fitness - Maliyetler np_val icinde, burada 0.0 gonderilmeli
+            fitness = quick_fitness(
+                np_val, pf, dd, trades, sharpe=sharpe,
+                commission=0.0, slippage=0.0
+            )
+            
+            return {
+                'net_profit': np_val,
+                'trades': trades,
+                'pf': pf,
+                'max_dd': dd,
+                'sharpe': sharpe,
+                'fitness': fitness
+            }
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'fitness': -999999}
 
-        fitness = quick_fitness(
-            net_profit,
-            pf, max_dd, trades,
-            sharpe=sharpe,
-            commission=commission,
-            slippage=slippage
-        )
-        if trades < 10:
-            fitness *= 0.5
-        
-        return {
-            'net_profit': net_profit,
-            'trades': trades,
-            'pf': pf,
-            'max_dd': max_dd,
-            'fitness': fitness
-        }
 
 
 # ==============================================================================
