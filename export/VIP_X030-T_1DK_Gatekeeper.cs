@@ -4,31 +4,31 @@
 // Sembol: VIP_X030-T
 // Periyot: 1 dakika
 // Vade Tipi: ENDEKS
-// Oluşturma: 2026-02-09 01:52
+// Oluşturma: 2026-02-12 17:46
 // ===============================================================================================
 
 // --- PARAMETRELER ---
-var MIN_ONAY_SKORU = 3;
+var MIN_ONAY_SKORU = 2;
 var CIKIS_HASSASIYETI = 3;
-var ARS_PERIYOT = 5;
-var ARS_K = 0.01;
-var ADX_PERIOD = 18;
-var ADX_ESIK = 50.0f;
-var NETLOT_ESIK = 27.5f;
-var NETLOT_PERIOD = 8;
-var MACDV_K = 8;
-var MACDV_U = 32;
-var MACDV_SIG = 10;
-var MACDV_ESIK = 20.001f;
+var ARS_PERIYOT = 30;
+var ARS_K = 0.005;
+var ADX_PERIOD = 50;
+var ADX_ESIK = 40.0f;
+var NETLOT_ESIK = 12.5f;
+var NETLOT_PERIOD = 45;
+var MACDV_K = 90;
+var MACDV_U = 100;
+var MACDV_SIG = 35;
+var MACDV_ESIK = 10.001f;
 
 // --- YATAY FİLTRE PARAMETRELERİ ---
-var YATAY_ARS_BARS = 5;
-var ARS_MESAFE_ESIK = 0.275f;
-var YATAY_ADX_ESIK = 22.5f;
-var BB_PERIOD = 140;
+var YATAY_ARS_BARS = 75;
+var ARS_MESAFE_ESIK = 0.25f;
+var YATAY_ADX_ESIK = 20.0f;
+var BB_PERIOD = 400;
 var BB_STD = 1.5f;
-var BB_WIDTH_MULT = 1.1f;
-var BB_AVG_PERIOD = 75;
+var BB_WIDTH_MULT = 0.5f;
+var BB_AVG_PERIOD = 300;
 var FILTRE_SKOR_ESIK = 2;
 
 // --- VADE TİPİ ---
