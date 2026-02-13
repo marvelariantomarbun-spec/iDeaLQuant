@@ -163,8 +163,13 @@ class ParameterSpace:
         return np.array(genes)
     
     def decode(self, genes: np.ndarray) -> Dict[str, Any]:
-        """Genleri parametre sözlüğüne çevir"""
-        return {name: genes[i] for i, name in enumerate(self.param_names)}
+        """Genleri parametre sözlüğüne çevir (numpy tiplerini native Python'a çevir)"""
+        result = {}
+        for i, name in enumerate(self.param_names):
+            val = genes[i]
+            is_int = self.params[name][3]  # (min, max, step, is_int)
+            result[name] = int(round(val)) if is_int else float(val)
+        return result
     
     def mutate(self, genes: np.ndarray) -> np.ndarray:
         """Mutasyon uygula"""

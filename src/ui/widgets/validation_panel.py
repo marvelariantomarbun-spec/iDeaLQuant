@@ -210,39 +210,56 @@ class BatchAnalysisWorker(QThread):
     def run(self):
         self.start_time = time.time()
         total = len(self.comparison_data)
+        steps_per_item = 3  # WFA, Stability, MC
+        total_steps = total * steps_per_item
+        current_step = 0
         
         for i, item in enumerate(self.comparison_data):
             if not self.is_running: break
-            
-            elapsed = time.time() - self.start_time
-            elapsed_str = self._format_time(elapsed)
-            
-            # ETA hesapla
-            eta_str = "--:--"
-            if i > 0:
-                avg_time = elapsed / i
-                remaining_items = total - i
-                remaining_time = avg_time * remaining_items
-                eta_str = self._format_time(remaining_time)
-            
-            percent = int((i / total) * 100)
             
             opt_id = item['id']
             params = item['params']
             idx = item['strategy_index']
             
-            self.progress.emit(percent, f"Analiz ediliyor: ID {opt_id}...", elapsed_str, eta_str)
+            wfa_score = 0.0
+            stab_score = 0.0
+            mc_prob = 0.0
             
-            # 1. WFA Score (Efficiency)
-            # Hızlı WFA: %70 In / %30 Out
-            wfa_score = self._calc_wfa(idx, params)
+            try:
+                # 1. WFA Score
+                elapsed = time.time() - self.start_time
+                elapsed_str = self._format_time(elapsed)
+                eta_str = self._format_time((elapsed / max(current_step, 1)) * (total_steps - current_step)) if current_step > 0 else "--:--"
+                percent = int((current_step / total_steps) * 100)
+                self.progress.emit(percent, f"[{i+1}/{total}] WFA hesaplanıyor (ID {opt_id})...", elapsed_str, eta_str)
+                wfa_score = self._calc_wfa(idx, params)
+            except Exception as e:
+                print(f"WFA hatası (ID {opt_id}): {e}")
+            current_step += 1
             
-            # 2. Stability Score
-            # Merkez + 4 komşu
-            stab_score = self._calc_stability(idx, params)
+            try:
+                # 2. Stability Score
+                elapsed = time.time() - self.start_time
+                elapsed_str = self._format_time(elapsed)
+                eta_str = self._format_time((elapsed / max(current_step, 1)) * (total_steps - current_step)) if current_step > 0 else "--:--"
+                percent = int((current_step / total_steps) * 100)
+                self.progress.emit(percent, f"[{i+1}/{total}] Stabilite hesaplanıyor (ID {opt_id})...", elapsed_str, eta_str)
+                stab_score = self._calc_stability(idx, params)
+            except Exception as e:
+                print(f"Stabilite hatası (ID {opt_id}): {e}")
+            current_step += 1
             
-            # 3. Monte Carlo Score (1000 iterasyon)
-            mc_prob = self._calc_mc(idx, params)
+            try:
+                # 3. Monte Carlo Score
+                elapsed = time.time() - self.start_time
+                elapsed_str = self._format_time(elapsed)
+                eta_str = self._format_time((elapsed / max(current_step, 1)) * (total_steps - current_step)) if current_step > 0 else "--:--"
+                percent = int((current_step / total_steps) * 100)
+                self.progress.emit(percent, f"[{i+1}/{total}] Monte Carlo hesaplanıyor (ID {opt_id})...", elapsed_str, eta_str)
+                mc_prob = self._calc_mc(idx, params)
+            except Exception as e:
+                print(f"Monte Carlo hatası (ID {opt_id}): {e}")
+            current_step += 1
             
             self.result.emit(opt_id, wfa_score, stab_score, mc_prob)
             
@@ -281,9 +298,11 @@ class BatchAnalysisWorker(QThread):
         if base_pnl == 0: return 0
         
         scores = []
-        # Random 5 parametreyi %10 oynat
+        # Sadece strateji parametrelerini seç (DB sonuç alanlarını hariç tut)
         import random
-        keys = list([k for k,v in params.items() if isinstance(v, (int, float))])
+        from src.optimization.genetic_optimizer import STRATEGY1_PARAMS, STRATEGY2_PARAMS
+        valid_keys = set(STRATEGY1_PARAMS.keys() if idx == 0 else STRATEGY2_PARAMS.keys())
+        keys = [k for k in params.keys() if k in valid_keys and isinstance(params[k], (int, float))]
         sample_keys = random.sample(keys, min(5, len(keys)))
         
         for k in sample_keys:
@@ -1138,6 +1157,7 @@ YORUM:
         self.batch_worker.progress.connect(self._on_batch_progress)
         self.batch_worker.result.connect(self._on_batch_result)
         self.batch_worker.finished_all.connect(self._on_batch_finished)
+        self.batch_worker.finished.connect(self._on_batch_thread_done)  # Safety net
         
         self.batch_analyze_btn.setEnabled(False)
         self.batch_progress_bar.setValue(0)
@@ -1145,6 +1165,7 @@ YORUM:
         self.batch_status_label.setVisible(True)
         self.batch_status_label.setText("Analiz başlatılıyor...")
         
+        self._batch_finished_handled = False  # Çift çağrı koruması
         self.start_time = time.time()
         self.timer.start(1000)
         
@@ -1185,6 +1206,9 @@ YORUM:
                     break
                     
     def _on_batch_finished(self):
+        if self._batch_finished_handled: return
+        self._batch_finished_handled = True
+        
         self.timer.stop()
         final_time = self._format_time(time.time() - self.start_time)
         
@@ -1193,6 +1217,18 @@ YORUM:
         self.batch_analyze_btn.setText("Seçilenleri Analiz Et")
         self.batch_analyze_btn.setEnabled(True)
         QMessageBox.information(self, "Tamamlandı", f"Toplu analiz tamamlandı.\nToplam Süre: {final_time}")
+    
+    def _on_batch_thread_done(self):
+        """Safety net: QThread.finished sinyali — thread herhangi bir nedenle ölürse UI'yı kurtar"""
+        if self._batch_finished_handled: return  # finished_all zaten bunu işledi
+        self._batch_finished_handled = True
+        
+        self.timer.stop()
+        self.batch_progress_bar.setVisible(False)
+        self.batch_status_label.setText("Analiz tamamlandı (bazı öğelerde hata olabilir)")
+        self.batch_status_label.setStyleSheet("font-weight: bold; color: #FF9800; font-size: 13px;")
+        self.batch_analyze_btn.setText("Seçilenleri Analiz Et")
+        self.batch_analyze_btn.setEnabled(True)
     
     def _select_for_final(self, optimization_id: int):
         """Seçili satırı işaretle ve verilerini yükle"""
