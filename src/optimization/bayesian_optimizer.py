@@ -85,7 +85,7 @@ def load_data() -> pd.DataFrame:
 # ==============================================================================
 
 # Genetik optimizer'dan parametre tanımlarını import et
-from src.optimization.genetic_optimizer import STRATEGY1_PARAMS, STRATEGY2_PARAMS
+from src.optimization.genetic_optimizer import STRATEGY1_PARAMS, STRATEGY2_PARAMS, STRATEGY3_PARAMS
 
 
 class BayesianObjective:
@@ -105,8 +105,10 @@ class BayesianObjective:
             base_params = STRATEGY1_PARAMS
         elif strategy_index == 1:
             base_params = STRATEGY2_PARAMS
+        elif strategy_index == 2:
+            base_params = STRATEGY3_PARAMS
         else:
-            raise ValueError(f"Geçersiz strategy_index: {strategy_index}. Sadece 0 (Gatekeeper) ve 1 (ARS Trend v2) desteklenir.")
+            raise ValueError(f"Gecersiz strategy_index: {strategy_index}. 0/1/2 desteklenir.")
             
         self.param_defs = {k: list(v) for k, v in base_params.items()}  # Mutable copy
         
@@ -149,8 +151,10 @@ class BayesianObjective:
             result = self._evaluate_strategy1(params)
         elif self.strategy_index == 1:
             result = self._evaluate_strategy2(params)
+        elif self.strategy_index == 2:
+            result = self._evaluate_strategy3(params)
         else:
-            raise ValueError(f"Geçersiz strategy_index: {self.strategy_index}")
+            raise ValueError(f"Gecersiz strategy_index: {self.strategy_index}")
         
         # Fitness degerini kullan (her _evaluate_strategy* icinde zaten hesaplandi)
         fitness = result.get('fitness', -999999)
@@ -223,6 +227,42 @@ class BayesianObjective:
             )
             
             # Fitness - Maliyetler np_val icinde
+            fit = quick_fitness(
+                np_val, pf, dd, trades, sharpe=sharpe,
+                commission=0.0, slippage=0.0
+            )
+            
+            return {
+                'net_profit': np_val,
+                'trades': trades,
+                'pf': pf,
+                'max_dd': dd,
+                'sharpe': sharpe,
+                'fitness': fit
+            }
+        except Exception as e:
+            return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'fitness': -999999}
+
+    def _evaluate_strategy3(self, params: Dict[str, Any]) -> Dict[str, float]:
+        """Strateji 3 (Paradise) icin fitness hesapla"""
+        try:
+            from src.strategies.paradise_strategy import ParadiseStrategy
+            from src.optimization.hybrid_group_optimizer import fast_backtest
+            
+            strategy = ParadiseStrategy.from_config_dict(self.cache, params)
+            signals, exits_long, exits_short = strategy.generate_all_signals()
+            
+            trading_days = 252.0
+            if self.cache.dates and len(self.cache.dates) > 1:
+                try:
+                    trading_days = (self.cache.dates[-1] - self.cache.dates[0]).days
+                except: pass
+            
+            np_val, trades, pf, dd, sharpe = fast_backtest(
+                self.cache.closes, signals, exits_long, exits_short, 
+                self.commission, self.slippage, trading_days=trading_days
+            )
+            
             fit = quick_fitness(
                 np_val, pf, dd, trades, sharpe=sharpe,
                 commission=0.0, slippage=0.0

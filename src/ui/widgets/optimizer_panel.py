@@ -443,15 +443,15 @@ class OptimizationWorker(QThread):
     def _run_hybrid(self):
         """Hibrit Grup optimizasyonu"""
         from src.optimization.hybrid_group_optimizer import (
-            HybridGroupOptimizer, IndicatorCache, STRATEGY1_GROUPS, STRATEGY2_GROUPS, ParameterGroup
+            HybridGroupOptimizer, IndicatorCache, STRATEGY1_GROUPS, STRATEGY2_GROUPS, STRATEGY3_GROUPS, ParameterGroup
         )
         
         self._emit_progress(5, "Cache olusturuluyor...")
         cache = IndicatorCache(self.data)
         
         # Strateji seçiminden orijinal grupları al
-        original_groups = STRATEGY1_GROUPS if self.strategy_index == 0 else STRATEGY2_GROUPS
-        strategy_name = "Strateji 1" if self.strategy_index == 0 else "Strateji 2"
+        original_groups = {0: STRATEGY1_GROUPS, 1: STRATEGY2_GROUPS, 2: STRATEGY3_GROUPS}.get(self.strategy_index, STRATEGY1_GROUPS)
+        strategy_name = {0: "Strateji 1", 1: "Strateji 2", 2: "Strateji 3 (Paradise)"}.get(self.strategy_index, "Strateji 1")
         
         # UI'dan gelen range'leri gruplara uyarla (Dynamic Sync)
         synced_groups = []
@@ -513,7 +513,7 @@ class OptimizationWorker(QThread):
         """Genetik Algoritma optimizasyonu - Her iki strateji için"""
         from src.optimization.genetic_optimizer import GeneticOptimizer, GeneticConfig
         
-        strategy_name = "Strateji 1" if self.strategy_index == 0 else "Strateji 2"
+        strategy_name = {0: "Strateji 1", 1: "Strateji 2", 2: "Paradise"}.get(self.strategy_index, "Strateji")
         
         # Cascade modu kontrolu
         if self.narrowed_ranges:
@@ -581,7 +581,7 @@ class OptimizationWorker(QThread):
         """Bayesian (Optuna) optimizasyonu - Her iki strateji için"""
         from src.optimization.bayesian_optimizer import BayesianOptimizer
         
-        strategy_name = "Strateji 1" if self.strategy_index == 0 else "Strateji 2"
+        strategy_name = {0: "Strateji 1", 1: "Strateji 2", 2: "Paradise"}.get(self.strategy_index, "Strateji")
         
         # Cascade modu kontrolu
         if self.narrowed_ranges:
@@ -653,8 +653,10 @@ class OptimizationWorker(QThread):
             
             if self.strategy_index == 0:
                 from src.strategies.score_based import ScoreBasedStrategy
-                # ScoreBasedStrategy config dict kabul eder
                 strategy = ScoreBasedStrategy.from_config_dict(test_cache, params)
+            elif self.strategy_index == 2:
+                from src.strategies.paradise_strategy import ParadiseStrategy
+                strategy = ParadiseStrategy.from_config_dict(test_cache, params)
             else:
                 from src.strategies.ars_trend_v2 import ARSTrendStrategyV2
                 strategy = ARSTrendStrategyV2.from_config_dict(test_cache, params)
@@ -790,7 +792,7 @@ class OptimizerPanel(QWidget):
         # Strateji seçimi
         top_row.addWidget(QLabel("Strateji:"))
         self.strategy_combo = QComboBox()
-        self.strategy_combo.addItems(["Strateji 1 - Gatekeeper", "Strateji 2 - ARS Trend v2"])
+        self.strategy_combo.addItems(["Strateji 1 - Gatekeeper", "Strateji 2 - ARS Trend v2", "Strateji 3 - Paradise"])
         self.strategy_combo.currentIndexChanged.connect(self._on_strategy_changed)
         top_row.addWidget(self.strategy_combo)
         

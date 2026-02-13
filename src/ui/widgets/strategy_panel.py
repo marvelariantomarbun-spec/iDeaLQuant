@@ -60,6 +60,21 @@ class StrategyPanel(QWidget):
         'exit_confirm_mult': 1.0,
     }
     
+    STRATEGY3_DEFAULTS = {
+        'ema_period': 21,
+        'dsma_period': 50,
+        'ma_period': 20,
+        'hh_period': 25,
+        'vol_hhv_period': 14,
+        'mom_period': 60,
+        'mom_alt': 98.0,
+        'mom_ust': 102.0,
+        'atr_period': 14,
+        'atr_sl': 2.0,
+        'atr_tp': 4.0,
+        'atr_trail': 2.5,
+    }
+    
     def __init__(self):
         super().__init__()
         self.df = None
@@ -139,7 +154,8 @@ class StrategyPanel(QWidget):
         self.strategy_combo = QComboBox()
         self.strategy_combo.addItems([
             "Strateji 1 - Score-Based Gatekeeper",
-            "Strateji 2 - ARS Trend Takip v2"
+            "Strateji 2 - ARS Trend Takip v2",
+            "Strateji 3 - Paradise"
         ])
         self.strategy_combo.currentIndexChanged.connect(self._on_strategy_changed)
         layout.addWidget(self.strategy_combo, 1)
@@ -167,8 +183,10 @@ class StrategyPanel(QWidget):
         # Yeni parametreleri oluştur
         if index == 0:
             self._create_strategy1_params()
-        else:
+        elif index == 1:
             self._create_strategy2_params()
+        else:
+            self._create_strategy3_params()
     
     def _create_strategy1_params(self):
         """Strateji 1 parametrelerini oluştur"""
@@ -258,6 +276,44 @@ class StrategyPanel(QWidget):
         self.params_layout.addWidget(exit_group)
         
         self.params_layout.addStretch()
+
+    def _create_strategy3_params(self):
+        """Strateji 3 (Paradise) parametrelerini oluştur"""
+        defaults = self.STRATEGY3_DEFAULTS
+        
+        # Trend
+        trend_group = QGroupBox("📈 Trend Filtreleri")
+        trend_layout = QFormLayout(trend_group)
+        self._add_spin('ema_period', "EMA Periyot:", 5, 100, defaults['ema_period'], trend_layout)
+        self._add_spin('dsma_period', "DSMA Periyot:", 10, 200, defaults['dsma_period'], trend_layout)
+        self._add_spin('ma_period', "MA Periyot:", 5, 100, defaults['ma_period'], trend_layout)
+        self.params_layout.addWidget(trend_group)
+        
+        # Breakout
+        bo_group = QGroupBox("🚀 Breakout Ayarları")
+        bo_layout = QFormLayout(bo_group)
+        self._add_spin('hh_period', "HH/LL Periyot:", 5, 100, defaults['hh_period'], bo_layout)
+        self._add_spin('vol_hhv_period', "Hacim HHV Periyot:", 5, 50, defaults['vol_hhv_period'], bo_layout)
+        self.params_layout.addWidget(bo_group)
+        
+        # Momentum
+        mom_group = QGroupBox("⚡ Momentum Bandı")
+        mom_layout = QFormLayout(mom_group)
+        self._add_spin('mom_period', "Momentum Periyot:", 10, 200, defaults['mom_period'], mom_layout)
+        self._add_double_spin('mom_alt', "Alt Eşik (100 - X):", 90.0, 100.0, defaults['mom_alt'], mom_layout)
+        self._add_double_spin('mom_ust', "Üst Eşik (100 + X):", 100.0, 110.0, defaults['mom_ust'], mom_layout)
+        self.params_layout.addWidget(mom_group)
+        
+        # Risk / Çıkış
+        risk_group = QGroupBox("🛡️ Risk & Çıkış")
+        risk_layout = QFormLayout(risk_group)
+        self._add_spin('atr_period', "ATR Periyot:", 5, 50, defaults['atr_period'], risk_layout)
+        self._add_double_spin('atr_sl', "ATR Stop Loss:", 0.5, 10.0, defaults['atr_sl'], risk_layout)
+        self._add_double_spin('atr_tp', "ATR Take Profit:", 1.0, 20.0, defaults['atr_tp'], risk_layout)
+        self._add_double_spin('atr_trail', "ATR Trailing Stop:", 0.5, 10.0, defaults['atr_trail'], risk_layout)
+        self.params_layout.addWidget(risk_group)
+        
+        self.params_layout.addStretch()
     
     def _add_spin(self, name: str, label: str, min_val: int, max_val: int, default: int, layout: QFormLayout):
         """Integer SpinBox ekle"""
@@ -280,7 +336,12 @@ class StrategyPanel(QWidget):
     def _reset_to_defaults(self):
         """Varsayılan değerlere dön"""
         index = self.strategy_combo.currentIndex()
-        defaults = self.STRATEGY1_DEFAULTS if index == 0 else self.STRATEGY2_DEFAULTS
+        if index == 0:
+            defaults = self.STRATEGY1_DEFAULTS
+        elif index == 1:
+            defaults = self.STRATEGY2_DEFAULTS
+        else:
+            defaults = self.STRATEGY3_DEFAULTS
         
         for name, widget in self.param_widgets.items():
             if name in defaults:
@@ -329,7 +390,8 @@ class StrategyPanel(QWidget):
         preset_dir.mkdir(exist_ok=True)
         
         # Varsayılan isim
-        strategy_name = "strateji1" if self.strategy_combo.currentIndex() == 0 else "strateji2"
+        idx = self.strategy_combo.currentIndex()
+        strategy_name = "strateji1" if idx == 0 else ("strateji2" if idx == 1 else "paradise")
         default_name = f"{strategy_name}_preset.json"
         
         filepath, _ = QFileDialog.getSaveFileName(
@@ -393,6 +455,13 @@ class StrategyPanel(QWidget):
             if strategy_idx == 1:
                 from src.strategies.score_based import ScoreBasedStrategy
                 strategy = ScoreBasedStrategy.from_config_dict(
+                    {'opens': opens, 'highs': highs, 'lows': lows, 'closes': closes, 'typical': typical, 'dates': dates},
+                    config,
+                    dates
+                )
+            elif strategy_idx == 3:
+                from src.strategies.paradise_strategy import ParadiseStrategy
+                strategy = ParadiseStrategy.from_config_dict(
                     {'opens': opens, 'highs': highs, 'lows': lows, 'closes': closes, 'typical': typical, 'dates': dates},
                     config,
                     dates

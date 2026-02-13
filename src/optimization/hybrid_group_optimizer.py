@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 from src.indicators.core import EMA, ATR, ADX, SMA, ARS, NetLot, MACDV
 from src.strategies.score_based import ScoreBasedStrategy
 from src.strategies.ars_trend_v2 import ARSTrendStrategyV2
+from src.strategies.paradise_strategy import ParadiseStrategy
 from src.optimization.fitness import quick_fitness, calculate_sharpe
 
 # Opsiyonel: Veritabanı entegrasyonu
@@ -44,6 +45,7 @@ PARAM_TYPE_CONFIG = {
     'threshold_float': (10.0, 50.0, 5.0, 1.0),  # adx_threshold, netlot_threshold
     'multiplier': (0.5, 3.0, 0.5, 0.1),  # bb_std, atr_sl_mult
     'threshold_momentum': (50.0, 200.0, 10.0, 5.0),   # Momentum scale (0-200 arası)
+    'momentum_band': (95.0, 105.0, 1.0, 0.5),          # Momentum bant (mom_alt, mom_ust)
     'multiplier_wide': (1.0, 10.0, 1.0, 0.25),         # Geniş çarpanlar (TP mult gibi)
     'period_short_wide': (5, 20, 2, 1),                 # Kısa-orta arası periyotlar
 }
@@ -66,6 +68,11 @@ PARAM_TYPES = {
     'mfi_period': 'period_medium', 'mfi_hhv_period': 'period_medium', 'mfi_llv_period': 'period_medium', 'volume_hhv_period': 'period_medium',
     'atr_exit_period': 'period_medium', 'atr_sl_mult': 'multiplier', 'atr_tp_mult': 'multiplier_wide', 'atr_trail_mult': 'multiplier',
     'exit_confirm_bars': 'threshold_int', 'exit_confirm_mult': 'multiplier', 'volume_mult': 'multiplier', 'volume_llv_period': 'period_medium',
+    # Strateji 3 (Paradise)
+    'ema_period': 'period_medium', 'dsma_period': 'period_long', 'ma_period': 'period_medium',
+    'hh_period': 'period_medium', 'vol_hhv_period': 'period_medium',
+    'mom_period': 'period_long', 'mom_alt': 'momentum_band', 'mom_ust': 'momentum_band',
+    'atr_period': 'period_medium', 'atr_sl': 'multiplier', 'atr_tp': 'multiplier_wide', 'atr_trail': 'multiplier',
 }
 
 def get_step(param_name: str, stage: str = 'satellite', user_step: float = None) -> float:
@@ -273,6 +280,50 @@ STRATEGY2_GROUPS = [
     ),
 ]
 
+# Strateji 3 (Paradise) Grup Tanimlari
+STRATEGY3_GROUPS = [
+    ParameterGroup(
+        name="Trend",
+        params={
+            'ema_period': [10, 15, 21, 30, 40],
+            'dsma_period': [30, 40, 50, 70, 100],
+            'ma_period': [10, 15, 20, 30, 40],
+        },
+        is_independent=True,
+        default_values={'ema_period': 21, 'dsma_period': 50, 'ma_period': 20}
+    ),
+    ParameterGroup(
+        name="Breakout",
+        params={
+            'hh_period': [10, 15, 20, 25, 35, 50],
+            'vol_hhv_period': [10, 14, 20, 30],
+        },
+        is_independent=True,
+        default_values={'hh_period': 25, 'vol_hhv_period': 14}
+    ),
+    ParameterGroup(
+        name="Momentum",
+        params={
+            'mom_period': [20, 40, 60, 80, 100],
+            'mom_alt': [95.0, 96.0, 97.0, 98.0, 99.0],
+            'mom_ust': [101.0, 102.0, 103.0, 104.0, 105.0],
+        },
+        is_independent=True,
+        default_values={'mom_period': 60, 'mom_alt': 98.0, 'mom_ust': 102.0}
+    ),
+    ParameterGroup(
+        name="Risk",
+        params={
+            'atr_period': [10, 14, 20],
+            'atr_sl': [1.0, 1.5, 2.0, 2.5, 3.0],
+            'atr_tp': [2.0, 3.0, 4.0, 5.0, 6.0],
+            'atr_trail': [1.5, 2.0, 2.5, 3.0, 4.0],
+        },
+        is_independent=False,
+        default_values={'atr_period': 14, 'atr_sl': 2.0, 'atr_tp': 4.0, 'atr_trail': 2.5}
+    ),
+]
+
 # ==============================================================================
 # DATA & CACHE
 # ==============================================================================
@@ -400,6 +451,8 @@ def _evaluate_params_static(params: Dict[str, Any], strategy_index: int, commiss
         
     if strategy_index == 0:
         strategy = ScoreBasedStrategy.from_config_dict(g_cache, params)
+    elif strategy_index == 2:
+        strategy = ParadiseStrategy.from_config_dict(g_cache, params)
     else:
         strategy = ARSTrendStrategyV2.from_config_dict(g_cache, params)
     

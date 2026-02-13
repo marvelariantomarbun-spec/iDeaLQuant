@@ -46,6 +46,7 @@ class IdealDataExporter:
         # Oluşturulan dosya isimleri
         self.strategy1_filename: Optional[str] = None
         self.strategy2_filename: Optional[str] = None
+        self.strategy3_filename: Optional[str] = None
         self.robot_filename: Optional[str] = None
     
     def _generate_filename(self, strategy_num: int, vade_tipi: str) -> str:
@@ -990,6 +991,156 @@ if (Sistem.Parametreler[3] == "X")
         Sistem.GradientYaziEkle(Results2, 2, 385, ilksatirY, Color.Yellow, Color.DarkOrange, "Tahoma", 10);
     }}
 }}
+'''
+        return code
+
+    def _generate_strategy3_code(self, params: Dict[str, Any], vade_tipi: str) -> str:
+        """Strateji 3 (Paradise) IdealData kodu oluşturur."""
+        
+        # Parametreler
+        p = {
+            'ema_period': int(params.get('ema_period', 21)),
+            'dsma_period': int(params.get('dsma_period', 50)),
+            'ma_period': int(params.get('ma_period', 20)),
+            'hh_period': int(params.get('hh_period', 25)),
+            'vol_hhv_period': int(params.get('vol_hhv_period', 14)),
+            'mom_period': int(params.get('mom_period', 60)),
+            'mom_alt': params.get('mom_alt', 98.0),
+            'mom_ust': params.get('mom_ust', 102.0),
+            'atr_period': int(params.get('atr_period', 14)),
+            'atr_sl': params.get('atr_sl', 2.0),
+            'atr_tp': params.get('atr_tp', 4.0),
+            'atr_trail': params.get('atr_trail', 2.5),
+        }
+
+        code = f'''// ===============================================================================================
+// STRATEJI 3: PARADISE
+// ===============================================================================================
+// Sembol: {self.symbol}
+// Periyot: {self.period} dakika
+// Vade Tipi: {vade_tipi}
+// Olusturma: {datetime.now().strftime("%Y-%m-%d %H:%M")}
+// ===============================================================================================
+
+var Veriler = Sistem.GrafikVerileri;
+var C = Sistem.GrafikFiyatSec("Kapanis");
+var H = Sistem.GrafikFiyatSec("Yuksek");
+var L = Sistem.GrafikFiyatSec("Dusuk");
+var O = Sistem.GrafikFiyatSec("Acilis");
+var V = Sistem.GrafikFiyatSec("Lot");
+
+// --- PARAMETRELER ---
+var ema_period = {p['ema_period']};
+var dsma_period = {p['dsma_period']};
+var ma_period = {p['ma_period']};
+var hh_period = {p['hh_period']};
+var vol_hhv_period = {p['vol_hhv_period']};
+var mom_period = {p['mom_period']};
+var mom_alt = {p['mom_alt']}f;
+var mom_ust = {p['mom_ust']}f;
+var atr_period = {p['atr_period']};
+var atr_sl = {p['atr_sl']}f;
+var atr_tp = {p['atr_tp']}f;
+var atr_trail = {p['atr_trail']}f;
+
+// --- INDIKATOR HESAPLAMALARI ---
+var EMA = Sistem.MA(C, "Exp", ema_period);
+var DSMA1 = Sistem.MA(C, "Simple", dsma_period);
+var DSMA = Sistem.MA(DSMA1, "Simple", dsma_period);
+var MA = Sistem.MA(C, "Simple", ma_period);
+var MOM = Sistem.Momentum(mom_period);
+var ATR = Sistem.AverageTrueRange(atr_period);
+
+var HH = Sistem.HHV(hh_period, "Yuksek");
+var LL = Sistem.LLV(hh_period, "Dusuk");
+var VOL_HHV = Sistem.HHV(vol_hhv_period, "Lot");
+
+// --- LOOP & SINYAL ---
+var SonYon = "";
+var Pos = 0; 
+var EntryPrice = 0.0f;
+var ExtremePrice = 0.0f;
+var EntryATR = 0.0f;
+
+for (int i = 100; i < Veriler.Count; i++)
+{{
+    // --- ÇIKIŞ KONTROLLERİ ---
+    if (Pos == 1)
+    {{
+        if (C[i] > ExtremePrice) ExtremePrice = C[i];
+        
+        bool exit = false;
+        if (C[i] <= EntryPrice - EntryATR * atr_sl) exit = true; 
+        else if (C[i] >= EntryPrice + EntryATR * atr_tp) exit = true; 
+        else if (C[i] <= ExtremePrice - EntryATR * atr_trail) exit = true; 
+        
+        if (exit) {{
+            Sistem.Yon[i] = "F";
+            SonYon = "F";
+            Pos = 0;
+        }}
+    }}
+    else if (Pos == -1)
+    {{
+        if (C[i] < ExtremePrice) ExtremePrice = C[i];
+        
+        bool exit = false;
+        if (C[i] >= EntryPrice + EntryATR * atr_sl) exit = true; 
+        else if (C[i] <= EntryPrice - EntryATR * atr_tp) exit = true; 
+        else if (C[i] >= ExtremePrice + EntryATR * atr_trail) exit = true; 
+        
+        if (exit) {{
+            Sistem.Yon[i] = "F";
+            SonYon = "F";
+            Pos = 0;
+        }}
+    }}
+
+    // --- GİRİŞ KONTROLLERİ ---
+    if (Pos == 0)
+    {{
+        // LONG
+        bool hh_ok = H[i] > HH[i-1];
+        bool trend_ok = EMA[i] > DSMA[i] && C[i] > MA[i];
+        bool mom_ok = MOM[i] > mom_ust; 
+        bool vol_ok = V[i] >= VOL_HHV[i-1] * 0.8f;
+        
+        if (hh_ok && trend_ok && mom_ok && vol_ok)
+        {{
+            Sistem.Yon[i] = "A";
+            SonYon = "A";
+            Pos = 1;
+            EntryPrice = C[i];
+            ExtremePrice = C[i];
+            EntryATR = ATR[i];
+        }}
+        // SHORT
+        else
+        {{
+            bool ll_ok = L[i] < LL[i-1];
+            bool trend_short = EMA[i] < DSMA[i] && C[i] < MA[i];
+            bool mom_short = MOM[i] < mom_alt;
+            
+            if (ll_ok && trend_short && mom_short && vol_ok)
+            {{
+                Sistem.Yon[i] = "S";
+                SonYon = "S";
+                Pos = -1;
+                EntryPrice = C[i];
+                ExtremePrice = C[i];
+                EntryATR = ATR[i];
+            }}
+        }}
+    }}
+    else 
+    {{
+        Sistem.Yon[i] = SonYon; 
+    }}
+}}
+
+Sistem.Cizgiler[0].Deger = EMA;
+Sistem.Cizgiler[1].Deger = DSMA;
+Sistem.Cizgiler[2].Deger = MA;
 '''
         return code
 

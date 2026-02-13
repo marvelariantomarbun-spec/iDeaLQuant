@@ -103,6 +103,7 @@ class ExportPanel(QWidget):
         self.strategy_combo.addItems([
             "Strateji 1 - Gatekeeper",
             "Strateji 2 - ARS Trend v2",
+            "Strateji 3 - Paradise",
             "Birleşik Robot"
         ])
         layout.addRow("Strateji:", self.strategy_combo)
@@ -213,7 +214,7 @@ class ExportPanel(QWidget):
         params_text = f"✓ Süreç: {self.current_process_id}\n\n"
         
         for strategy_idx, params in self.final_params.items():
-            strategy_name = "Strateji 1" if strategy_idx == 0 else "Strateji 2"
+            strategy_name = {0: "Strateji 1", 1: "Strateji 2", 2: "Strateji 3 (Paradise)"}.get(strategy_idx, f"Strateji {strategy_idx+1}")
             params_text += f"━━━ {strategy_name} ━━━\n"
             
             # İlk 5 parametre
@@ -255,6 +256,7 @@ class ExportPanel(QWidget):
             # Final parametreleri kullan
             s1_params = self.final_params.get(0, {})
             s2_params = self.final_params.get(1, {})
+            s3_params = self.final_params.get(2, {})
             
             if strategy_idx == 0:
                 if not s1_params:
@@ -266,11 +268,16 @@ class ExportPanel(QWidget):
                     QMessageBox.warning(self, "Uyarı", "Strateji 2 için final parametre bulunamadı.")
                     return
                 code = exporter._generate_strategy2_code(s2_params, vade_tipi)
+            elif strategy_idx == 2:
+                if not s3_params:
+                    QMessageBox.warning(self, "Uyarı", "Strateji 3 (Paradise) için final parametre bulunamadı.")
+                    return
+                code = exporter._generate_strategy3_code(s3_params, vade_tipi)
             else:
                 if not s1_params or not s2_params:
-                    QMessageBox.warning(self, "Uyarı", "Birleşik robot için her iki stratejinin de final parametreleri gerekli.")
+                    QMessageBox.warning(self, "Uyarı", "Birleşik robot için S1 ve S2 final parametreleri gerekli.")
                     return
-                code = exporter._generate_combined_robot(s1_params, s2_params, vade_tipi)
+                code = exporter._generate_robot_code(lot_size=1) # Default 1 lot
             
             self.preview_text.setPlainText(code)
             
@@ -298,11 +305,15 @@ class ExportPanel(QWidget):
             s2_params = self.final_params.get(1, {})
             
             # Dosya adı
-            strategy_names = ["Gatekeeper", "ARS_Trend_v2", "Combined"]
+            strategy_names = ["Gatekeeper", "ARS_Trend_v2", "Paradise", "Combined"]
             filename = f"{symbol}_{period}DK_{strategy_names[strategy_idx]}.cs"
             filepath = output_dir / filename
             
             # Kod oluştur
+            s1_params = self.final_params.get(0, {})
+            s2_params = self.final_params.get(1, {})
+            s3_params = self.final_params.get(2, {})
+            
             if strategy_idx == 0:
                 if not s1_params:
                     QMessageBox.warning(self, "Uyarı", "Strateji 1 için final parametre bulunamadı.")
@@ -313,11 +324,16 @@ class ExportPanel(QWidget):
                     QMessageBox.warning(self, "Uyarı", "Strateji 2 için final parametre bulunamadı.")
                     return
                 code = exporter._generate_strategy2_code(s2_params, vade_tipi)
+            elif strategy_idx == 2:
+                if not s3_params:
+                    QMessageBox.warning(self, "Uyarı", "Strateji 3 (Paradise) için final parametre bulunamadı.")
+                    return
+                code = exporter._generate_strategy3_code(s3_params, vade_tipi)
             else:
                 if not s1_params or not s2_params:
-                    QMessageBox.warning(self, "Uyarı", "Birleşik robot için her iki stratejinin de final parametreleri gerekli.")
+                    QMessageBox.warning(self, "Uyarı", "Birleşik robot için S1 ve S2 final parametreleri gerekli.")
                     return
-                code = exporter._generate_combined_robot(s1_params, s2_params, vade_tipi)
+                code = exporter._generate_robot_code(lot_size=1)
             
             # Dosyaya yaz
             with open(filepath, 'w', encoding='utf-8') as f:

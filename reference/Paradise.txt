@@ -1,0 +1,74 @@
+int EMA_Periyot  = 21;
+int TOMA_Periyot = 50;
+int HH_Periyot   = 25;
+int MA_Periyot   = 20;
+float MOM_Alt    = 98.0f;   // 100 - 2.0
+float MOM_Ust    = 102.0f;  // 100 + 2.0
+
+// --- VERİ HAZIRLIĞI ---
+var V = Sistem.GrafikVerileri;
+var C = Sistem.GrafikFiyatSec("Kapanis");
+var H = Sistem.GrafikFiyatSec("Yuksek");
+var L = Sistem.GrafikFiyatSec("Dusuk");
+
+if (V.Count > 200)
+{
+
+// --- İNDİKATÖRLER ---
+var MOM_60 = Sistem.Momentum(C, 60);
+var EMA = Sistem.MA(C, "Exp", EMA_Periyot);
+var TOMA1 = Sistem.MA(C, "Simple", TOMA_Periyot);
+var TOMA = Sistem.MA(TOMA1, "Simple", TOMA_Periyot);
+var MA = Sistem.MA(C, "Simple", MA_Periyot);
+
+// HH ve LL (Highest High / Lowest Low)
+var HH = Sistem.Liste(0);
+var LL = Sistem.Liste(0);
+for (int i = 0; i < V.Count; i++)
+{
+    float maxH = H[i];
+    float minL = L[i];
+    int lb = Math.Min(i, HH_Periyot - 1);
+    for (int k = 1; k <= lb; k++)
+    {
+        if (H[i - k] > maxH) maxH = H[i - k];
+        if (L[i - k] < minL) minL = L[i - k];
+    }
+    HH[i] = maxH;
+    LL[i] = minL;
+}
+
+// --- SİNYAL MANTIGI ---
+int Bas = Math.Max(TOMA_Periyot * 2 + 5, Math.Max(MA_Periyot + 1, 62));
+var SonYon = "";
+
+for (int i = Bas; i < V.Count; i++)
+{
+    // Vade Flat (Ay sonu pozisyon kapat)
+    if (i < V.Count - 1 && V[i].Date.Month != V[i + 1].Date.Month)
+    {
+        if (SonYon != "" && SonYon != "F") { Sistem.Yon[i] = "F"; SonYon = "F"; }
+        continue;
+    }
+
+    var Sinyal = "";
+
+    // 1. MOM Filtre + Sinyal Koşulları
+    if (MOM_60[i] > MOM_Alt && MOM_60[i] < MOM_Ust)
+    {
+        // AL: HH breakout + EMA > TOMA + Fiyat > MA + MOM pozitif
+        if (HH[i] > HH[i - 1] && EMA[i] > TOMA[i] && C[i] > MA[i] && MOM_60[i] > 100)
+            Sinyal = "A";
+
+        // SAT: LL breakdown + EMA < TOMA + Fiyat < MA + MOM negatif
+        if (LL[i] < LL[i - 1] && EMA[i] < TOMA[i] && C[i] < MA[i] && MOM_60[i] < 100)
+            Sinyal = "S";
+    }
+
+    if (Sinyal != "" && Sinyal != SonYon)
+    {
+        SonYon = Sinyal;
+        Sistem.Yon[i] = SonYon;
+    }
+}
+

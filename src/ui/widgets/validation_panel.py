@@ -22,6 +22,7 @@ from src.core.database import db
 from src.optimization.hybrid_group_optimizer import IndicatorCache, backtest_with_trades, load_data
 from src.strategies.score_based import ScoreBasedStrategy
 from src.strategies.ars_trend_v2 import ARSTrendStrategyV2
+from src.strategies.paradise_strategy import ParadiseStrategy
 import pandas as pd
 
 
@@ -121,6 +122,8 @@ class WFAWorker(QThread):
             
             if self.strategy_idx == 0:
                 strategy = ScoreBasedStrategy.from_config_dict(self.cache, self.params)
+            elif self.strategy_idx == 2:
+                strategy = ParadiseStrategy.from_config_dict(self.cache, self.params)
             else:
                 strategy = ARSTrendStrategyV2.from_config_dict(self.cache, self.params)
                 
@@ -272,6 +275,7 @@ class BatchAnalysisWorker(QThread):
         
         # Strateji
         if idx == 0: s = ScoreBasedStrategy.from_config_dict(self.cache, params)
+        elif idx == 2: s = ParadiseStrategy.from_config_dict(self.cache, params)
         else: s = ARSTrendStrategyV2.from_config_dict(self.cache, params)
         
         sig, ex_l, ex_s = s.generate_all_signals()
@@ -300,8 +304,13 @@ class BatchAnalysisWorker(QThread):
         scores = []
         # Sadece strateji parametrelerini seç (DB sonuç alanlarını hariç tut)
         import random
-        from src.optimization.genetic_optimizer import STRATEGY1_PARAMS, STRATEGY2_PARAMS
-        valid_keys = set(STRATEGY1_PARAMS.keys() if idx == 0 else STRATEGY2_PARAMS.keys())
+        from src.optimization.genetic_optimizer import STRATEGY1_PARAMS, STRATEGY2_PARAMS, STRATEGY3_PARAMS
+        if idx == 0:
+            valid_keys = set(STRATEGY1_PARAMS.keys())
+        elif idx == 2:
+            valid_keys = set(STRATEGY3_PARAMS.keys())
+        else:
+            valid_keys = set(STRATEGY2_PARAMS.keys())
         keys = [k for k in params.keys() if k in valid_keys and isinstance(params[k], (int, float))]
         sample_keys = random.sample(keys, min(5, len(keys)))
         
@@ -322,6 +331,7 @@ class BatchAnalysisWorker(QThread):
         
     def _run_bt(self, idx, params):
         if idx == 0: s = ScoreBasedStrategy.from_config_dict(self.cache, params)
+        elif idx == 2: s = ParadiseStrategy.from_config_dict(self.cache, params)
         else: s = ARSTrendStrategyV2.from_config_dict(self.cache, params)
         sig, ex_l, ex_s = s.generate_all_signals()
         return backtest_with_summary(self.cache.closes, sig, ex_l, ex_s, 
@@ -333,6 +343,7 @@ class BatchAnalysisWorker(QThread):
         
         # Orijinal backtest ile işlem listesini al
         if idx == 0: s = ScoreBasedStrategy.from_config_dict(self.cache, params)
+        elif idx == 2: s = ParadiseStrategy.from_config_dict(self.cache, params)
         else: s = ARSTrendStrategyV2.from_config_dict(self.cache, params)
         
         # Basit backtest - işlem listesi (pnl'ler) döndüren versiyon lazım
@@ -1062,7 +1073,7 @@ YORUM:
             self.compare_table.setCellWidget(row_idx, 0, chk_widget)
             
             # 1. Strateji
-            strategy_name = "S1" if result['strategy_index'] == 0 else "S2"
+            strategy_name = {0: "S1", 1: "S2", 2: "S3"}.get(result['strategy_index'], "S?")
             self.compare_table.setItem(row_idx, 1, QTableWidgetItem(strategy_name))
             
             # 2. Metod

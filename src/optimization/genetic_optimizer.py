@@ -104,6 +104,25 @@ STRATEGY2_PARAMS = {
     'volume_llv_period': (10, 21, 2, True),
 }
 
+# Strateji 3 (Paradise) Parametre Uzayi (11 parametre)
+STRATEGY3_PARAMS = {
+    # Trend
+    'ema_period': (10, 50, 2, True),
+    'dsma_period': (30, 100, 5, True),
+    'ma_period': (10, 50, 2, True),
+    # Breakout
+    'hh_period': (10, 50, 2, True),
+    'vol_hhv_period': (10, 30, 2, True),
+    # Momentum
+    'mom_period': (20, 100, 5, True),
+    'mom_alt': (95.0, 99.0, 0.5, False),
+    'mom_ust': (101.0, 105.0, 0.5, False),
+    # Risk
+    'atr_period': (10, 20, 2, True),
+    'atr_sl': (1.0, 4.0, 0.25, False),
+    'atr_tp': (2.0, 6.0, 0.25, False),
+    'atr_trail': (1.5, 5.0, 0.25, False),
+}
 
 
 class ParameterSpace:
@@ -120,8 +139,10 @@ class ParameterSpace:
             base_params = STRATEGY1_PARAMS
         elif strategy_index == 1:
             base_params = STRATEGY2_PARAMS
+        elif strategy_index == 2:
+            base_params = STRATEGY3_PARAMS
         else:
-            raise ValueError(f"Geçersiz strategy_index: {strategy_index}. Sadece 0 (Gatekeeper) ve 1 (ARS Trend v2) desteklenir.")
+            raise ValueError(f"Gecersiz strategy_index: {strategy_index}. 0/1/2 desteklenir.")
             
         self.params = {k: list(v) for k, v in base_params.items()}  # Mutable copy
         
@@ -268,8 +289,10 @@ class FitnessEvaluator:
                 return self._evaluate_strategy1(params)
             elif self.strategy_index == 1:
                 return self._evaluate_strategy2(params)
+            elif self.strategy_index == 2:
+                return self._evaluate_strategy3(params)
             else:
-                raise ValueError(f"Geçersiz strategy_index: {self.strategy_index}")
+                raise ValueError(f"Gecersiz strategy_index: {self.strategy_index}")
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -374,6 +397,60 @@ class FitnessEvaluator:
             )
             
             # Fitness - Maliyetler np_val icinde, burada 0.0 gonderilmeli
+            fitness = quick_fitness(
+                np_val, pf, dd, trades, sharpe=sharpe,
+                commission=0.0, slippage=0.0
+            )
+            
+            return {
+                'net_profit': np_val,
+                'trades': trades,
+                'pf': pf,
+                'max_dd': dd,
+                'sharpe': sharpe,
+                'fitness': fitness
+            }
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'fitness': -999999}
+
+    def _evaluate_strategy3(self, params: Dict[str, Any]) -> Dict[str, float]:
+        """Strateji 3 (Paradise) icin fitness hesapla"""
+        try:
+            from src.strategies.paradise_strategy import ParadiseStrategy
+            from src.optimization.hybrid_group_optimizer import fast_backtest
+            from src.optimization.fitness import quick_fitness
+            
+            class SimpleCache:
+                def __init__(self, evaluator):
+                    self.opens = evaluator.opens
+                    self.highs = evaluator.highs
+                    self.lows = evaluator.lows
+                    self.closes = evaluator.closes
+                    self.typical = evaluator.typical
+                    self.lots = evaluator.volumes
+                    self.volumes = evaluator.volumes
+                    self.dates = evaluator.dates
+                    self.times = evaluator.dates
+                    self.n = evaluator.n
+                    self.df = evaluator.df
+
+            cache = SimpleCache(self)
+            strategy = ParadiseStrategy.from_config_dict(cache, params)
+            signals, exits_long, exits_short = strategy.generate_all_signals()
+            
+            trading_days = 252.0
+            if self.dates and len(self.dates) > 1:
+                try:
+                    trading_days = (self.dates[-1] - self.dates[0]).days
+                except: pass
+            
+            np_val, trades, pf, dd, sharpe = fast_backtest(
+                self.closes, signals, exits_long, exits_short, 
+                self.commission, self.slippage, trading_days=trading_days
+            )
+            
             fitness = quick_fitness(
                 np_val, pf, dd, trades, sharpe=sharpe,
                 commission=0.0, slippage=0.0
