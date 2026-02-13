@@ -62,7 +62,7 @@ PARAM_TYPES = {
     # Strateji 2
     'ars_ema_period': 'period_short', 'ars_atr_period': 'period_short', 'ars_atr_mult': 'multiplier',
     'ars_min_band': 'k_factor', 'ars_max_band': 'k_factor',
-    'momentum_period': 'period_short', 'momentum_threshold': 'threshold_momentum', 'momentum_base': 'threshold_momentum', 'breakout_period': 'period_short_wide',
+    'momentum_period': 'period_short', 'momentum_threshold': 'threshold_momentum', 'breakout_period': 'period_short_wide',
     'mfi_period': 'period_medium', 'mfi_hhv_period': 'period_medium', 'mfi_llv_period': 'period_medium', 'volume_hhv_period': 'period_medium',
     'atr_exit_period': 'period_medium', 'atr_sl_mult': 'multiplier', 'atr_tp_mult': 'multiplier_wide', 'atr_trail_mult': 'multiplier',
     'exit_confirm_bars': 'threshold_int', 'exit_confirm_mult': 'multiplier', 'volume_mult': 'multiplier', 'volume_llv_period': 'period_medium',
@@ -226,12 +226,12 @@ STRATEGY2_GROUPS = [
         params={
             'momentum_period': [5, 7, 10],
             'momentum_threshold': [90.0, 100.0, 120.0, 150.0],
-            'momentum_base': [150.0, 200.0, 250.0],  # Momentum skala baz değeri
+            # momentum_base sabit 200.0 - optimize edilmemeli (Short sinyallerini bozar)
             'breakout_period': [8, 10, 15],
         },
         is_independent=True,
         default_values={
-            'momentum_period': 5, 'momentum_threshold': 100.0, 'momentum_base': 200.0,
+            'momentum_period': 5, 'momentum_threshold': 100.0,
             'breakout_period': 10,
         }
     ),

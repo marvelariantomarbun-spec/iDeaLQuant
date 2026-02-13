@@ -99,7 +99,7 @@ STRATEGY2_PARAM_GROUPS = {
         'params': {
             'momentum_period': {'label': 'Momentum Periyot', 'type': 'int', 'default': 5, 'min': 3, 'max': 10, 'step': 1},
             'momentum_threshold': {'label': 'Momentum Esik', 'type': 'float', 'default': 100.0, 'min': 50.0, 'max': 200.0, 'step': 25.0},
-            'momentum_base': {'label': 'Momentum Baz', 'type': 'float', 'default': 200.0, 'min': 100.0, 'max': 300.0, 'step': 25.0},
+            # momentum_base sabit 200.0 - Momentum indikatoru 100 merkezli oldugu icin bu deger degismemeli
             'breakout_period': {'label': 'Breakout Periyot', 'type': 'int', 'default': 10, 'min': 5, 'max': 30, 'step': 5},
             'mfi_period': {'label': 'MFI Periyot', 'type': 'int', 'default': 14, 'min': 10, 'max': 21, 'step': 2},
             'mfi_hhv_period': {'label': 'MFI HHV', 'type': 'int', 'default': 14, 'min': 10, 'max': 21, 'step': 2},

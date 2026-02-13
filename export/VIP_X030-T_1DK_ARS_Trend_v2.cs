@@ -4,7 +4,7 @@
 // Sembol: VIP_X030-T
 // Periyot: 1 dakika
 // Vade Tipi: ENDEKS
-// Oluşturma: 2026-02-13 23:09
+// Oluşturma: 2026-02-13 23:38
 // ===============================================================================================
 
 // --- VADE TİPİ ---
@@ -112,14 +112,14 @@ var ATR_Exit = Sistem.AverageTrueRange(ATR_Exit_Period);
 
 // GİRİŞ SİNYAL İNDİKATÖRLERİ
 var Momentum = Sistem.Momentum(MOMENTUM_Period);
-var HHV = Sistem.HHV(BREAKOUT_Period);
-var LLV = Sistem.LLV(BREAKOUT_Period);
+var HHV = Sistem.HHV(BREAKOUT_Period, H);
+var LLV = Sistem.LLV(BREAKOUT_Period, L);
 
 var MFI = Sistem.MoneyFlowIndex(90);
 var MFI_HHV = Sistem.HHV(50, MFI);
 var MFI_LLV = Sistem.LLV(50, MFI);
 
-var Vol_HHV = Sistem.HHV(14, Lot);
+var Vol_HHV = Sistem.HHV(70, Lot);
 
 // ===============================================================================================
 // VADE SONU İŞ GÜNÜ HESAPLAMA
