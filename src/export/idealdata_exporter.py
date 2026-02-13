@@ -485,6 +485,8 @@ Sistem.YaziEkle(info, 1, 15, 35, Color.Yellow, "Tahoma", 10);
             'breakout_p': int(params.get('breakout_period', 10)),
             'mfi_p': int(params.get('mfi_period', 14)),
             'mfi_hhv_p': int(params.get('mfi_hhv_period', 14)),
+            'mfi_llv_p': int(params.get('mfi_llv_period', 14)),
+            'volume_hhv_p': int(params.get('volume_hhv_period', 14)),
             'atr_exit_p': int(params.get('atr_exit_period', 14)),
             'atr_sl_mult': params.get('atr_sl_mult', 2.0),
             'atr_tp_mult': params.get('atr_tp_mult', 5.0),
@@ -608,14 +610,14 @@ var ATR_Exit = Sistem.AverageTrueRange(ATR_Exit_Period);
 
 // GİRİŞ SİNYAL İNDİKATÖRLERİ
 var Momentum = Sistem.Momentum(MOMENTUM_Period);
-var HHV = Sistem.HHV(BREAKOUT_Period);
-var LLV = Sistem.LLV(BREAKOUT_Period);
+var HHV = Sistem.HHV(BREAKOUT_Period, H);
+var LLV = Sistem.LLV(BREAKOUT_Period, L);
 
 var MFI = Sistem.MoneyFlowIndex({p['mfi_p']});
 var MFI_HHV = Sistem.HHV({p['mfi_hhv_p']}, MFI);
-var MFI_LLV = Sistem.LLV({p['mfi_hhv_p']}, MFI);
+var MFI_LLV = Sistem.LLV({p['mfi_llv_p']}, MFI);
 
-var Vol_HHV = Sistem.HHV(14, Lot);
+var Vol_HHV = Sistem.HHV({p['volume_hhv_p']}, Lot);
 
 // ===============================================================================================
 // VADE SONU İŞ GÜNÜ HESAPLAMA

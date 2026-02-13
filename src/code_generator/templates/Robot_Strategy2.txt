@@ -35,6 +35,8 @@ var atr_trail_mult = 2.0;
 var exit_confirm_bars = 2;
 var exit_confirm_mult = 1.0;
 
+// 4. Grup: İnce Ayar
+var volume_mult = 0.8;
 
 // --- INDIKATOR HESAPLAMALARI ---
 
@@ -165,7 +167,7 @@ for (int i = 50; i < Veriler.Count; i++)
             var price_ok = (C[i] > HHV[i-1] || H[i] > HHV[i-1]);
             var mom_ok = Mom[i] > momentum_threshold;
             var mfi_ok = MFI[i] >= MFI_HHV[i-1];
-            var vol_ok = V[i] >= Vol_HHV[i-1] * 0.8; // Hacim filtresi
+            var vol_ok = V[i] >= Vol_HHV[i-1] * volume_mult; // Hacim filtresi
             
             if (price_ok && mom_ok && mfi_ok && vol_ok)
             {
@@ -183,7 +185,7 @@ for (int i = 50; i < Veriler.Count; i++)
             var price_ok = (C[i] < LLV[i-1] || L[i] < LLV[i-1]);
             var mom_ok = Mom[i] < (momentum_base - momentum_threshold); // Momentum short mantığı
             var mfi_ok = MFI[i] <= MFI_LLV[i-1];
-            var vol_ok = V[i] >= Vol_HHV[i-1] * 0.8;
+            var vol_ok = V[i] >= Vol_HHV[i-1] * volume_mult;
             
             if (price_ok && mom_ok && mfi_ok && vol_ok)
             {

@@ -1,4 +1,14 @@
 
+## 2026-02-13 (GA S2 & Validasyon Fix)
+
+### ✅ Yapılanlar
+- **GA S2 Hata Düzeltmesi:**
+  - `ParameterSpace.decode()` fonksiyonunun numpy tiplerini (np.float64) native Python tiplerine (int/float) çevirmemesi nedeniyle oluşan `TypeError` giderildi.
+- **Validasyon Paneli İyileştirmeleri:**
+  - `BatchAnalysisWorker` thread'i try/except blokları ile korumaya alındı; artık bir hata durumunda thread sessizce ölmek yerine UI'ı bilgilendiriyor.
+  - Progress bar artık granüler (WFA, Stabilite, Monte Carlo aşamalarında ayrı ayrı) güncelleniyor.
+  - `_calc_stability` hesaplamasında DB'den gelen sonuç metriklerinin (fitness, kar vb.) parametre gibi algılanıp pertürbe edilmesi engellendi.
+
 ## 2026-02-12 (Veri Yükleme Fix & Optimizer Denetimi)
 
 ### ✅ Yapılanlar
