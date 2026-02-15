@@ -75,6 +75,22 @@ class StrategyPanel(QWidget):
         'atr_trail': 2.5,
     }
     
+    STRATEGY4_DEFAULTS = {
+        'toma_period': 97,
+        'toma_opt': 1.5,
+        'mom_period': 1900,
+        'mom_limit_low': 99.0,
+        'mom_limit_high': 101.5,
+        'trix_period': 120,
+        'trix_lb1': 145,
+        'trix_lb2': 160,
+        'hhv1_period': 20, 'llv1_period': 20,
+        'hhv2_period': 150, 'llv2_period': 190,
+        'hhv3_period': 150, 'llv3_period': 190,
+        'kar_al': 0.0,
+        'iz_stop': 0.0
+    }
+    
     def __init__(self):
         super().__init__()
         self.df = None
@@ -155,7 +171,8 @@ class StrategyPanel(QWidget):
         self.strategy_combo.addItems([
             "Strateji 1 - Score-Based Gatekeeper",
             "Strateji 2 - ARS Trend Takip v2",
-            "Strateji 3 - Paradise"
+            "Strateji 3 - Paradise",
+            "Strateji 4 - TOMA + Momentum"
         ])
         self.strategy_combo.currentIndexChanged.connect(self._on_strategy_changed)
         layout.addWidget(self.strategy_combo, 1)
@@ -185,8 +202,10 @@ class StrategyPanel(QWidget):
             self._create_strategy1_params()
         elif index == 1:
             self._create_strategy2_params()
-        else:
+        elif index == 2:
             self._create_strategy3_params()
+        else:
+            self._create_strategy4_params()
     
     def _create_strategy1_params(self):
         """Strateji 1 parametrelerini oluştur"""
@@ -314,6 +333,53 @@ class StrategyPanel(QWidget):
         self.params_layout.addWidget(risk_group)
         
         self.params_layout.addStretch()
+
+    def _create_strategy4_params(self):
+        """Strateji 4 (TOMA) parametrelerini oluştur"""
+        defaults = self.STRATEGY4_DEFAULTS
+        
+        # TOMA & Layer 3
+        toma_group = QGroupBox("📈 TOMA (Layer 3 - Trend)")
+        toma_layout = QFormLayout(toma_group)
+        self._add_spin('toma_period', "TOMA Periyot:", 10, 200, defaults.get('toma_period', 97), toma_layout)
+        self._add_double_spin('toma_opt', "TOMA Opt %:", 0.1, 10.0, defaults.get('toma_opt', 1.5), toma_layout)
+        self._add_spin('hhv1_period', "Filtre HHV:", 10, 100, defaults.get('hhv1_period', 20), toma_layout)
+        self._add_spin('llv1_period', "Filtre LLV:", 10, 100, defaults.get('llv1_period', 20), toma_layout)
+        self.params_layout.addWidget(toma_group)
+        
+        # Global Indikatorler
+        global_group = QGroupBox("🌍 Global Indikatorler")
+        global_layout = QFormLayout(global_group)
+        self._add_spin('mom_period', "Momentum P:", 100, 5000, defaults.get('mom_period', 1900), global_layout)
+        self._add_spin('trix_period', "TRIX P:", 10, 200, defaults.get('trix_period', 120), global_layout)
+        self.params_layout.addWidget(global_group)
+        
+        # Layer 1 (Mom High)
+        l1_group = QGroupBox("🚀 Momentum High (Layer 1)")
+        l1_layout = QFormLayout(l1_group)
+        self._add_double_spin('mom_limit_high', "Mom High Eşik >", 90.0, 110.0, defaults.get('mom_limit_high', 101.5), l1_layout)
+        self._add_spin('trix_lb1', "TRIX LB (High):", 50, 200, defaults.get('trix_lb1', 145), l1_layout)
+        self._add_spin('hhv2_period', "L1 HHV:", 50, 500, defaults.get('hhv2_period', 150), l1_layout)
+        self._add_spin('llv2_period', "L1 LLV:", 50, 500, defaults.get('llv2_period', 190), l1_layout)
+        self.params_layout.addWidget(l1_group)
+        
+        # Layer 2 (Mom Low)
+        l2_group = QGroupBox("📉 Momentum Low (Layer 2)")
+        l2_layout = QFormLayout(l2_group)
+        self._add_double_spin('mom_limit_low', "Mom Low Eşik <", 90.0, 110.0, defaults.get('mom_limit_low', 99.0), l2_layout)
+        self._add_spin('trix_lb2', "TRIX LB (Low):", 50, 200, defaults.get('trix_lb2', 160), l2_layout)
+        self._add_spin('hhv3_period', "L2 HHV:", 50, 500, defaults.get('hhv3_period', 150), l2_layout)
+        self._add_spin('llv3_period', "L2 LLV:", 50, 500, defaults.get('llv3_period', 190), l2_layout)
+        self.params_layout.addWidget(l2_group)
+        
+        # Risk
+        risk_group = QGroupBox("🛡️ Risk & Çıkış")
+        risk_layout = QFormLayout(risk_group)
+        self._add_double_spin('kar_al', "Kar Al %:", 0.0, 20.0, defaults.get('kar_al', 0.0), risk_layout)
+        self._add_double_spin('iz_stop', "İzleyen Stop %:", 0.0, 10.0, defaults.get('iz_stop', 0.0), risk_layout)
+        self.params_layout.addWidget(risk_group)
+        
+        self.params_layout.addStretch()
     
     def _add_spin(self, name: str, label: str, min_val: int, max_val: int, default: int, layout: QFormLayout):
         """Integer SpinBox ekle"""
@@ -340,8 +406,10 @@ class StrategyPanel(QWidget):
             defaults = self.STRATEGY1_DEFAULTS
         elif index == 1:
             defaults = self.STRATEGY2_DEFAULTS
-        else:
+        elif index == 2:
             defaults = self.STRATEGY3_DEFAULTS
+        else:
+            defaults = self.STRATEGY4_DEFAULTS
         
         for name, widget in self.param_widgets.items():
             if name in defaults:
@@ -391,7 +459,14 @@ class StrategyPanel(QWidget):
         
         # Varsayılan isim
         idx = self.strategy_combo.currentIndex()
-        strategy_name = "strateji1" if idx == 0 else ("strateji2" if idx == 1 else "paradise")
+        if idx == 0:
+            strategy_name = "strateji1"
+        elif idx == 1:
+            strategy_name = "strateji2"
+        elif idx == 2:
+            strategy_name = "paradise"
+        else:
+            strategy_name = "strateji4"
         default_name = f"{strategy_name}_preset.json"
         
         filepath, _ = QFileDialog.getSaveFileName(
@@ -462,6 +537,13 @@ class StrategyPanel(QWidget):
             elif strategy_idx == 3:
                 from src.strategies.paradise_strategy import ParadiseStrategy
                 strategy = ParadiseStrategy.from_config_dict(
+                    {'opens': opens, 'highs': highs, 'lows': lows, 'closes': closes, 'typical': typical, 'dates': dates},
+                    config,
+                    dates
+                )
+            elif strategy_idx == 4:
+                from src.strategies.toma_strategy import TomaStrategy
+                strategy = TomaStrategy.from_config_dict(
                     {'opens': opens, 'highs': highs, 'lows': lows, 'closes': closes, 'typical': typical, 'dates': dates},
                     config,
                     dates

@@ -1,0 +1,110 @@
+// ===============================================================================================
+// Strateji Adı: TOMA Manuel Hesaplama
+// Açıklama: TOMA indikatörünü, iDeal'in yerleşik fonksiyonunu kullanmadan,
+// formül mantığına göre manuel olarak hesaplar ve sonuçları karşılaştırır.
+// ===============================================================================================
+
+// =================== PARAMETRELER ===================
+int pPeriyot = string.IsNullOrWhiteSpace(Sistem.Parametreler[0]) ? 3 : Convert.ToInt32(Sistem.Parametreler[0]);
+double pYuzde = string.IsNullOrWhiteSpace(Sistem.Parametreler[1]) ? 2.0 : Convert.ToDouble(Sistem.Parametreler[1]);
+// =================================================================
+
+// =================== VERİLER VE İNDİKATÖRLER ===================
+var C = Sistem.GrafikFiyatSec("Kapanis");
+var MA = Sistem.MA(C, "Exp", pPeriyot);
+
+// Karşılaştırma için iDeal'in orijinal TOMA fonksiyonu
+var TOMA_Orijinal = Sistem.TOMA(pPeriyot, pYuzde);
+
+// Manuel hesaplama için boş listeler
+var TOMA_Manuel = Sistem.Liste(0);
+var Trend = Sistem.Liste(0); // 1 = Yükseliş, -1 = Düşüş
+// =================================================================
+
+// =================== MANUEL HESAPLAMA DÖNGÜSÜ ===================
+
+// Başlangıç durumu
+TOMA_Manuel[0] = MA[0];
+Trend[0] = 1; // Başlangıçta yükseliş trendi varsayalım
+
+for (int i = 1; i < C.Count; i++)
+{
+    // Mevcut bar için bantları hesapla
+    double yuzdeCarpan = pYuzde / 100.0;
+    float altBant = (float)(MA[i] * (1 - yuzdeCarpan));
+    float ustBant = (float)(MA[i] * (1 + yuzdeCarpan));
+
+    // Bir önceki barın trend durumuna göre hesapla
+    if (Trend[i-1] == 1) // Önceki trend Yükseliş ise
+    {
+        // TOMA, bir önceki TOMA ve mevcut AltBant'tan büyük olanı alır (asla düşmez)
+        TOMA_Manuel[i] = Math.Max(TOMA_Manuel[i-1], altBant);
+        
+        // Trend kırılımı kontrolü: MA, TOMA'nın altına inerse trend Düşüş'e döner
+        if (MA[i] < TOMA_Manuel[i])
+        {
+            Trend[i] = -1;
+            TOMA_Manuel[i] = ustBant; // TOMA anında karşı banda zıplar
+        }
+        else
+        {
+            Trend[i] = 1; // Trend devam ediyor
+        }
+    }
+    else // Önceki trend Düşüş ise (Trend[i-1] == -1)
+    {
+        // TOMA, bir önceki TOMA ve mevcut UstBant'tan küçük olanı alır (asla yükselmez)
+        TOMA_Manuel[i] = Math.Min(TOMA_Manuel[i-1], ustBant);
+
+        // Trend kırılımı kontrolü: MA, TOMA'nın üstüne çıkarsa trend Yükseliş'e döner
+        if (MA[i] > TOMA_Manuel[i])
+        {
+            Trend[i] = 1;
+            TOMA_Manuel[i] = altBant; // TOMA anında karşı banda zıplar
+        }
+        else
+        {
+            Trend[i] = -1; // Trend devam ediyor
+        }
+    }
+}
+// =================================================================
+
+// =================== GÖRSELLEŞTİRME ===================
+// Manuel hesaplanan TOMA (Beyaz) ile Orijinal TOMA (Sarı) karşılaştırması
+Sistem.Cizgiler[0].Deger = TOMA_Manuel;
+Sistem.Cizgiler[0].Aciklama = "TOMA Manuel";
+Sistem.Cizgiler[0].Renk = Color.White;
+Sistem.Cizgiler[0].Kalinlik = 2;
+
+Sistem.Cizgiler[1].Deger = TOMA_Orijinal;
+Sistem.Cizgiler[1].Aciklama = "TOMA Orijinal";
+Sistem.Cizgiler[1].Renk = Color.Yellow;
+Sistem.Cizgiler[1].Stil = 3; // Kesikli çizgi
+
+// Referans için Hareketli Ortalama
+Sistem.Cizgiler[2].Deger = MA;
+Sistem.Cizgiler[2].Aciklama = "MA";
+Sistem.Cizgiler[2].Renk = Color.Aqua;
+Sistem.Cizgiler[2].Kalinlik = 1;
+
+// =================== DATA EXPORT (KALİBRASYON İÇİN) ===================
+string DosyaYolu = @"d:\Projects\IdealQuant\reference\IdealQuant_TOMA_Data.csv";
+System.IO.StreamWriter SW = new System.IO.StreamWriter(DosyaYolu);
+SW.WriteLine("Date;Close;TOMA;Trend");
+
+var V = Sistem.GrafikVerileri;
+for (int i = 0; i < V.Count; i++)
+{
+    var DateStr = V[i].Date.ToString("yyyy-MM-dd HH:mm");
+    var CloseStr = C[i].ToString().Replace(",", "."); // Ondalık ayracı nokta olsun
+    var TomaStr = TOMA_Manuel[i].ToString().Replace(",", ".");
+    var TrendStr = Trend[i].ToString();
+    
+    // CSV satırı oluştur
+    string Line = DateStr + ";" + CloseStr + ";" + TomaStr + ";" + TrendStr;
+    SW.WriteLine(Line);
+}
+SW.Close();
+Sistem.Mesaj("Veri seti oluşturuldu: " + DosyaYolu);
+// ======================================================================

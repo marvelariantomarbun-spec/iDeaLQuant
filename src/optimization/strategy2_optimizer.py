@@ -22,6 +22,7 @@ from src.indicators.core import EMA, ATR, RSI, Momentum, HHV, LLV, ARS_Dynamic, 
 
 # Global cache for workers
 g_cache = None
+g_mask = None
 
 # --- DATA LOADING ---
 def load_data():
@@ -132,15 +133,16 @@ class IndicatorCache:
 
 # --- WORKER INIT ---
 def worker_init():
-    global g_cache
+    global g_cache, g_mask
     df = load_data()
     if df is not None:
         g_cache = IndicatorCache(df)
+        g_mask = df.get_trading_mask("ENDEKS").values if hasattr(df, 'get_trading_mask') else np.ones(len(df), dtype=bool)
 
 # --- FAST BACKTEST (Strategy 2 Logic) ---
 @jit(nopython=True)
 def fast_backtest_strategy2(closes, highs, lows, volumes, ars_arr, hhv, llv, mom, rsi,
-                            mfi_arr, mfi_hhv, mfi_llv, vol_hhv,
+                            mfi_arr, mfi_hhv, mfi_llv, vol_hhv, mask_arr,
                             mom_p, brk_p, rsi_p, kar_al, iz_stop,
                             rsi_ob, rsi_os, use_mfi, use_vol):
     n = len(closes)
@@ -185,6 +187,22 @@ def fast_backtest_strategy2(closes, highs, lows, volumes, ars_arr, hhv, llv, mom
     current_trend = 0
     
     for i in range(50, n):
+        # --- TRADING MASK CHECK ---
+        if not mask_arr[i]:
+            if pos != 0:
+                # Force Close
+                pnl = 0.0
+                if pos == 1: pnl = closes[i] - entry_price
+                else: pnl = entry_price - closes[i]
+                
+                if pnl > 0: gross_profit += pnl
+                else: gross_loss += abs(pnl)
+                current_equity += pnl
+                pos = 0
+                max_dd = max(max_dd, peak_equity - current_equity)
+            continue
+            
+        # Trend Update
         # Trend Update
         if trend_raw[i] != 0:
             current_trend = trend_raw[i]
@@ -352,7 +370,7 @@ def solve_chunk(args):
                     np_val, tr, pf, dd = fast_backtest_strategy2(
                         closes, g_cache.highs, g_cache.lows, volumes,
                         ars_arr, hhv_arr, llv_arr, mom_arr, rsi_arr,
-                        mfi_arr, mfi_hhv, mfi_llv, vol_hhv,
+                        mfi_arr, mfi_hhv, mfi_llv, vol_hhv, g_mask,
                         mp, bp, rsi_p, ka, iz, rsi_ob, rsi_os, use_mfi, use_vol
                     )
                     

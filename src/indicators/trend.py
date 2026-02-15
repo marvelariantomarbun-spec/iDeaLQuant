@@ -395,3 +395,59 @@ def LinearRegSlope(data: List[float], period: int = 14) -> List[float]:
             result[i] = (period * xy_sum - x_sum * y_sum) / denom
     
     return result
+
+
+def TOMA(closes: List[float], period: int = 3, percent: float = 2.0) -> Tuple[List[float], List[float]]:
+    """
+    TOMA (Optimized Trend Tracker / Trailing Stop Logic)
+    Based on IdealData manual calculation reference.
+    
+    Returns:
+        (TOMA Line, Trend Direction)
+        Trend: 1 = Up, -1 = Down
+    """
+    n = len(closes)
+    toma = [0.0] * n
+    trend = [0] * n
+    
+    # Calculate EMA (Model uses 'Exp' MA)
+    ma = EMA(closes, period)
+    
+    if n > 0:
+        toma[0] = ma[0]
+        trend[0] = 1
+        
+    percent_factor = percent / 100.0
+        
+    for i in range(1, n):
+        alt_bant = ma[i] * (1 - percent_factor)
+        ust_bant = ma[i] * (1 + percent_factor)
+        
+        prev_trend = trend[i-1]
+        prev_toma = toma[i-1]
+        
+        if prev_trend == 1: # Uptrend
+            # TOMA never goes down in uptrend
+            new_toma = max(prev_toma, alt_bant)
+            
+            # Check for breakdown
+            if closes[i] < new_toma:
+                trend[i] = -1
+                toma[i] = ust_bant # Flip to upper band
+            else:
+                trend[i] = 1
+                toma[i] = new_toma
+                
+        else: # Downtrend
+            # TOMA never goes up in downtrend
+            new_toma = min(prev_toma, ust_bant)
+            
+            # Check for breakout
+            if closes[i] > new_toma:
+                trend[i] = 1
+                toma[i] = alt_bant # Flip to lower band
+            else:
+                trend[i] = -1
+                toma[i] = new_toma
+                
+    return toma, trend

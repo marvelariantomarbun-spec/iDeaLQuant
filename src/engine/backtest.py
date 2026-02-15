@@ -9,8 +9,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import numpy as np
 
-from strategies.ars_trend import ARSTrendStrategy, StrategyConfig, Signal
-from filters.yatay_filtre import YatayFiltre
+from src.strategies.ars_trend_v2 import ARSTrendStrategyV2 as ARSTrendStrategy, StrategyConfigV2 as StrategyConfig, Signal
+from src.filters.yatay_filtre import YatayFiltre
+from .data import OHLCV
 
 
 @dataclass
@@ -142,7 +143,8 @@ class Backtester:
         # Strateji
         self.strategy = ARSTrendStrategy(
             opens, highs, lows, closes, typical, 
-            strategy_config
+            times=self.timestamps,
+            config=strategy_config
         )
         
         # Yatay filtre
@@ -151,6 +153,40 @@ class Backtester:
             self.yatay_filtre = YatayFiltre(closes, highs, lows, typical)
         else:
             self.yatay_filtre = None
+            
+        # Initialize Trading Mask
+        # Create temporary OHLCV object to generate mask efficiently
+        # We assume closes, etc are aligned with timestamps
+        
+        # Check vade_tipi from config
+        vade_tipi = "ENDEKS"
+        if strategy_config and hasattr(strategy_config, 'vade_tipi'):
+            vade_tipi = strategy_config.vade_tipi
+            
+        # Create dataframe-like structure for OHLCV to use
+        # OHLCV expects a dataframe with 'datetime' column for get_trading_mask
+        # We can construct a minimal one
+        import pandas as pd
+        df_temp = pd.DataFrame({'datetime': self.timestamps})
+        # Mock other columns to satisfy OHLCV init if needed, but get_trading_mask only needs datetime
+        # OHLCV init strictly expects OHLC columns? Let's check data.py
+        # properties: open, high, low, close, volume...
+        # It's safer to not instantiate full OHLCV if costs memory.
+        # Actually data.py OHLCV init takes a DF and parses it.
+        # Let's just use the static method logic or helper if possible.
+        # But get_trading_mask is an instance method.
+        # Let's instantiate it properly, it's just a reference wrapper usually.
+        # Wait, OHLCV.from_csv loads data. __init__ takes df.
+        # We can just create a dummy DF with required columns.
+        df_temp['open'] = opens
+        df_temp['high'] = highs
+        df_temp['low'] = lows
+        df_temp['close'] = closes
+        df_temp['volume'] = [0]*self.n
+        
+        # OHLCV expects 'datetime' column.
+        data_obj = OHLCV(df_temp)
+        self.trading_mask = data_obj.get_trading_mask(vade_tipi)
     
     def run(self, start_bar: int = 50) -> BacktestResult:
         """
@@ -180,6 +216,19 @@ class Backtester:
                 trade_allowed = self.yatay_filtre.islem_izni(i)
             else:
                 trade_allowed = True
+                
+            # --- TRADING MASK ENFORCEMENT ---
+            # If mask is False (Holiday/Expiry), force close and skip entry
+            if not self.trading_mask[i]:
+                if position != "FLAT" and current_trade:
+                    current_trade.close(i, self.closes[i], self.timestamps[i], "market_closed")
+                    result.trades.append(current_trade)
+                    equity += current_trade.pnl
+                    position = "FLAT"
+                    current_trade = None
+                    entry_price = 0.0
+                    extreme_price = 0.0
+                continue # Skip signal processing
             
             # Sinyal al
             signal = self.strategy.get_signal(i, position, entry_price, extreme_price)

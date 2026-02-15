@@ -104,24 +104,24 @@ STRATEGY2_PARAMS = {
     'volume_llv_period': (10, 21, 2, True),
 }
 
-# Strateji 3 (Paradise) Parametre Uzayi (11 parametre)
+# Strateji 3 (Paradise) Parametre Uzayi (12 parametre)
 STRATEGY3_PARAMS = {
     # Trend
-    'ema_period': (10, 50, 2, True),
-    'dsma_period': (30, 100, 5, True),
-    'ma_period': (10, 50, 2, True),
+    'ema_period': (5, 80, 1, True),
+    'dsma_period': (15, 150, 5, True),
+    'ma_period': (5, 80, 1, True),
     # Breakout
-    'hh_period': (10, 50, 2, True),
-    'vol_hhv_period': (10, 30, 2, True),
+    'hh_period': (5, 80, 1, True),
+    'vol_hhv_period': (5, 50, 1, True),
     # Momentum
-    'mom_period': (20, 100, 5, True),
-    'mom_alt': (95.0, 99.0, 0.5, False),
-    'mom_ust': (101.0, 105.0, 0.5, False),
+    'mom_period': (10, 150, 5, True),
+    'mom_alt': (90.0, 99.5, 0.5, False),
+    'mom_ust': (100.5, 110.0, 0.5, False),
     # Risk
-    'atr_period': (10, 20, 2, True),
-    'atr_sl': (1.0, 4.0, 0.25, False),
-    'atr_tp': (2.0, 6.0, 0.25, False),
-    'atr_trail': (1.5, 5.0, 0.25, False),
+    'atr_period': (5, 30, 1, True),
+    'atr_sl': (0.5, 5.0, 0.25, False),
+    'atr_tp': (1.0, 10.0, 0.5, False),
+    'atr_trail': (0.5, 6.0, 0.25, False),
 }
 
 

@@ -17,9 +17,10 @@ IdealData backtest sonuçları ile **%100 uyumlu** harici backtest + optimizasyo
 | Faz 3 | ✅ | Robust Parametre | - |
 | Faz 4 | ✅ | IdealData Entegrasyonu | - |
 | Faz 5 | ✅ | **v4.1 Sistem Hizalaması** | 🔴 Kritik |
-| Faz 6 | 🔄 | Desktop UI (PySide6) | 🔴 Kritik |
-| Faz 7 | ⏸️ | Veritabanı | 🟢 Nice-to-have |
+| Faz 6 | ✅ | Desktop UI (PySide6) | - |
+| Faz 7 | ✅ | Veritabanı Entegrasyonu | - |
 | Faz 8 | 🔄 | Agent Dokümantasyonu | 🔴 Sürekli |
+| Faz 9 | 🔜 | Canlı Test & S5 Araştırma | 🟡 Düşük |
 
 ---
 
@@ -68,9 +69,10 @@ IdealData backtest sonuçları ile **%100 uyumlu** harici backtest + optimizasyo
 - [x] Strateji 1 Python Portu: `score_based.py` (Gatekeeper)
 - [x] Strateji 2 Python Portu: `ars_trend_v2.py` (Trend)
 - [x] Strateji 3 Python Portu: `paradise_strategy.py` (HH/LL Breakout + Momentum)
-- [x] IdealData Kaynak Kodları: `1_Nolu_Strateji.txt`, `2_Nolu_Strateji.txt`, `Paradise.txt`
-- [x] **v4.1 Uyumu:** Strateji 1 (20 Param) & Strateji 2 (21 Param) & Strateji 3 (12 Param) senkronize edildi.
-- [x] Gereksiz/Eski strateji dosyaları temizlendi.
+- [x] Strateji 4 Python Portu: `toma_strategy.py` (TOMA + Momentum)
+- [x] IdealData Kaynak Kodları: `S1`, `S2`, `Paradise`, `TOMA_S4`
+- [x] **v4.2 Uyumu:** Tüm stratejiler (S1-S4) senkronize edildi, cache desteği ve C# export eklendi.
+- [x] **Numba Optimizasyonu:** Tüm backtest motorları `jit` ile 100x hızlandırıldı.
 
 ---
 

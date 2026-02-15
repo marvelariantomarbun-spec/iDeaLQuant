@@ -17,11 +17,15 @@ from itertools import product
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from src.indicators.core import EMA, ATR, ADX, SMA, ARS, NetLot, MACDV
+from src.indicators.core import EMA, ATR, ADX, SMA, ARS, NetLot, MACDV, Momentum, HHV, LLV
+from src.indicators.trend import TOMA
+from src.indicators.oscillators import TRIX
 from src.strategies.score_based import ScoreBasedStrategy
 from src.strategies.ars_trend_v2 import ARSTrendStrategyV2
 from src.strategies.paradise_strategy import ParadiseStrategy
+from src.strategies.paradise_strategy import ParadiseStrategy
 from src.optimization.fitness import quick_fitness, calculate_sharpe
+from src.strategies.holidays import vade_sonu_is_gunu
 
 # Opsiyonel: Veritabanı entegrasyonu
 try:
@@ -45,7 +49,7 @@ PARAM_TYPE_CONFIG = {
     'threshold_float': (10.0, 50.0, 5.0, 1.0),  # adx_threshold, netlot_threshold
     'multiplier': (0.5, 3.0, 0.5, 0.1),  # bb_std, atr_sl_mult
     'threshold_momentum': (50.0, 200.0, 10.0, 5.0),   # Momentum scale (0-200 arası)
-    'momentum_band': (95.0, 105.0, 1.0, 0.5),          # Momentum bant (mom_alt, mom_ust)
+    'momentum_band': (90.0, 110.0, 1.0, 0.5),          # Momentum bant (mom_alt, mom_ust)
     'multiplier_wide': (1.0, 10.0, 1.0, 0.25),         # Geniş çarpanlar (TP mult gibi)
     'period_short_wide': (5, 20, 2, 1),                 # Kısa-orta arası periyotlar
 }
@@ -285,9 +289,9 @@ STRATEGY3_GROUPS = [
     ParameterGroup(
         name="Trend",
         params={
-            'ema_period': [10, 15, 21, 30, 40],
-            'dsma_period': [30, 40, 50, 70, 100],
-            'ma_period': [10, 15, 20, 30, 40],
+            'ema_period': [5, 8, 10, 13, 15, 18, 21, 25, 30, 40, 50, 60, 80],
+            'dsma_period': [15, 20, 30, 40, 50, 60, 70, 80, 100, 120, 150],
+            'ma_period': [5, 8, 10, 13, 15, 18, 20, 25, 30, 40, 50, 60, 80],
         },
         is_independent=True,
         default_values={'ema_period': 21, 'dsma_period': 50, 'ma_period': 20}
@@ -295,8 +299,8 @@ STRATEGY3_GROUPS = [
     ParameterGroup(
         name="Breakout",
         params={
-            'hh_period': [10, 15, 20, 25, 35, 50],
-            'vol_hhv_period': [10, 14, 20, 30],
+            'hh_period': [5, 8, 10, 13, 15, 18, 20, 25, 30, 35, 40, 50, 60, 80],
+            'vol_hhv_period': [5, 8, 10, 14, 18, 20, 25, 30, 40, 50],
         },
         is_independent=True,
         default_values={'hh_period': 25, 'vol_hhv_period': 14}
@@ -304,9 +308,9 @@ STRATEGY3_GROUPS = [
     ParameterGroup(
         name="Momentum",
         params={
-            'mom_period': [20, 40, 60, 80, 100],
-            'mom_alt': [95.0, 96.0, 97.0, 98.0, 99.0],
-            'mom_ust': [101.0, 102.0, 103.0, 104.0, 105.0],
+            'mom_period': [10, 15, 20, 30, 40, 50, 60, 80, 100, 120, 150],
+            'mom_alt': [90.0, 91.0, 92.0, 93.0, 94.0, 95.0, 96.0, 97.0, 98.0, 99.0, 99.5],
+            'mom_ust': [100.5, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0, 110.0],
         },
         is_independent=True,
         default_values={'mom_period': 60, 'mom_alt': 98.0, 'mom_ust': 102.0}
@@ -314,10 +318,10 @@ STRATEGY3_GROUPS = [
     ParameterGroup(
         name="Risk",
         params={
-            'atr_period': [10, 14, 20],
-            'atr_sl': [1.0, 1.5, 2.0, 2.5, 3.0],
-            'atr_tp': [2.0, 3.0, 4.0, 5.0, 6.0],
-            'atr_trail': [1.5, 2.0, 2.5, 3.0, 4.0],
+            'atr_period': [5, 7, 10, 14, 18, 20, 25, 30],
+            'atr_sl': [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0],
+            'atr_tp': [1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0],
+            'atr_trail': [0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0],
         },
         is_independent=False,
         default_values={'atr_period': 14, 'atr_sl': 2.0, 'atr_tp': 4.0, 'atr_trail': 2.5}
@@ -429,6 +433,103 @@ class IndicatorCache:
             _, _, width = self.get_bb(bb_period, bb_std)
             return pd.Series(width).rolling(int(avg_period)).mean().fillna(0).values
         return self._get(key, calc)
+
+    # === Paradise Indicator Metodlari ===
+    
+    # === DSMA (Double SMA) ===
+    def get_dsma(self, period: int) -> np.ndarray:
+        key = f'dsma_{period}'
+        def calc():
+            inner = self.get_sma(period)
+            return pd.Series(inner).rolling(int(period)).mean().fillna(0).values
+        return self._get(key, calc)
+
+    # === Momentum ===
+    def get_momentum(self, period: int) -> np.ndarray:
+        key = f'mom_{period}'
+        return self._get(key, lambda: np.array(Momentum(self.closes.tolist(), int(period))))
+
+    # === HHV ===
+    def get_hhv(self, period: int) -> np.ndarray:
+        key = f'hhv_{period}'
+        return self._get(key, lambda: np.array(HHV(self.highs.tolist(), int(period))))
+
+    # === LLV ===
+    def get_llv(self, period: int) -> np.ndarray:
+        key = f'llv_{period}'
+        return self._get(key, lambda: np.array(LLV(self.lows.tolist(), int(period))))
+
+    # === TRIX ===
+    def get_trix(self, period: int) -> np.ndarray:
+        key = f'trix_{period}'
+        return self._get(key, lambda: np.array(TRIX(self.closes.tolist(), int(period))))
+
+    # === TOMA ===
+    def get_toma(self, period: int, opt: float) -> Tuple[np.ndarray, np.ndarray]:
+        key = f'toma_{period}_{opt:.2f}'
+        def calc():
+            toma_val, trend = TOMA(self.closes.tolist(), int(period), float(opt))
+            return (np.array(toma_val), np.array(trend))
+        return self._get(key, calc)
+
+    # === Volume HHV ===
+    def get_vol_hhv(self, period: int) -> np.ndarray:
+        key = f'vol_hhv_{period}'
+        # HHV fonksiyonu list bekler, volumes array'ini list'e cevir
+        return self._get(key, lambda: np.array(HHV(self.volumes.tolist(), int(period))))
+
+    # === Vade Tarihleri ===
+    def get_vade_dates(self, vade_tipi: str) -> set:
+        key = f'vade_dates_{vade_tipi}'
+        def calc():
+            vade_dates = set()
+            # self.times datetime objeleri listesi olarak varsayilir (IndicatorCache.__init__ df['DateTime'].tolist() yapiyor)
+            # Guvenlik icin pd.to_datetime kullanabiliriz ama maliyetli olabilir. 
+            # Eger df['DateTime'] zaten datetimelike ise gerek yok.
+            # Ancak process safe olmasi icin array'i Series'e cevirip dt accessor kullanmak en iyisi.
+            dates = pd.to_datetime(self.times)
+            months = dates.to_period('M').unique()
+            
+            for m in months:
+                if vade_tipi == "ENDEKS" and m.month % 2 != 0:
+                    continue
+                month_date = m.to_timestamp().date()
+                vade_gunu = vade_sonu_is_gunu(month_date, vade_tipi)
+                vade_dates.add(vade_gunu)
+            return vade_dates
+        return self._get(key, calc)
+
+    def get_vade_transitions(self, vade_tipi: str) -> set:
+        key = f'vade_trans_{vade_tipi}'
+        def calc():
+            transitions = set()
+            dates = pd.to_datetime(self.times)
+            # Vectorized approach is faster than loop
+            # Pandas shift ile onceki ayi karsilastir
+            months = dates.month
+            # shift(1) nan getirir, fillna ile ilk ayi koru
+            prev_months = pd.Series(months).shift(1).fillna(months[0])
+            
+            # Ay degisimi olan indeksler
+            change_mask = months != prev_months
+            change_indices = np.where(change_mask)[0]
+            
+            for i in change_indices:
+                m = months[i]
+                if vade_tipi == "ENDEKS" and m % 2 != 0:
+                    # Tek ay ise GECIS yap (Cunku vade sonu CIFT aydadir, 
+                    # tek ay basinda eski kontrat biter yeni kontrat baslar mi? 
+                    # Hayir, ENDEKS kontratlari CIFT aylarda biter.
+                    # Ornegin Subat(2) sonu vade biter, Mart(3) basi GECIS olur.
+                    # Yani Mart(3) basinda gecis olmali. Mart tek aydir (3 % 2 == 1).
+                    # Yani m % 2 == 1 ise transition ekle.
+                    transitions.add(i)
+                elif vade_tipi == "SPOT":
+                    # Her ay gecis
+                    transitions.add(i)
+            return transitions
+        return self._get(key, calc)
+
 
 
 # ==============================================================================

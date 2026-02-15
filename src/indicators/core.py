@@ -15,21 +15,12 @@ from numba import jit
 
 def SMA(data: List[float], period: int) -> List[float]:
     """Simple Moving Average - IdealData compatible"""
-    result = [0.0] * len(data)
-    if len(data) < period:
-        return result
+    n = len(data)
+    if n < period:
+        return [0.0] * n
     
-    # Calculate simple moving average
     s = pd.Series(data)
-    result = s.rolling(window=period).mean().fillna(0).tolist()
-    
-    # Fallback if pandas not available or slower (pure python implementation for consistency)
-    result = [0.0] * len(data)
-    if len(data) >= period:
-        for i in range(period - 1, len(data)):
-            total = sum(data[i - period + 1 : i + 1])
-            result[i] = total / period
-            
+    result = s.rolling(window=period).mean().fillna(0.0).tolist()
     return result
 
 
@@ -337,26 +328,16 @@ def ADX(highs: List[float], lows: List[float], closes: List[float],
 # =============================================================================
 
 def HHV(highs: List[float], period: int) -> List[float]:
-    """Highest High Value - IdealData compatible"""
-    result = [0.0] * len(highs)
-    
-    for i in range(period - 1, len(highs)):
-        result[i] = max(highs[i - period + 1 : i + 1])
-    
+    """Highest High Value - IdealData compatible (pandas optimized)"""
+    s = pd.Series(highs)
+    result = s.rolling(window=period, min_periods=period).max().fillna(0.0).tolist()
     return result
 
 
 def LLV(lows: List[float], period: int) -> List[float]:
-    """Lowest Low Value - IdealData compatible"""
-    result = [float('inf')] * len(lows)
-    
-    for i in range(period - 1, len(lows)):
-        result[i] = min(lows[i - period + 1 : i + 1])
-    
-    # Replace inf with 0 for early bars
-    for i in range(min(period - 1, len(lows))):
-        result[i] = 0.0
-    
+    """Lowest Low Value - IdealData compatible (pandas optimized)"""
+    s = pd.Series(lows)
+    result = s.rolling(window=period, min_periods=period).min().fillna(0.0).tolist()
     return result
 
 
@@ -707,5 +688,28 @@ def QQEF(closes: List[float], rsi_period: int = 14, smooth_period: int = 5) -> t
             qqes[i] = min(qup, prev_qqes)
     
     return qqef, qqes
+
+
+def TRIX(closes: List[float], period: int = 9) -> List[float]:
+    """
+    TRIX Indicator
+    1. EMA1 = EMA(Close, period)
+    2. EMA2 = EMA(EMA1, period)
+    3. EMA3 = EMA(EMA2, period)
+    4. TRIX = (EMA3 - EMA3[i-1]) / EMA3[i-1] * 100
+    """
+    n = len(closes)
+    
+    ema1 = EMA(closes, period)
+    ema2 = EMA(ema1, period)
+    ema3 = EMA(ema2, period)
+    
+    result = [0.0] * n
+    
+    for i in range(1, n):
+        if ema3[i-1] != 0:
+            result[i] = ((ema3[i] - ema3[i-1]) / ema3[i-1]) * 100.0
+            
+    return result
 
 

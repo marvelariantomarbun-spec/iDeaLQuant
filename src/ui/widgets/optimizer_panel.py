@@ -129,6 +129,91 @@ STRATEGY2_PARAM_GROUPS = {
     }
 }
 
+
+# Strateji 3 Parametre Gruplari (Paradise - 12 parametre)
+STRATEGY3_PARAM_GROUPS = {
+    'Trend': {
+        'label': 'Trend Parametreleri',
+        'params': {
+            'ema_period': {'label': 'EMA Periyot', 'type': 'int', 'default': 21, 'min': 5, 'max': 80, 'step': 1},
+            'dsma_period': {'label': 'DSMA Periyot', 'type': 'int', 'default': 50, 'min': 15, 'max': 150, 'step': 5},
+            'ma_period': {'label': 'MA Periyot', 'type': 'int', 'default': 20, 'min': 5, 'max': 80, 'step': 1},
+        }
+    },
+    'Breakout': {
+        'label': 'Breakout Parametreleri',
+        'params': {
+            'hh_period': {'label': 'HH/LL Periyot', 'type': 'int', 'default': 25, 'min': 5, 'max': 80, 'step': 1},
+            'vol_hhv_period': {'label': 'Hacim HHV Periyot', 'type': 'int', 'default': 14, 'min': 5, 'max': 50, 'step': 1},
+        }
+    },
+    'Momentum': {
+        'label': 'Momentum Parametreleri',
+        'params': {
+            'mom_period': {'label': 'Momentum Periyot', 'type': 'int', 'default': 60, 'min': 10, 'max': 150, 'step': 5},
+            'mom_alt': {'label': 'MOM Alt Bant', 'type': 'float', 'default': 98.0, 'min': 90.0, 'max': 99.5, 'step': 0.5},
+            'mom_ust': {'label': 'MOM Ust Bant', 'type': 'float', 'default': 102.0, 'min': 100.5, 'max': 110.0, 'step': 0.5},
+        }
+    },
+    'Cikis_Risk': {
+        'label': 'Cikis / Risk Yonetimi',
+        'params': {
+            'atr_period': {'label': 'ATR Periyot', 'type': 'int', 'default': 14, 'min': 5, 'max': 30, 'step': 1},
+            'atr_sl': {'label': 'ATR Stop Loss', 'type': 'float', 'default': 2.0, 'min': 0.5, 'max': 5.0, 'step': 0.25},
+            'atr_tp': {'label': 'ATR Take Profit', 'type': 'float', 'default': 4.0, 'min': 1.0, 'max': 10.0, 'step': 0.5},
+            'atr_trail': {'label': 'ATR Trailing', 'type': 'float', 'default': 2.5, 'min': 0.5, 'max': 6.0, 'step': 0.25},
+        },
+        'is_cascaded': True
+    }
+}
+# Strateji 4 Parametre Grupları (TOMA ve Katmanlari)
+# Strateji 4 Parametre Grupları (TOMA ve Katmanlari)
+STRATEGY4_PARAM_GROUPS = {
+    'Layer3_TOMA': {
+        'label': 'Layer 3: TOMA (Trend)',
+        'params': {
+            'toma_period': {'label': 'TOMA Periyot', 'type': 'int', 'default': 97, 'min': 10, 'max': 200, 'step': 5},
+            'toma_opt': {'label': 'TOMA Opt %', 'type': 'float', 'default': 1.5, 'min': 0.1, 'max': 5.0, 'step': 0.1},
+            'hhv1_period': {'label': 'TOMA Filtre HHV', 'type': 'int', 'default': 20, 'min': 10, 'max': 50, 'step': 5},
+            'llv1_period': {'label': 'TOMA Filtre LLV', 'type': 'int', 'default': 20, 'min': 10, 'max': 50, 'step': 5},
+        }
+    },
+    'Global_Settings': {
+        'label': 'Global Indikator Ayarlari',
+        'params': {
+             'mom_period': {'label': 'Momentum Periyot', 'type': 'int', 'default': 1900, 'min': 100, 'max': 3000, 'step': 100},
+             'trix_period': {'label': 'TRIX Periyot', 'type': 'int', 'default': 120, 'min': 10, 'max': 200, 'step': 10},
+        },
+        'is_cascaded': False 
+    },
+    'Layer1_MomHigh': {
+        'label': 'Layer 1: Mom High (>101.5)',
+        'params': {
+            'mom_limit_high': {'label': 'Mom High >', 'type': 'float', 'default': 101.5, 'min': 95.0, 'max': 110.0, 'step': 0.5},
+            'trix_lb1': {'label': 'TRIX LB (High)', 'type': 'int', 'default': 145, 'min': 50, 'max': 200, 'step': 5},
+            'hhv2_period': {'label': 'L1 HHV Periyot', 'type': 'int', 'default': 150, 'min': 50, 'max': 300, 'step': 10},
+            'llv2_period': {'label': 'L1 LLV Periyot', 'type': 'int', 'default': 190, 'min': 50, 'max': 300, 'step': 10},
+        }
+    },
+    'Layer2_MomLow': {
+        'label': 'Layer 2: Mom Low (<99.0)',
+        'params': {
+            'mom_limit_low': {'label': 'Mom Low <', 'type': 'float', 'default': 99.0, 'min': 90.0, 'max': 105.0, 'step': 0.5},
+            'trix_lb2': {'label': 'TRIX LB (Low)', 'type': 'int', 'default': 160, 'min': 50, 'max': 200, 'step': 5},
+            'hhv3_period': {'label': 'L2 HHV Periyot', 'type': 'int', 'default': 150, 'min': 50, 'max': 300, 'step': 10},
+            'llv3_period': {'label': 'L2 LLV Periyot', 'type': 'int', 'default': 190, 'min': 50, 'max': 300, 'step': 10},
+        }
+    },
+    'Risk': {
+        'label': 'Risk Yonetimi',
+        'params': {
+            'kar_al': {'label': 'Kar Al %', 'type': 'float', 'default': 0.0, 'min': 0.0, 'max': 10.0, 'step': 0.5},
+            'iz_stop': {'label': 'Izleyen Stop %', 'type': 'float', 'default': 0.0, 'min': 0.0, 'max': 5.0, 'step': 0.25},
+        },
+        'is_cascaded': True
+    }
+}
+
 # ==============================================================================
 # TIMEFRAME-ADAPTIVE PARAMETER SCALING
 # ==============================================================================
@@ -143,8 +228,11 @@ SCALABLE_PARAMS = {
     'ars_ema_period', 'ars_atr_period', 'momentum_period', 'breakout_period',
     'mfi_period', 'mfi_hhv_period', 'mfi_llv_period', 'volume_hhv_period',
     'atr_exit_period', 'volume_llv_period',
-    # Ozel (kapali - scoring bar sayisi, exit bar sayisi)
-    # 'exit_confirm_bars' → cok kisa, olcekleme gereksiz
+    # Strateji 3 (Paradise)
+    'ema_period', 'dsma_period', 'ma_period', 'hh_period', 'vol_hhv_period',
+    'mom_period', 'atr_period',
+    # Strateji 4 (TOMA)
+    'toma_period', 'trix_lb1', 'trix_lb2' # Mom limits are dimensionless thresholds
 }
 
 REFERENCE_PERIOD = 5  # dk - Stratejilerin orijinal tasarim periyodu
@@ -230,11 +318,11 @@ class ParameterGroupWidget(QGroupBox):
             # Min
             if param_config['type'] == 'int':
                 min_spin = QSpinBox()
-                min_spin.setRange(1, 1000)
+                min_spin.setRange(1, 10000) # Increased Range
                 min_spin.setValue(param_config['min'])
             else:
                 min_spin = QDoubleSpinBox()
-                min_spin.setRange(0.001, 100.0)
+                min_spin.setRange(0.0, 10000.0)
                 min_spin.setDecimals(3)
                 min_spin.setValue(param_config['min'])
             table.setCellWidget(row, 1, min_spin)
@@ -242,11 +330,11 @@ class ParameterGroupWidget(QGroupBox):
             # Max
             if param_config['type'] == 'int':
                 max_spin = QSpinBox()
-                max_spin.setRange(1, 1000)
+                max_spin.setRange(1, 10000) # Increased Range
                 max_spin.setValue(param_config['max'])
             else:
                 max_spin = QDoubleSpinBox()
-                max_spin.setRange(0.001, 100.0)
+                max_spin.setRange(0.0, 10000.0)
                 max_spin.setDecimals(3)
                 max_spin.setValue(param_config['max'])
             table.setCellWidget(row, 2, max_spin)
@@ -258,7 +346,7 @@ class ParameterGroupWidget(QGroupBox):
                 step_spin.setValue(param_config['step'])
             else:
                 step_spin = QDoubleSpinBox()
-                step_spin.setRange(0.001, 10.0)
+                step_spin.setRange(0.001, 100.0)
                 step_spin.setDecimals(3)
                 step_spin.setValue(param_config['step'])
             table.setCellWidget(row, 3, step_spin)
@@ -413,7 +501,9 @@ class OptimizationWorker(QThread):
         self.test_data = test_data
         
         try:
-            if self.method == "Hibrit Grup":
+            if self.strategy_index == 3: # Strategy 4 (TOMA)
+                self._run_sequential_layer()
+            elif self.method == "Hibrit Grup":
                 self._run_hybrid()
             elif self.method == "Genetik":
                 self._run_genetic()
@@ -422,23 +512,246 @@ class OptimizationWorker(QThread):
             else:
                 self.error.emit(f"Bilinmeyen yöntem: {self.method}")
                 
-            # OOS Validasyon (Eger validation aktifse ve sonuc varsa)
-            # Not: _run_... metodlari self.result_ready.emit yapiyor.
-            # Bunu yakalamak yerine _run metodlarindan sonucu donmesini beklemeliyiz veya sinyal mekanizmasini degistirmeliyiz.
-            # Şu anki yapida _run metodlari direkt emit ediyor. OOS testini _run metodlarinin icine gommek veya emit edilen veriyi manupile etmek lazim.
-            # En temizi: _run metodlari artik "sonuc donmeli", emit islemi "run" metodunun sonunda yapilmali.
-            # Ancak kodu cok degistirmemek icin, Optimizer'larin result_ready signalini gecici olarak override edebiliriz? Hayir, karmasik olur.
-            
-            # En Pratik Çözüm: _run metodlari icinde validation yapalim.
-            # self.do_oos ve self.test_data (yukarida olusturdugumuz) erisilebilir olacak.
-            self.test_data = test_data # Instance variable yap
+            # restore data after run
+            self.data = original_data
             
         except Exception as e:
             import traceback
             self.error.emit(f"{str(e)}\n{traceback.format_exc()}")
+            self.data = original_data
+
+    def _run_sequential_layer(self):
+        """Strateji 4 (TOMA) Sequential Layer Optimizasyonu (Full Parametreler)"""
+        from src.optimization.strategy4_optimizer import fast_backtest_strategy4, IndicatorCache
+        import numpy as np
+        
+        # 1. Veri Hazirligi
+        self._emit_progress(1, "Veri analiz ediliyor...")
+        dates = self.data['DateTime'].values
+        closes = self.data['Kapanis'].values
+        mask_arr = np.ones(len(closes), dtype=bool) 
+        
+        # MASK (Vade/Tatil)
+        try:
+            from src.engine.data import OHLCV
+            vade_tipi = self.config.get('vade_tipi', "ENDEKS")
+            ohlcv = OHLCV(self.data)
+            mask_arr = ohlcv.get_trading_mask(vade_tipi)
+            self._emit_progress(1, f"Maske uygulandı: {vade_tipi} (Aktif bar: {np.sum(mask_arr)}/{len(mask_arr)})")
+        except Exception as e:
+            print(f"Mask Error: {e}")
+            mask_arr = np.ones(len(closes), dtype=bool) 
+        
+        # 2. Cache
+        self._emit_progress(2, "Cache baslatiliyor...")
+        cache = IndicatorCache(self.data)
+        grid = self.param_ranges
+        
+        # 3. Parametreleri Hazirla
+        # Phase 1 Params
+        toma_ranges = [(p, o) for p in grid.get('toma_period', [97]) for o in grid.get('toma_opt', [1.5])]
+        hhv1_ranges = grid.get('hhv1_period', [20])
+        llv1_ranges = grid.get('llv1_period', [20])
+        
+        # Phase 2 Params (Globals + L1)
+        mom_periods = grid.get('mom_period', [1900])
+        trix_periods = grid.get('trix_period', [120])
+        mom_high_ranges = [(mh, lb) for mh in grid.get('mom_limit_high', [101.5]) for lb in grid.get('trix_lb1', [145])]
+        hhv2_ranges = grid.get('hhv2_period', [150])
+        llv2_ranges = grid.get('llv2_period', [190])
+        
+        # Phase 3 Params (L2 + Risk)
+        mom_low_ranges = [(ml, lb) for ml in grid.get('mom_limit_low', [99.0]) for lb in grid.get('trix_lb2', [160])]
+        hhv3_ranges = grid.get('hhv3_period', [150])
+        llv3_ranges = grid.get('llv3_period', [190])
+        risk_ranges = [(ka, iz) for ka in grid.get('kar_al', [0.0]) for iz in grid.get('iz_stop', [0.0])]
+        
+        # Dummy Params for disabled layers
+        p_mom_low_dummy = -9999.0
+        p_mom_high_dummy = 9999.0
+        
+        # ==============================================================================
+        # PHASE 1: TOMA Scan (TOMA Params + Layer 3 Filters)
+        # ==============================================================================
+        self._emit_progress(5, f"FAZ 1: TOMA ve Filtre Taramasi ({len(toma_ranges)*len(hhv1_ranges)} kombinasyon)...")
+        
+        # Pre-load required cache for Phase 1 (hhv1/llv1)
+        # mom/trix not used in Phase 1 if layers are disabled
+        # But fast_backtest expects arrays. Send dummies or safe defaults
+        dummy_mom = np.zeros(len(closes))
+        dummy_trix = np.zeros(len(closes))
+        dummy_hhv2 = np.zeros(len(closes))
+        dummy_llv2 = np.zeros(len(closes))
+        dummy_hhv3 = np.zeros(len(closes))
+        dummy_llv3 = np.zeros(len(closes))
+        
+        best_phase1 = None
+        best_p1_score = -float('inf')
+        
+        counter = 0
+        total_p1 = len(toma_ranges) * len(hhv1_ranges) * len(llv1_ranges)
+        
+        for tp, to in toma_ranges:
+            toma_val, toma_trend = cache.get_toma(tp, to)
             
-        # Restore data
-        self.data = original_data
+            for h1p in hhv1_ranges:
+                hhv1 = cache.get_hhv(h1p)
+                for l1p in llv1_ranges:
+                    llv1 = cache.get_llv(l1p)
+                    
+                    counter +=1
+                    if counter % 50 == 0:
+                        self._emit_progress(5 + int(30 * counter/total_p1), f"Faz 1: TOMA={tp} Opt={to} H1={h1p}")
+                        if not self._is_running: return
+
+                    res = fast_backtest_strategy4(
+                        closes, toma_trend, toma_val,
+                        hhv1, llv1, dummy_hhv2, dummy_llv2, dummy_hhv3, dummy_llv3,
+                        dummy_mom, dummy_trix, mask_arr,
+                        p_mom_low_dummy, p_mom_high_dummy,
+                        100, 100, # Dummy Trix LBs
+                        0.0, 0.0 # No Risk
+                    )
+                    
+                    score = res[0] * res[2] if res[2] > 0 else 0 # NP * PF
+                    if score > best_p1_score:
+                        best_p1_score = score
+                        best_phase1 = {'toma_period': tp, 'toma_opt': to, 'hhv1': h1p, 'llv1': l1p}
+        
+        if not best_phase1:
+            self.error.emit("Faz 1 sonuc bulunamadi.")
+            return
+
+        self._emit_progress(35, f"Faz 1 En Iyi: TOMA {best_phase1['toma_period']}/{best_phase1['toma_opt']}, H1:{best_phase1['hhv1']}")
+        
+        # ==============================================================================
+        # PHASE 2: Layer 1 + Global Indicators
+        # ==============================================================================
+        self._emit_progress(35, "FAZ 2: Global Indikatorler ve Layer 1 (Mom High)...")
+        
+        # Fix Phase 1
+        fix_tp, fix_to = best_phase1['toma_period'], best_phase1['toma_opt']
+        toma_val, toma_trend = cache.get_toma(fix_tp, fix_to)
+        hhv1 = cache.get_hhv(best_phase1['hhv1'])
+        llv1 = cache.get_llv(best_phase1['llv1'])
+        
+        best_phase2 = None
+        best_p2_score = -float('inf')
+        
+        # Loop Order: Global Params Outer -> Layer Params Inner
+        # NOTE: This can be heavy.
+        total_p2 = len(mom_periods) * len(trix_periods) * len(mom_high_ranges) * len(hhv2_ranges)
+        counter = 0
+        
+        for mom_p in mom_periods:
+            mom_arr = cache.get_mom(mom_p)
+            for trix_p in trix_periods:
+                trix_arr = cache.get_trix(trix_p)
+                
+                for h2p in hhv2_ranges:
+                    hhv2 = cache.get_hhv(h2p)
+                    for l2p in llv2_ranges:
+                        llv2 = cache.get_llv(l2p)
+                        
+                        for mh, lb1 in mom_high_ranges:
+                            counter += 1
+                            if counter % 20 == 0:
+                                prog = 35 + int(30 * counter/max(1, total_p2))
+                                self._emit_progress(prog, f"Faz 2: MomP={mom_p} TrixP={trix_p} H-Lim={mh}")
+                                if not self._is_running: return
+
+                            # Run with L1 Active, L2 Disabled
+                            res = fast_backtest_strategy4(
+                                closes, toma_trend, toma_val,
+                                hhv1, llv1, hhv2, llv2, dummy_hhv3, dummy_llv3,
+                                mom_arr, trix_arr, mask_arr,
+                                p_mom_low_dummy, mh,
+                                lb1, 100, # LB2 dummy
+                                0.0, 0.0
+                            )
+                            
+                            score = res[0] * res[2]
+                            if score > best_p2_score:
+                                best_p2_score = score
+                                best_phase2 = {
+                                    'mom_period': mom_p, 'trix_period': trix_p,
+                                    'mom_limit_high': mh, 'trix_lb1': lb1,
+                                    'hhv2': h2p, 'llv2': l2p
+                                }
+
+        if not best_phase2:
+             # Fallback defaults if search failed or empty
+             best_phase2 = {'mom_period': 1900, 'trix_period': 120, 'mom_limit_high': 101.5, 'trix_lb1': 145, 'hhv2':150, 'llv2':190}
+             
+        self._emit_progress(65, f"Faz 2 En Iyi: MomP {best_phase2['mom_period']}, Limit {best_phase2['mom_limit_high']}")
+
+        # ==============================================================================
+        # PHASE 3: Layer 2 + Risk
+        # ==============================================================================
+        self._emit_progress(65, "FAZ 3: Layer 2 (Mom Low) ve Risk...")
+        
+        # Fix Phase 2
+        fix_mom_p = best_phase2['mom_period']
+        fix_trix_p = best_phase2['trix_period']
+        fix_mh = best_phase2['mom_limit_high']
+        fix_lb1 = best_phase2['trix_lb1']
+        
+        mom_arr = cache.get_mom(fix_mom_p)
+        trix_arr = cache.get_trix(fix_trix_p)
+        hhv2 = cache.get_hhv(best_phase2['hhv2'])
+        llv2 = cache.get_llv(best_phase2['llv2'])
+        
+        final_results = []
+        counter = 0
+        total_p3 = len(hhv3_ranges) * len(mom_low_ranges) * len(risk_ranges)
+        
+        for h3p in hhv3_ranges:
+            hhv3 = cache.get_hhv(h3p)
+            for l3p in llv3_ranges:
+                llv3 = cache.get_llv(l3p)
+                
+                for ml, lb2 in mom_low_ranges:
+                    for ka, iz in risk_ranges:
+                        counter += 1
+                        if counter % 50 == 0:
+                            prog = 65 + int(34 * counter/max(1, total_p3))
+                            self._emit_progress(prog, f"Faz 3: Low={ml} KA={ka}")
+                            if not self._is_running: return
+                        
+                        # Full Strategy
+                        res = fast_backtest_strategy4(
+                            closes, toma_trend, toma_val,
+                            hhv1, llv1, hhv2, llv2, hhv3, llv3,
+                            mom_arr, trix_arr, mask_arr,
+                            ml, fix_mh,
+                            fix_lb1, lb2,
+                            ka, iz
+                        )
+                        np_val, tr, pf, dd = res
+                        
+                        if np_val > 0:
+                            final_results.append({
+                                # Params
+                                'toma_period': fix_tp, 'toma_opt': fix_to,
+                                'hhv1_period': best_phase1['hhv1'], 'llv1_period': best_phase1['llv1'],
+                                'mom_period': fix_mom_p, 'trix_period': fix_trix_p,
+                                'mom_limit_high': fix_mh, 'trix_lb1': fix_lb1,
+                                'hhv2_period': best_phase2['hhv2'], 'llv2_period': best_phase2['llv2'],
+                                'mom_limit_low': ml, 'trix_lb2': lb2,
+                                'hhv3_period': h3p, 'llv3_period': l3p,
+                                'kar_al': ka, 'iz_stop': iz,
+                                # Stats
+                                'net_profit': np_val, 'trades': tr, 'pf': pf, 'max_dd': dd
+                            })
+
+        # Final Sort
+        final_results.sort(key=lambda x: x['net_profit'], reverse=True)
+        top_results = final_results[:100]
+        
+        self._emit_progress(100, "Optimizasyon Tamamlandi!")
+        self.result_ready.emit(top_results)
+
+
     
     def _run_hybrid(self):
         """Hibrit Grup optimizasyonu"""
@@ -792,7 +1105,7 @@ class OptimizerPanel(QWidget):
         # Strateji seçimi
         top_row.addWidget(QLabel("Strateji:"))
         self.strategy_combo = QComboBox()
-        self.strategy_combo.addItems(["Strateji 1 - Gatekeeper", "Strateji 2 - ARS Trend v2", "Strateji 3 - Paradise"])
+        self.strategy_combo.addItems(["Strateji 1 - Gatekeeper", "Strateji 2 - ARS Trend v2", "Strateji 3 - Paradise", "Strateji 4 - TOMA + Momentum"])
         self.strategy_combo.currentIndexChanged.connect(self._on_strategy_changed)
         top_row.addWidget(self.strategy_combo)
         
@@ -1060,8 +1373,12 @@ class OptimizerPanel(QWidget):
                 item.widget().deleteLater()
                 
         # Strateji bazlı grup tanımını al
+        # Strateji bazlı grup tanımını al
         strategy_idx = self.strategy_combo.currentIndex()
-        group_defs = STRATEGY1_PARAM_GROUPS if strategy_idx == 0 else STRATEGY2_PARAM_GROUPS
+        if strategy_idx == 0: group_defs = STRATEGY1_PARAM_GROUPS
+        elif strategy_idx == 2: group_defs = STRATEGY3_PARAM_GROUPS
+        elif strategy_idx == 3: group_defs = STRATEGY4_PARAM_GROUPS
+        else: group_defs = STRATEGY2_PARAM_GROUPS
         
         row = 0
         col = 0
@@ -1172,8 +1489,15 @@ class OptimizerPanel(QWidget):
                 item.widget().deleteLater()
         self.group_widgets.clear()
         
-        # Yeni grupları ekle (timeframe'e gore olceklenmis)
-        base_groups = STRATEGY1_PARAM_GROUPS if index == 0 else STRATEGY2_PARAM_GROUPS
+        # Yeni gruplari ekle (timeframe'e gore olceklenmis)
+        if index == 0:
+            base_groups = STRATEGY1_PARAM_GROUPS
+        elif index == 2:
+            base_groups = STRATEGY3_PARAM_GROUPS
+        elif index == 3:
+            base_groups = STRATEGY4_PARAM_GROUPS
+        else:
+            base_groups = STRATEGY2_PARAM_GROUPS
         period_dk = self._get_current_period_dk()
         param_groups = scale_param_groups(base_groups, period_dk)
         

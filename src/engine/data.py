@@ -5,8 +5,18 @@ IdealQuant - OHLCV Data Structures and Loader
 import pandas as pd
 import numpy as np
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Union
 from pathlib import Path
+from datetime import datetime, time, date
+
+# Import holiday logic
+try:
+    from src.strategies.holidays import (
+        is_tatil_gunu, is_arefe, vade_sonu_is_gunu
+    )
+    HOLIDAYS_AVAILABLE = True
+except ImportError:
+    HOLIDAYS_AVAILABLE = False
 
 
 @dataclass
@@ -136,26 +146,152 @@ class OHLCV:
         Load from IdealData CSV export format
         Expected columns: Tarih;Saat;Acilis;Yuksek;Dusuk;Kapanis;Hacim
         """
-        df = pd.read_csv(filepath, sep=';', decimal=',')
+        df = pd.read_csv(filepath, sep=';', decimal=',', encoding='cp1254')
         
-        # Combine date and time
-        df['datetime'] = pd.to_datetime(
-            df['Tarih'] + ' ' + df['Saat'], 
-            format='%d.%m.%Y %H:%M'
-        )
-        
-        # Rename columns
-        df = df.rename(columns={
-            'Acilis': 'open',
-            'Yuksek': 'high',
-            'Dusuk': 'low',
-            'Kapanis': 'close',
-            'Hacim': 'volume'
-        })
-        
+        # Rename by index immediately to avoid encoding/BOM issues
+        try:
+            mapping = {
+                df.columns[0]: 'date_str',
+                df.columns[1]: 'time_str',
+                df.columns[2]: 'open',
+                df.columns[3]: 'high',
+                df.columns[4]: 'low',
+                df.columns[5]: 'close',
+                df.columns[7]: 'volume'
+            }
+            df = df.rename(columns=mapping)
+        except IndexError:
+            # Fallback (maybe fewer columns?)
+            pass
+            
+        # create datetime from renamed columns
+        try:
+            df['datetime'] = pd.to_datetime(
+                df['date_str'] + ' ' + df['time_str'], 
+                format='%d.%m.%Y %H:%M:%S'
+            )
+        except KeyError:
+             # Fallback if rename failed, try original names if compatible
+             pass
+        except Exception as e:
+             print(f"Date Parse Error: {e}")
+             
         df = df.sort_values('datetime').reset_index(drop=True)
         
         return cls(df)
+    
+    def get_trading_mask(self, vade_tipi: str = "ENDEKS") -> np.ndarray:
+        """
+        Generate a boolean mask for tradable bars.
+        False = Do not trade / Close position (Holiday, Weekend, Expiry Afternoon, Half-day Eve)
+        True = Tradable
+        
+        Args:
+            vade_tipi: "ENDEKS" or "SPOT"
+            
+        Returns:
+            np.ndarray (bool): Mask array of same length as data
+        """
+        if not HOLIDAYS_AVAILABLE:
+            # Fallback if holidays module is missing
+            return np.ones(len(self.df), dtype=bool)
+            
+        n = len(self.df)
+        mask = np.ones(n, dtype=bool)
+        
+        # Pre-calculate unique dates to minimize function calls
+        # We assume self.DT contains datetime objects
+        # If not, convert once
+        if len(self.DT) > 0 and not isinstance(self.DT[0], (datetime, pd.Timestamp)):
+             times = pd.to_datetime(self.df['datetime']).tolist()
+        else:
+             times = self.DT
+             
+        # Extract date and time components efficiently if possible
+        # For simplicity and correctness with the existing messy date formats:
+        
+        # Cache for expensive valid/invalid days
+        valid_days = {}
+        expiry_days = set()
+        
+        # Identify Expiry Dates
+        # Get unique months to check for expiry
+        # This is faster than checking every single day
+        if hasattr(self.df['datetime'], 'dt'):
+            unique_dates = self.df['datetime'].dt.date.unique()
+        else:
+            # Fallback
+            unique_dates = set([t.date() for t in times])
+            
+        for d in unique_dates:
+            # Check Expiry
+            # Monthly check for candidate
+            is_expiry = False
+            # Optimization: vade_sonu_is_gunu is a bit heavy, call it sparsely
+            # Logic: Check if d is a vade_sonu
+            # We can use the helper from holidays.py which returns the date
+            # But here we need to know if 'd' IS the expiry date.
+            
+            # Better approach: 
+            # 1. Check if it is a holiday/weekend -> Mark False
+            if is_tatil_gunu(d):
+                valid_days[d] = False
+                continue
+            
+            # 2. Check Expiry
+            # ENDEKS: Even months only. SPOT: Every month.
+            m = d.month
+            if vade_tipi == "ENDEKS" and m % 2 != 0:
+                pass # Not an expiry month
+            else:
+                 # Calculate expiry for this month and check if d matches
+                 # vade_sonu_is_gunu returns the DATE of expiry for that month
+                 actual_expiry = vade_sonu_is_gunu(d, vade_tipi) 
+                 if d == actual_expiry:
+                     expiry_days.add(d)
+            
+            # 3. Check Arefe (Half day)
+            if is_arefe(d):
+                 # Arefe is consistent, keep valid but mark specific times later
+                 pass
+            
+            valid_days[d] = True
+
+        # Now iterate bars and apply mask
+        # Vectorized approach would be better but requires aligning with holiday logic structure
+        # Loop is fine for creating mask once (it's not inner loop)
+        
+        time_12_00 = time(12, 0)
+        time_12_30 = time(12, 30)
+        time_18_15 = time(18, 15)
+        
+        for i in range(n):
+            t_obj = times[i]
+            d = t_obj.date()
+            t = t_obj.time()
+            
+            # 1. Day Check (Weekend/Holiday)
+            if not valid_days.get(d, True):
+                mask[i] = False
+                continue
+                
+            # 2. Arefe Check (Half Day)
+            # Arefe: Close after 12:00 (Logic says 12:30 usually empty but let's be safe)
+            if is_arefe(d):
+                if t > time_12_30:
+                    mask[i] = False
+                    continue
+            
+            # 3. Expiry Check (Vade Sonu)
+            # Close positions in the afternoon of expiry day
+            if d in expiry_days:
+                # Vade sonu günü 12:00'den sonra işlem yapma / kapat
+                # IdealData logic: 12:00 - 18:15 arası FLAT
+                if t >= time_12_00:
+                    mask[i] = False
+                    continue
+                    
+        return mask
 
 
 def Liste(value: float, count: int = None, data: OHLCV = None) -> List[float]:

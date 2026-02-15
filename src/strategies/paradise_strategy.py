@@ -81,7 +81,8 @@ class ParadiseStrategy:
                  times: List[datetime],
                  volumes: Optional[List[float]] = None,
                  config: Optional[ParadiseConfig] = None,
-                 config_dict: Optional[Dict[str, Any]] = None):
+                 config_dict: Optional[Dict[str, Any]] = None,
+                 data_cache = None):
         
         self.n = len(closes)
         self.opens = opens
@@ -91,6 +92,7 @@ class ParadiseStrategy:
         self.typical = typical
         self.times = times
         self.volumes = volumes if volumes is not None else [1.0] * self.n
+        self.data_cache = data_cache
         
         self.config = config or ParadiseConfig()
         if config_dict:
@@ -118,27 +120,80 @@ class ParadiseStrategy:
     def _calculate_indicators(self):
         cfg = self.config
         
-        # 1. Trend Indikatorleri
-        self.ema = EMA(self.closes, cfg.ema_period)
-        dsma_inner = SMA(self.closes, cfg.dsma_period)  # Ilk SMA
-        self.dsma = SMA(dsma_inner, cfg.dsma_period)     # Ikinci SMA (Double SMA)
-        self.ma = SMA(self.closes, cfg.ma_period)
-        
-        # 2. Momentum
-        self.momentum = Momentum(self.closes, cfg.mom_period)
-        
-        # 3. HH / LL (Highest High / Lowest Low) 
-        self.hh = HHV(self.highs, cfg.hh_period)
-        self.ll = LLV(self.lows, cfg.hh_period)
-        
-        # 4. ATR (cikis icin)
-        self.atr = ATR(self.highs, self.lows, self.closes, cfg.atr_period)
-        
-        # 5. Hacim HHV
-        self.vol_hhv = HHV(self.volumes, cfg.vol_hhv_period)
+        # Cache kullanarak hesapla (Eger cache varsa)
+        if self.data_cache is not None:
+             # 1. Trend
+             if hasattr(self.data_cache, 'get_ema'):
+                 self.ema = self.data_cache.get_ema(cfg.ema_period).tolist()
+             else:
+                 self.ema = EMA(self.closes, cfg.ema_period)
+                 
+             if hasattr(self.data_cache, 'get_dsma'):
+                 self.dsma = self.data_cache.get_dsma(cfg.dsma_period).tolist()
+             else:
+                 dsma_inner = SMA(self.closes, cfg.dsma_period)
+                 self.dsma = SMA(dsma_inner, cfg.dsma_period)
+                 
+             if hasattr(self.data_cache, 'get_sma'):
+                 self.ma = self.data_cache.get_sma(cfg.ma_period).tolist()
+             else:
+                 self.ma = SMA(self.closes, cfg.ma_period)
+                 
+             # 2. Momentum
+             if hasattr(self.data_cache, 'get_momentum'):
+                 self.momentum = self.data_cache.get_momentum(cfg.mom_period).tolist()
+             else:
+                 self.momentum = Momentum(self.closes, cfg.mom_period)
+                 
+             # 3. HH/LL
+             if hasattr(self.data_cache, 'get_hhv'):
+                 self.hh = self.data_cache.get_hhv(cfg.hh_period).tolist()
+             else:
+                 self.hh = HHV(self.highs, cfg.hh_period)
+                 
+             if hasattr(self.data_cache, 'get_llv'):
+                 self.ll = self.data_cache.get_llv(cfg.hh_period).tolist()
+             else:
+                 self.ll = LLV(self.lows, cfg.hh_period)
+                 
+             # 4. ATR
+             if hasattr(self.data_cache, 'get_atr'):
+                 self.atr = self.data_cache.get_atr(cfg.atr_period).tolist()
+             else:
+                 self.atr = ATR(self.highs, self.lows, self.closes, cfg.atr_period)
+                 
+             # 5. Vol HHV
+             if hasattr(self.data_cache, 'get_vol_hhv'):
+                 self.vol_hhv = self.data_cache.get_vol_hhv(cfg.vol_hhv_period).tolist()
+             else:
+                 self.vol_hhv = HHV(self.volumes, cfg.vol_hhv_period)
+                 
+        else:
+            # Manuel Hesaplama (Cache yoksa)
+            # 1. Trend Indikatorleri
+            self.ema = EMA(self.closes, cfg.ema_period)
+            dsma_inner = SMA(self.closes, cfg.dsma_period)  # Ilk SMA
+            self.dsma = SMA(dsma_inner, cfg.dsma_period)     # Ikinci SMA (Double SMA)
+            self.ma = SMA(self.closes, cfg.ma_period)
+            
+            # 2. Momentum
+            self.momentum = Momentum(self.closes, cfg.mom_period)
+            
+            # 3. HH / LL (Highest High / Lowest Low) 
+            self.hh = HHV(self.highs, cfg.hh_period)
+            self.ll = LLV(self.lows, cfg.hh_period)
+            
+            # 4. ATR (cikis icin)
+            self.atr = ATR(self.highs, self.lows, self.closes, cfg.atr_period)
+            
+            # 5. Hacim HHV
+            self.vol_hhv = HHV(self.volumes, cfg.vol_hhv_period)
     
     def _calculate_vade_sonlari(self) -> Set[date]:
         """Vade sonu tarihlerini hesapla"""
+        if self.data_cache and hasattr(self.data_cache, 'get_vade_dates'):
+            return self.data_cache.get_vade_dates(self.config.vade_tipi)
+            
         vade_dates = set()
         dates = pd.to_datetime(self.times)
         months = dates.to_period('M').unique()
@@ -154,6 +209,9 @@ class ParadiseStrategy:
     
     def _detect_vade_transitions(self) -> set:
         """Vade gecisi barlarini tespit et"""
+        if self.data_cache and hasattr(self.data_cache, 'get_vade_transitions'):
+            return self.data_cache.get_vade_transitions(self.config.vade_tipi)
+            
         transitions = set()
         dates = pd.to_datetime(self.times)
         
@@ -413,4 +471,5 @@ class ParadiseStrategy:
             times=_times,
             volumes=volumes,
             config=config,
+            data_cache=data_cache # Cache enjekte et
         )
