@@ -162,6 +162,85 @@ def worker_init():
         g_cache = IndicatorCache(df)
         g_mask = mask # it is already a numpy array
 
+# --- PARALLEL WORKER FUNCTIONS (Phase 2 & 3) ---
+# Architecture: All arrays stored in global dict via initializer.
+# Task tuples contain ONLY scalar params (keys/thresholds).
+# This avoids serializing numpy arrays per-task (100,000x less memory).
+
+_g_s4 = {}  # Global shared state for worker processes
+
+def s4_parallel_init(shared_data):
+    """Initializer for Phase 2/3 workers. shared_data is a dict of ALL needed arrays."""
+    global _g_s4
+    _g_s4 = shared_data
+
+def s4_p2_eval(params):
+    """
+    Phase 2: Single parameter combination evaluation.
+    params: (mom_p, trix_p, h2p, l2p, mh, lb1)  — ALL SCALARS
+    Returns: (score, params_dict) or None
+    """
+    mom_p, trix_p, h2p, l2p, mh, lb1 = params
+    g = _g_s4
+    
+    n = len(g['closes'])
+    dummy = np.zeros(n)
+    
+    res = fast_backtest_strategy4(
+        g['closes'], g['toma_trend'], g['toma_val'],
+        g['hhv1'], g['llv1'],
+        g['hhv'][h2p], g['llv'][l2p],
+        dummy, dummy,
+        g['mom'][mom_p], g['trix'][trix_p], g['mask'],
+        -9999.0, mh,
+        lb1, 100,
+        0.0, 0.0
+    )
+    
+    score = res[0] * res[2] if res[2] > 0 else 0.0
+    if score > 0:
+        return (score, {
+            'mom_period': mom_p, 'trix_period': trix_p,
+            'mom_limit_high': mh, 'trix_lb1': lb1,
+            'hhv2': h2p, 'llv2': l2p
+        })
+    return None
+
+def s4_p3_eval(params):
+    """
+    Phase 3: Single parameter combination evaluation.
+    params: (h3p, l3p, ml, lb2, ka, iz, meta_dict)  — SCALARS + tiny metadata dict
+    Returns: result dict or None
+    """
+    h3p, l3p, ml, lb2, ka, iz, meta = params
+    g = _g_s4
+    
+    res = fast_backtest_strategy4(
+        g['closes'], g['toma_trend'], g['toma_val'],
+        g['hhv1'], g['llv1'],
+        g['hhv2_fixed'], g['llv2_fixed'],
+        g['hhv'][h3p], g['llv'][l3p],
+        g['mom_fixed'], g['trix_fixed'], g['mask'],
+        ml, meta['fix_mh'],
+        meta['fix_lb1'], lb2,
+        ka, iz
+    )
+    
+    np_val, tr, pf, dd = res
+    if np_val > 0:
+        return {
+            'toma_period': meta['fix_tp'], 'toma_opt': meta['fix_to'],
+            'hhv1_period': meta['p1_hhv1'], 'llv1_period': meta['p1_llv1'],
+            'mom_period': meta['fix_mom_p'], 'trix_period': meta['fix_trix_p'],
+            'mom_limit_high': meta['fix_mh'], 'trix_lb1': meta['fix_lb1'],
+            'hhv2_period': meta['p2_hhv2'], 'llv2_period': meta['p2_llv2'],
+            'mom_limit_low': ml, 'trix_lb2': lb2,
+            'hhv3_period': h3p, 'llv3_period': l3p,
+            'kar_al': ka, 'iz_stop': iz,
+            'net_profit': np_val, 'trades': tr, 'pf': pf, 'max_dd': dd
+        }
+    return None
+
 # --- FAST BACKTEST (Strategy 4 Logic - Multi-Layer) ---
 @jit(nopython=True)
 def fast_backtest_strategy4(closes, 

@@ -85,7 +85,7 @@ def load_data() -> pd.DataFrame:
 # ==============================================================================
 
 # Genetik optimizer'dan parametre tanımlarını import et
-from src.optimization.genetic_optimizer import STRATEGY1_PARAMS, STRATEGY2_PARAMS, STRATEGY3_PARAMS
+from src.optimization.genetic_optimizer import STRATEGY1_PARAMS, STRATEGY2_PARAMS, STRATEGY3_PARAMS, STRATEGY4_PARAMS
 
 
 class BayesianObjective:
@@ -107,8 +107,10 @@ class BayesianObjective:
             base_params = STRATEGY2_PARAMS
         elif strategy_index == 2:
             base_params = STRATEGY3_PARAMS
+        elif strategy_index == 3:
+            base_params = STRATEGY4_PARAMS
         else:
-            raise ValueError(f"Gecersiz strategy_index: {strategy_index}. 0/1/2 desteklenir.")
+            raise ValueError(f"Gecersiz strategy_index: {strategy_index}. 0/1/2/3 desteklenir.")
             
         self.param_defs = {k: list(v) for k, v in base_params.items()}  # Mutable copy
         
@@ -153,6 +155,8 @@ class BayesianObjective:
             result = self._evaluate_strategy2(params)
         elif self.strategy_index == 2:
             result = self._evaluate_strategy3(params)
+        elif self.strategy_index == 3:
+            result = self._evaluate_strategy4(params)
         else:
             raise ValueError(f"Gecersiz strategy_index: {self.strategy_index}")
         
@@ -277,6 +281,100 @@ class BayesianObjective:
                 'fitness': fit
             }
         except Exception as e:
+            return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'fitness': -999999}
+
+    def _evaluate_strategy4(self, params: Dict[str, Any]) -> Dict[str, float]:
+        """Strateji 4 (TOMA) icin fitness hesapla"""
+        try:
+            from src.optimization.strategy4_optimizer import fast_backtest_strategy4, IndicatorCache as S4IndicatorCache
+            import numpy as np
+            from src.optimization.fitness import quick_fitness
+            
+            # Cache Management
+            if 's4_cache' not in self.cache._cache:
+                self.cache._cache['s4_cache'] = S4IndicatorCache(self.cache.df)
+            cache = self.cache._cache['s4_cache']
+            
+            # Extract Params
+            toma_period = int(params.get('toma_period', 97))
+            
+            # Handle possible float/int mismatch for params
+            toma_opt = float(params.get('toma_opt', 1.5))
+            hhv1_p = int(params.get('hhv1_period', 20))
+            llv1_p = int(params.get('llv1_period', 20))
+            
+            mom_period = int(params.get('mom_period', 1900))
+            trix_period = int(params.get('trix_period', 120))
+            
+            mh = float(params.get('mom_limit_high', 101.5))
+            trix_lb1 = int(params.get('trix_lb1', 145))
+            hhv2_p = int(params.get('hhv2_period', 150))
+            llv2_p = int(params.get('llv2_period', 190))
+            
+            ml = float(params.get('mom_limit_low', 99.0))
+            trix_lb2 = int(params.get('trix_lb2', 160))
+            hhv3_p = int(params.get('hhv3_period', 150))
+            llv3_p = int(params.get('llv3_period', 190))
+            
+            ka = float(params.get('kar_al', 0.0))
+            iz = float(params.get('iz_stop', 0.0))
+            
+            # Get Indicator Arrays (using cache)
+            toma_val, toma_trend = cache.get_toma(toma_period, toma_opt)
+            hhv1 = cache.get_hhv(hhv1_p)
+            llv1 = cache.get_llv(llv1_p)
+            
+            mom_arr = cache.get_mom(mom_period)
+            trix_arr = cache.get_trix(trix_period)
+            
+            hhv2 = cache.get_hhv(hhv2_p)
+            llv2 = cache.get_llv(llv2_p)
+            
+            hhv3 = cache.get_hhv(hhv3_p)
+            llv3 = cache.get_llv(llv3_p)
+            
+            # Mask (Default: All True)
+            mask_arr = np.ones(len(self.cache.closes), dtype=bool)
+            
+            # Run Fast Backtest
+            result = fast_backtest_strategy4(
+                self.cache.closes, 
+                toma_trend, toma_val, 
+                hhv1, llv1, 
+                hhv2, llv2, 
+                hhv3, llv3, 
+                mom_arr, trix_arr, 
+                mask_arr, 
+                ml, mh, 
+                trix_lb1, trix_lb2, 
+                ka, iz
+            )
+            
+            if result is None:
+                return {'net_profit': -999, 'trades': 0, 'pf': 0, 'max_dd': 999, 'fitness': -999}
+                
+            np_val = result['net_profit']
+            trades = result['trades']
+            pf = result['pf']
+            max_dd = result['max_dd']
+            
+            # Fitness Calc
+            fitness = quick_fitness(
+                np_val, pf, max_dd, trades, sharpe=0.0,
+                commission=0.0, slippage=0.0
+            )
+            
+            return {
+                'net_profit': np_val,
+                'trades': trades,
+                'pf': pf,
+                'max_dd': max_dd,
+                'sharpe': 0.0,
+                'fitness': fitness
+            }
+            
+        except Exception as e:
+            # print(f"S4 Eval Error: {e}")
             return {'net_profit': -999999, 'trades': 0, 'pf': 0, 'max_dd': 999999, 'fitness': -999999}
     
     def _run_backtest(self, params: Dict[str, Any], commission: float = 0.0, slippage: float = 0.0) -> Dict[str, float]:

@@ -501,7 +501,7 @@ class OptimizationWorker(QThread):
         self.test_data = test_data
         
         try:
-            if self.strategy_index == 3: # Strategy 4 (TOMA)
+            if self.strategy_index == 3 and self.method == "Hibrit Grup": # Strategy 4 (TOMA) - Hybrid Mode
                 self._run_sequential_layer()
             elif self.method == "Hibrit Grup":
                 self._run_hybrid()
@@ -625,9 +625,9 @@ class OptimizationWorker(QThread):
         self._emit_progress(35, f"Faz 1 En Iyi: TOMA {best_phase1['toma_period']}/{best_phase1['toma_opt']}, H1:{best_phase1['hhv1']}")
         
         # ==============================================================================
-        # PHASE 2: Layer 1 + Global Indicators
+        # PHASE 2: Layer 1 + Global Indicators (PARALLEL — Lightweight)
         # ==============================================================================
-        self._emit_progress(35, "FAZ 2: Global Indikatorler ve Layer 1 (Mom High)...")
+        self._emit_progress(35, "FAZ 2: Global Indikatorler ve Layer 1 (PARALEL)...")
         
         # Fix Phase 1
         fix_tp, fix_to = best_phase1['toma_period'], best_phase1['toma_opt']
@@ -635,49 +635,64 @@ class OptimizationWorker(QThread):
         hhv1 = cache.get_hhv(best_phase1['hhv1'])
         llv1 = cache.get_llv(best_phase1['llv1'])
         
+        # Pre-compute all indicator arrays into shared_data dict
+        # This dict is serialized ONCE to each worker via initializer (not per-task!)
+        shared_data_p2 = {
+            'closes': closes,
+            'toma_trend': toma_trend,
+            'toma_val': toma_val,
+            'hhv1': hhv1,
+            'llv1': llv1,
+            'mask': mask_arr,
+            'mom': {mp: cache.get_mom(mp) for mp in mom_periods},
+            'trix': {tp: cache.get_trix(tp) for tp in trix_periods},
+            'hhv': {hp: cache.get_hhv(hp) for hp in set(list(hhv2_ranges) + list(hhv3_ranges))},
+            'llv': {lp: cache.get_llv(lp) for lp in set(list(llv2_ranges) + list(llv3_ranges))},
+        }
+        
+        # Build flat task list — ONLY SCALARS (6 values per task, ~50 bytes)
+        p2_tasks = []
+        for mom_p in mom_periods:
+            for trix_p in trix_periods:
+                for h2p in hhv2_ranges:
+                    for l2p in llv2_ranges:
+                        for mh, lb1 in mom_high_ranges:
+                            # TRIX Lookback Constraint: lb1 <= trix_p * 3
+                            if lb1 > trix_p * 3:
+                                continue
+                            p2_tasks.append((mom_p, trix_p, h2p, l2p, mh, lb1))
+        
+        self._emit_progress(36, f"Faz 2: {len(p2_tasks)} kombinasyon ({len(p2_tasks)*50//1024} KB bellek)...")
+        
         best_phase2 = None
         best_p2_score = -float('inf')
         
-        # Loop Order: Global Params Outer -> Layer Params Inner
-        # NOTE: This can be heavy.
-        total_p2 = len(mom_periods) * len(trix_periods) * len(mom_high_ranges) * len(hhv2_ranges)
-        counter = 0
-        
-        for mom_p in mom_periods:
-            mom_arr = cache.get_mom(mom_p)
-            for trix_p in trix_periods:
-                trix_arr = cache.get_trix(trix_p)
-                
-                for h2p in hhv2_ranges:
-                    hhv2 = cache.get_hhv(h2p)
-                    for l2p in llv2_ranges:
-                        llv2 = cache.get_llv(l2p)
-                        
-                        for mh, lb1 in mom_high_ranges:
-                            counter += 1
-                            if counter % 20 == 0:
-                                prog = 35 + int(30 * counter/max(1, total_p2))
-                                self._emit_progress(prog, f"Faz 2: MomP={mom_p} TrixP={trix_p} H-Lim={mh}")
-                                if not self._is_running: return
-
-                            # Run with L1 Active, L2 Disabled
-                            res = fast_backtest_strategy4(
-                                closes, toma_trend, toma_val,
-                                hhv1, llv1, hhv2, llv2, dummy_hhv3, dummy_llv3,
-                                mom_arr, trix_arr, mask_arr,
-                                p_mom_low_dummy, mh,
-                                lb1, 100, # LB2 dummy
-                                0.0, 0.0
-                            )
-                            
-                            score = res[0] * res[2]
-                            if score > best_p2_score:
-                                best_p2_score = score
-                                best_phase2 = {
-                                    'mom_period': mom_p, 'trix_period': trix_p,
-                                    'mom_limit_high': mh, 'trix_lb1': lb1,
-                                    'hhv2': h2p, 'llv2': l2p
-                                }
+        if len(p2_tasks) > 0:
+            from multiprocessing import Pool, cpu_count
+            from src.optimization.strategy4_optimizer import s4_parallel_init, s4_p2_eval
+            
+            n_workers = min(self.n_parallel or 16, cpu_count())
+            
+            with Pool(
+                processes=n_workers,
+                initializer=s4_parallel_init,
+                initargs=(shared_data_p2,)
+            ) as pool:
+                done = 0
+                for result in pool.imap_unordered(s4_p2_eval, p2_tasks, chunksize=max(1, len(p2_tasks) // (n_workers * 4))):
+                    done += 1
+                    if done % 200 == 0:
+                        prog = 36 + int(28 * done / len(p2_tasks))
+                        self._emit_progress(prog, f"Faz 2: {done}/{len(p2_tasks)} tamamlandı")
+                        if not self._is_running:
+                            pool.terminate()
+                            return
+                    
+                    if result is not None:
+                        score, params = result
+                        if score > best_p2_score:
+                            best_p2_score = score
+                            best_phase2 = params
 
         if not best_phase2:
              # Fallback defaults if search failed or empty
@@ -686,9 +701,9 @@ class OptimizationWorker(QThread):
         self._emit_progress(65, f"Faz 2 En Iyi: MomP {best_phase2['mom_period']}, Limit {best_phase2['mom_limit_high']}")
 
         # ==============================================================================
-        # PHASE 3: Layer 2 + Risk
+        # PHASE 3: Layer 2 + Risk (PARALLEL — Lightweight)
         # ==============================================================================
-        self._emit_progress(65, "FAZ 3: Layer 2 (Mom Low) ve Risk...")
+        self._emit_progress(65, "FAZ 3: Layer 2 (Mom Low) ve Risk (PARALEL)...")
         
         # Fix Phase 2
         fix_mom_p = best_phase2['mom_period']
@@ -701,52 +716,74 @@ class OptimizationWorker(QThread):
         hhv2 = cache.get_hhv(best_phase2['hhv2'])
         llv2 = cache.get_llv(best_phase2['llv2'])
         
-        final_results = []
-        counter = 0
-        total_p3 = len(hhv3_ranges) * len(mom_low_ranges) * len(risk_ranges)
+        # Update shared data for Phase 3 (reuse arrays from Phase 2, add fixed Phase 2 arrays)
+        shared_data_p3 = {
+            'closes': closes,
+            'toma_trend': toma_trend,
+            'toma_val': toma_val,
+            'hhv1': hhv1,
+            'llv1': llv1,
+            'mask': mask_arr,
+            'hhv2_fixed': hhv2,
+            'llv2_fixed': llv2,
+            'mom_fixed': mom_arr,
+            'trix_fixed': trix_arr,
+            # HHV/LLV dict for Phase 3 variable arrays
+            'hhv': {hp: cache.get_hhv(hp) for hp in hhv3_ranges},
+            'llv': {lp: cache.get_llv(lp) for lp in llv3_ranges},
+        }
         
+        # Metadata dict (sent once per task, tiny ~200 bytes)
+        p3_meta = {
+            'fix_mh': fix_mh, 'fix_lb1': fix_lb1,
+            'fix_tp': fix_tp, 'fix_to': fix_to,
+            'p1_hhv1': best_phase1['hhv1'], 'p1_llv1': best_phase1['llv1'],
+            'fix_mom_p': fix_mom_p, 'fix_trix_p': fix_trix_p,
+            'p2_hhv2': best_phase2['hhv2'], 'p2_llv2': best_phase2['llv2'],
+        }
+        
+        # Build flat task list — ONLY SCALARS + tiny meta dict
+        p3_tasks = []
         for h3p in hhv3_ranges:
-            hhv3 = cache.get_hhv(h3p)
             for l3p in llv3_ranges:
-                llv3 = cache.get_llv(l3p)
-                
                 for ml, lb2 in mom_low_ranges:
+                    # Relaxed TRIX Constraint for Phase 3: 
+                    # Phase 2 might have picked a small TRIX Period, don't kill Phase 3 exploration.
+                    # We accept all lb2 ranges defined by user.
                     for ka, iz in risk_ranges:
-                        counter += 1
-                        if counter % 50 == 0:
-                            prog = 65 + int(34 * counter/max(1, total_p3))
-                            self._emit_progress(prog, f"Faz 3: Low={ml} KA={ka}")
-                            if not self._is_running: return
-                        
-                        # Full Strategy
-                        res = fast_backtest_strategy4(
-                            closes, toma_trend, toma_val,
-                            hhv1, llv1, hhv2, llv2, hhv3, llv3,
-                            mom_arr, trix_arr, mask_arr,
-                            ml, fix_mh,
-                            fix_lb1, lb2,
-                            ka, iz
-                        )
-                        np_val, tr, pf, dd = res
-                        
-                        if np_val > 0:
-                            final_results.append({
-                                # Params
-                                'toma_period': fix_tp, 'toma_opt': fix_to,
-                                'hhv1_period': best_phase1['hhv1'], 'llv1_period': best_phase1['llv1'],
-                                'mom_period': fix_mom_p, 'trix_period': fix_trix_p,
-                                'mom_limit_high': fix_mh, 'trix_lb1': fix_lb1,
-                                'hhv2_period': best_phase2['hhv2'], 'llv2_period': best_phase2['llv2'],
-                                'mom_limit_low': ml, 'trix_lb2': lb2,
-                                'hhv3_period': h3p, 'llv3_period': l3p,
-                                'kar_al': ka, 'iz_stop': iz,
-                                # Stats
-                                'net_profit': np_val, 'trades': tr, 'pf': pf, 'max_dd': dd
-                            })
+                        p3_tasks.append((h3p, l3p, ml, lb2, ka, iz, p3_meta))
+        
+        self._emit_progress(66, f"Faz 3: {len(p3_tasks)} kombinasyon ({len(p3_tasks)*200//1024//1024} MB bellek)...")
+        
+        final_results = []
+        
+        if len(p3_tasks) > 0:
+            from multiprocessing import Pool, cpu_count
+            from src.optimization.strategy4_optimizer import s4_parallel_init, s4_p3_eval
+            
+            n_workers = min(self.n_parallel or 16, cpu_count())
+            
+            with Pool(
+                processes=n_workers,
+                initializer=s4_parallel_init,
+                initargs=(shared_data_p3,)
+            ) as pool:
+                done = 0
+                for result in pool.imap_unordered(s4_p3_eval, p3_tasks, chunksize=max(1, len(p3_tasks) // (n_workers * 4))):
+                    done += 1
+                    if done % 500 == 0:
+                        prog = 66 + int(33 * done / len(p3_tasks))
+                        self._emit_progress(prog, f"Faz 3: {done}/{len(p3_tasks)} tamamlandı")
+                        if not self._is_running:
+                            pool.terminate()
+                            return
+                    
+                    if result is not None:
+                        final_results.append(result)
 
         # Final Sort
         final_results.sort(key=lambda x: x['net_profit'], reverse=True)
-        top_results = final_results[:100]
+        top_results = final_results[:500]  # Show Top 500
         
         self._emit_progress(100, "Optimizasyon Tamamlandi!")
         self.result_ready.emit(top_results)

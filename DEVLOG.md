@@ -234,3 +234,24 @@
 - **Optimizasyon Planı:** Parallel Processing tasarlandı.
 
 ---
+
+## 2026-02-17 (Strategy 4 Optimization Queue & Engine Support)
+
+### ✅ Yapılanlar
+- **"Run All" Kuyruk Sorunu Düzeltildi:**
+  - `optimizer_panel.py` içinde Strateji 4 seçiliyken kuyruğun sürekli hibrit modda sıfırlanmasına neden olan mantık hatası giderildi.
+  - Artık Hibrit -> Genetik -> Bayesian sıralı çalışması sorunsuz işliyor.
+- **Genetik ve Bayesian Motor Desteği:**
+  - Strateji 4 (TOMA) için `GeneticOptimizer` ve `BayesianOptimizer` sınıflarına tam destek eklendi.
+  - `fast_backtest_strategy4` entegrasyonu sağlandı ve parametre uzayları tanımlandı.
+- **Görev Takibi:**
+  - `task.md` dosyasına kullanıcı talepleri doğrultusunda "Gelecek Geliştirmeler" bölümü eklendi (Canlı Monitör, Checkpoint vb.).
+
+### ⚠️ Tespit Edilen Eksikler (Bir Sonraki Oturumda Yapılacak)
+- **OOS Validasyon:** Strateji 4'ün "Run All" akışında otomatik test adımı henüz eklenmedi.
+- **Sharpe/Fitness:** Strateji 4 backtest motoru henüz Sharpe oranı döndürmüyor, bu nedenle Fitness skoru eksik.
+- **Stop Butonu:** Mevcut durdurma mantığı kuyruğu temizlemiyor, sadece mevcut adımı durdurup sonrakine geçiyor.
+
+### 📌 Mevcut Durum
+- **Aktif Faz:** Faz 6 - Desktop UI Testi & İyileştirme
+- **Sıradaki Adım:** Validasyon, Sharpe ve Stop butonu düzeltmelerinin uygulanması.
