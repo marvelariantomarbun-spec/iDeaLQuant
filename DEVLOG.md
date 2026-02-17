@@ -9,9 +9,10 @@
 - **Çift İlerleme Çubuğu:** Genel kuyruk ilerlemesi mor renkte ayrı bir progress bar ile gösterildi.
 - **Canlı Sonuç Monitörü:** Optimizasyon sırasında en iyi sonucu anlık gösteren premium panel (yeşil flash animasyonlu).
 - **Fitness Puanı (S4):** Sequential layer sonuçlarına `quick_fitness` uygulanıp sıralama fitness bazlı yapıldı.
+- **Checkpoint (Kaldığı Yerden Devam):** JSON-based state persistence: kuyruk durumu her adımda kaydedilir, başarılı tamamlanma veya durdurma ile silinir. Kesinti sonrası "▶ Devam Et" butonu otomatik belirir.
 
 ### 📋 Kalan
-- Checkpoint (Kaldığı Yerden Devam) özelliği henüz uygulanmadı.
+- Tüm özellikler tamamlandı ✅
 
 ---
 

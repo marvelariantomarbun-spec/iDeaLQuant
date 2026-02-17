@@ -1165,6 +1165,8 @@ class OptimizerPanel(QWidget):
     
     optimization_complete = Signal(list)
     
+    CHECKPOINT_FILE = 'optimizer_checkpoint.json'
+    
     def __init__(self):
         super().__init__()
         self.config = {}
@@ -1183,6 +1185,10 @@ class OptimizerPanel(QWidget):
         self.timer.timeout.connect(self._update_timer)
         
         self._setup_ui()
+        
+        # Baslangicta checkpoint kontrolu (UI hazir olduktan sonra)
+        from PySide6.QtCore import QTimer as _QT
+        _QT.singleShot(500, self._check_checkpoint)
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -1385,6 +1391,12 @@ class OptimizerPanel(QWidget):
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self._stop_optimization)
         btn_row.addWidget(self.stop_btn)
+        
+        self.resume_btn = QPushButton("\u25B6 Devam Et")
+        self.resume_btn.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold;")
+        self.resume_btn.setVisible(False)  # Only visible when checkpoint exists
+        self.resume_btn.clicked.connect(self._resume_from_checkpoint)
+        btn_row.addWidget(self.resume_btn)
         
         layout.addLayout(btn_row)
         
@@ -1878,7 +1890,124 @@ class OptimizerPanel(QWidget):
         self.worker.error.connect(self._on_error)
         self.worker.finished.connect(self._on_finished)
         self.worker.start()
+    
+    # ==============================================================================
+    # CHECKPOINT (Resume) LOGIC
+    # ==============================================================================
+    def _get_checkpoint_path(self):
+        """Checkpoint dosya yolunu dondur"""
+        import os
+        # Proje koku: src/ui/widgets/../../.. = proje root
+        base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        return os.path.join(base, self.CHECKPOINT_FILE)
+    
+    def _save_checkpoint(self):
+        """Mevcut kuyruk durumunu JSON dosyasina kaydet"""
+        import json
+        try:
+            checkpoint = {
+                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'strategy_index': self.strategy_combo.currentIndex(),
+                'method_combo_text': self.method_combo.currentText(),
+                'remaining_queue': list(self.optimization_queue),
+                'queue_total': self._queue_total,
+                'process_id': self.current_process_id,
+                'validation_enabled': self.validation_check.isChecked(),
+                'split_pct': self.split_spin.value(),
+                'commission': self.commission_spin.value(),
+                'slippage': self.slippage_spin.value(),
+            }
+            with open(self._get_checkpoint_path(), 'w', encoding='utf-8') as f:
+                json.dump(checkpoint, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[CHECKPOINT] Kayit hatasi: {e}")
+    
+    def _load_checkpoint(self):
+        """Checkpoint dosyasini oku"""
+        import json, os
+        path = self._get_checkpoint_path()
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[CHECKPOINT] Okuma hatasi: {e}")
+            return None
+    
+    def _clear_checkpoint(self):
+        """Checkpoint dosyasini sil"""
+        import os
+        path = self._get_checkpoint_path()
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except: pass
+        self.resume_btn.setVisible(False)
+    
+    def _check_checkpoint(self):
+        """Baslangicta checkpoint kontrolu yap, varsa 'Devam Et' butonunu goster"""
+        cp = self._load_checkpoint()
+        if cp and cp.get('remaining_queue'):
+            remaining = cp['remaining_queue']
+            ts = cp.get('timestamp', '?')
+            self.resume_btn.setVisible(True)
+            self.resume_btn.setToolTip(
+                f"Son kesinti: {ts}\nKalan: {', '.join(remaining)}"
+            )
+            self.status_label.setText(
+                f"⚡ Checkpoint bulundu ({ts}) — {', '.join(remaining)} kaldı. 'Devam Et' ile sürdürün."
+            )
+        else:
+            self.resume_btn.setVisible(False)
+    
+    def _resume_from_checkpoint(self):
+        """Checkpoint'ten devam et"""
+        cp = self._load_checkpoint()
+        if not cp or not cp.get('remaining_queue'):
+            QMessageBox.information(self, "Bilgi", "Devam edilecek checkpoint bulunamadi.")
+            self.resume_btn.setVisible(False)
+            return
         
+        if self.data is None:
+            QMessageBox.warning(self, "Uyari", "Lutfen once veri yukleyin, sonra 'Devam Et' basiniz.")
+            return
+        
+        # Restore state
+        remaining = cp['remaining_queue']
+        strategy_idx = cp.get('strategy_index', 0)
+        
+        # Strateji combo'sunu ayarla
+        if strategy_idx < self.strategy_combo.count():
+            self.strategy_combo.setCurrentIndex(strategy_idx)
+        
+        # Validation ayarlari
+        self.validation_check.setChecked(cp.get('validation_enabled', False))
+        self.split_spin.setValue(cp.get('split_pct', 80))
+        self.commission_spin.setValue(cp.get('commission', 0))
+        self.slippage_spin.setValue(cp.get('slippage', 0))
+        
+        # Process ID
+        if cp.get('process_id'):
+            self.current_process_id = cp['process_id']
+        
+        # Kuyruğu yükle
+        self.optimization_queue = list(remaining)
+        self._stop_requested = False
+        self._queue_total = cp.get('queue_total', 3)
+        
+        # UI
+        self.global_progress_bar.setValue(0)
+        self.global_progress_bar.setVisible(True)
+        self.live_monitor_frame.setVisible(True)
+        self.live_monitor_label.setText("Checkpoint'ten devam ediliyor...")
+        self.resume_btn.setVisible(False)
+        
+        self.total_start_time = time.time()
+        
+        # Sıradakini başlat
+        self._start_next_in_queue()
+
     def _run_all_optimizers(self):
         """Tüm optimizasyon yöntemlerini sırayla çalıştır"""
         if self.data is None:
@@ -1890,11 +2019,15 @@ class OptimizerPanel(QWidget):
         self._stop_requested = False
         self._queue_total = len(self.optimization_queue)
         
+        # Checkpoint kaydet
+        self._save_checkpoint()
+        
         # Global progress bar gorunur yap
         self.global_progress_bar.setValue(0)
         self.global_progress_bar.setVisible(True)
         self.live_monitor_frame.setVisible(True)
         self.live_monitor_label.setText("En Iyi Sonuc bekleniyor...")
+        self.resume_btn.setVisible(False)
         
         # Genel baslangic zamani
         self.total_start_time = time.time()
@@ -1926,6 +2059,7 @@ class OptimizerPanel(QWidget):
         """Durdur: worker'i durdur + kuyruğu tamamen temizle"""
         self._stop_requested = True
         self.optimization_queue.clear()  # Kuyrugu temizle!
+        self._clear_checkpoint()  # Checkpoint temizle
         if self.worker:
             self.worker.stop()
             self.timer.stop()
@@ -1936,6 +2070,7 @@ class OptimizerPanel(QWidget):
         self.start_btn.setEnabled(True)
         self.run_all_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
+        self.resume_btn.setVisible(False)
     
     def _on_progress(self, percent: int, message: str, elapsed: str, eta: str):
         self.progress_bar.setValue(percent)
@@ -2059,6 +2194,9 @@ class OptimizerPanel(QWidget):
             global_pct = int((completed / self._queue_total) * 100) if self._queue_total > 0 else 0
             self.global_progress_bar.setValue(global_pct)
             
+            # Checkpoint guncelle (kalan kuyruk)
+            self._save_checkpoint()
+            
             self.status_label.setText(f"Tamamlandi ({final_time}). Siradaki baslatiliyor...")
             # Kisa bir gecikme ile baslat
             from PySide6.QtCore import QTimer
@@ -2070,10 +2208,14 @@ class OptimizerPanel(QWidget):
                 total_time_str = f" | Toplam Sure: {self._format_time(total_elapsed)}"
                 # Temizle
                 self.total_start_time = None
+            
+            # Basarili tamamlanma: checkpoint temizle
+            self._clear_checkpoint()
                 
             self.start_btn.setEnabled(True)
             self.run_all_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)
+            self.resume_btn.setVisible(False)
             self.global_progress_bar.setValue(100)
             self.global_progress_bar.setVisible(False)
             self.live_monitor_frame.setVisible(False)
