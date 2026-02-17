@@ -1,4 +1,20 @@
 
+## 2026-02-17 (Critical Fixes & Premium UX)
+
+### ✅ Yapılanlar
+- **Sharpe Ratio (S4):** `fast_backtest_strategy4` artık online accumulator ile trade-based Sharpe oranı hesaplayıp 5-tuple olarak döndürüyor.
+- **GA/Bayesian Bug Fix:** Her iki optimizer da `fast_backtest_strategy4` sonucunu dict gibi okuyordu (kırık!), tuple unpack'e düzeltildi.
+- **Durdur Butonu:** Kuyruk temizleme + `_stop_requested` flag eklendi. Artık "Durdur" basınca sıradaki asla başlamıyor.
+- **S4 OOS Validasyon:** `_validate_s4_result` metodu eklendi, test verisinde `fast_backtest_strategy4` çalıştırarak test_net/test_pf/test_sharpe döndürüyor.
+- **Çift İlerleme Çubuğu:** Genel kuyruk ilerlemesi mor renkte ayrı bir progress bar ile gösterildi.
+- **Canlı Sonuç Monitörü:** Optimizasyon sırasında en iyi sonucu anlık gösteren premium panel (yeşil flash animasyonlu).
+- **Fitness Puanı (S4):** Sequential layer sonuçlarına `quick_fitness` uygulanıp sıralama fitness bazlı yapıldı.
+
+### 📋 Kalan
+- Checkpoint (Kaldığı Yerden Devam) özelliği henüz uygulanmadı.
+
+---
+
 ## 2026-02-15 (Strategy 4 Final Integration & Cache Optimization)
 
 ### ✅ Yapılanlar

@@ -226,7 +226,7 @@ def s4_p3_eval(params):
         ka, iz
     )
     
-    np_val, tr, pf, dd = res
+    np_val, tr, pf, dd, sh = res
     if np_val > 0:
         return {
             'toma_period': meta['fix_tp'], 'toma_opt': meta['fix_to'],
@@ -237,7 +237,7 @@ def s4_p3_eval(params):
             'mom_limit_low': ml, 'trix_lb2': lb2,
             'hhv3_period': h3p, 'llv3_period': l3p,
             'kar_al': ka, 'iz_stop': iz,
-            'net_profit': np_val, 'trades': tr, 'pf': pf, 'max_dd': dd
+            'net_profit': np_val, 'trades': tr, 'pf': pf, 'max_dd': dd, 'sharpe': sh
         }
     return None
 
@@ -267,6 +267,11 @@ def fast_backtest_strategy4(closes,
     peak_equity = 0.0
     current_equity = 0.0
     
+    # Sharpe accumulators (online mean/var)
+    sum_pnl = 0.0
+    sum_pnl_sq = 0.0
+    n_closed = 0
+    
     # Constants for signal mapping
     # 0: None, 1: Long (A), -1: Short (S)
     
@@ -284,8 +289,11 @@ def fast_backtest_strategy4(closes,
                 if pnl > 0: gross_profit += pnl
                 else: gross_loss += abs(pnl)
                 current_equity += pnl
+                sum_pnl += pnl
+                sum_pnl_sq += pnl * pnl
+                n_closed += 1
                 pos = 0
-                son_yon = 0 # Reset direction on forced close? user code doesn't reset SonYon explicitly on flat but implies it matches Sinyal
+                son_yon = 0
                 
                 if current_equity > peak_equity: peak_equity = current_equity
                 dd = peak_equity - current_equity
@@ -336,6 +344,9 @@ def fast_backtest_strategy4(closes,
                 if pnl > 0: gross_profit += pnl
                 else: gross_loss += abs(pnl)
                 current_equity += pnl
+                sum_pnl += pnl
+                sum_pnl_sq += pnl * pnl
+                n_closed += 1
             
             # Open new
             pos = signal
@@ -361,6 +372,9 @@ def fast_backtest_strategy4(closes,
                 if pnl > 0: gross_profit += pnl
                 else: gross_loss += abs(pnl)
                 current_equity += pnl
+                sum_pnl += pnl
+                sum_pnl_sq += pnl * pnl
+                n_closed += 1
                 pos = 0 # Flat
                 # SonYon remains 1? In user code exit logic isn't explicit but normally exits don't change SonYon direction flag in Ideal, just Sinyal="F"
                 # But user code loop doesn't have "F" logic shown. Assuming "Always In" unless specialized exit.
@@ -380,6 +394,9 @@ def fast_backtest_strategy4(closes,
                 if pnl > 0: gross_profit += pnl
                 else: gross_loss += abs(pnl)
                 current_equity += pnl
+                sum_pnl += pnl
+                sum_pnl_sq += pnl * pnl
+                n_closed += 1
                 pos = 0
                 
         # Update DD
@@ -390,7 +407,16 @@ def fast_backtest_strategy4(closes,
     net_profit = gross_profit - gross_loss
     pf = (gross_profit / gross_loss) if gross_loss > 0 else 999.0
     
-    return net_profit, trades, pf, max_dd
+    # Sharpe Ratio (Trade-Based)
+    sharpe = 0.0
+    if n_closed > 1:
+        mean_pnl = sum_pnl / n_closed
+        var_pnl = (sum_pnl_sq / n_closed) - (mean_pnl * mean_pnl)
+        if var_pnl > 0:
+            std_pnl = var_pnl ** 0.5
+            sharpe = mean_pnl / std_pnl
+    
+    return net_profit, trades, pf, max_dd, sharpe
 
 # --- WORKER TASK ---
 def solve_chunk(args):
@@ -447,7 +473,7 @@ def solve_chunk(args):
                 for mh in mom_highs:
                     for lb1 in trix_lb1s:
                         for lb2 in trix_lb2s:
-                            np_val, tr, pf, dd = fast_backtest_strategy4(
+                            np_val, tr, pf, dd, sh = fast_backtest_strategy4(
                                 g_cache.closes, 
                                 toma_trend, toma_val,
                                 hhv1, llv1,
@@ -463,6 +489,7 @@ def solve_chunk(args):
                             if np_val > 0:
                                 results.append({
                                     'NP': np_val, 'PF': pf, 'DD': dd, 'Tr': tr,
+                                    'Sharpe': sh,
                                     'T_Per': toma_p, 'T_Opt': toma_opt,
                                     'KA': ka, 'IS': iz, 'ML': ml, 'MH': mh,
                                     'LB1': lb1, 'LB2': lb2

@@ -781,9 +781,24 @@ class OptimizationWorker(QThread):
                     if result is not None:
                         final_results.append(result)
 
-        # Final Sort
-        final_results.sort(key=lambda x: x['net_profit'], reverse=True)
+        # Final Sort - use fitness if sharpe is available, else net_profit
+        from src.optimization.fitness import quick_fitness
+        for r in final_results:
+            sh = r.get('sharpe', 0.0)
+            r['fitness'] = quick_fitness(
+                r['net_profit'], r['pf'], r['max_dd'], r['trades'],
+                sharpe=sh, commission=0.0, slippage=0.0
+            )
+        
+        final_results.sort(key=lambda x: x.get('fitness', x['net_profit']), reverse=True)
         top_results = final_results[:500]  # Show Top 500
+        
+        # OOS Validation for S4
+        if self.do_oos and self.test_data is not None and top_results:
+            self._emit_progress(98, "S4 Test verisinde validasyon yapiliyor...")
+            for r in top_results[:50]:  # Top 50 icin validasyon
+                oos_res = self._validate_s4_result(r)
+                r.update(oos_res)
         
         self._emit_progress(100, "Optimizasyon Tamamlandi!")
         self.result_ready.emit(top_results)
@@ -1007,6 +1022,9 @@ class OptimizationWorker(QThread):
             elif self.strategy_index == 2:
                 from src.strategies.paradise_strategy import ParadiseStrategy
                 strategy = ParadiseStrategy.from_config_dict(test_cache, params)
+            elif self.strategy_index == 3:
+                # S4: Use fast_backtest_strategy4 directly
+                return self._validate_s4_result(params)
             else:
                 from src.strategies.ars_trend_v2 import ARSTrendStrategyV2
                 strategy = ARSTrendStrategyV2.from_config_dict(test_cache, params)
@@ -1033,6 +1051,62 @@ class OptimizationWorker(QThread):
             }
         except Exception as e:
             print(f"Validasyon hatasi: {e}")
+            return {}
+
+    def _validate_s4_result(self, params):
+        """S4 icin OOS validasyon: test verisinde fast_backtest_strategy4 calistir"""
+        if self.test_data is None: return {}
+        
+        try:
+            import numpy as np
+            from src.optimization.strategy4_optimizer import fast_backtest_strategy4, IndicatorCache as S4IndicatorCache
+            
+            test_cache = S4IndicatorCache(self.test_data)
+            closes = test_cache.closes
+            
+            # TOMA
+            tp = int(params.get('toma_period', 97))
+            to = float(params.get('toma_opt', 1.5))
+            toma_val, toma_trend = test_cache.get_toma(tp, to)
+            
+            # HHV/LLV
+            hhv1 = test_cache.get_hhv(int(params.get('hhv1_period', 20)))
+            llv1 = test_cache.get_llv(int(params.get('llv1_period', 20)))
+            hhv2 = test_cache.get_hhv(int(params.get('hhv2_period', 150)))
+            llv2 = test_cache.get_llv(int(params.get('llv2_period', 190)))
+            hhv3 = test_cache.get_hhv(int(params.get('hhv3_period', 150)))
+            llv3 = test_cache.get_llv(int(params.get('llv3_period', 190)))
+            
+            # Indicators
+            mom_arr = test_cache.get_mom(int(params.get('mom_period', 1900)))
+            trix_arr = test_cache.get_trix(int(params.get('trix_period', 120)))
+            
+            # Mask (all true for test)
+            mask_arr = np.ones(len(closes), dtype=bool)
+            
+            ml = float(params.get('mom_limit_low', 99.0))
+            mh = float(params.get('mom_limit_high', 101.5))
+            lb1 = int(params.get('trix_lb1', 145))
+            lb2 = int(params.get('trix_lb2', 160))
+            ka = float(params.get('kar_al', 0.0))
+            iz = float(params.get('iz_stop', 0.0))
+            
+            np_val, tr, pf, dd, sh = fast_backtest_strategy4(
+                closes, toma_trend, toma_val,
+                hhv1, llv1, hhv2, llv2, hhv3, llv3,
+                mom_arr, trix_arr, mask_arr,
+                ml, mh, lb1, lb2, ka, iz
+            )
+            
+            return {
+                'test_net': np_val,
+                'test_trades': tr,
+                'test_pf': pf,
+                'test_dd': dd,
+                'test_sharpe': sh
+            }
+        except Exception as e:
+            print(f"S4 Validasyon hatasi: {e}")
             return {}
 
     def _simple_backtest(self, closes, signals, ex_long, ex_short, trading_days: float = 252.0):
@@ -1100,6 +1174,8 @@ class OptimizerPanel(QWidget):
         self.current_process_id = None
         self.optimization_queue = []
         self.hybrid_results = []  # Hibrit sonuclarini sakla (Cascade icin)
+        self._stop_requested = False  # Stop button flag
+        self._queue_total = 0  # Total items for global progress
         
         # Timer için
         from PySide6.QtCore import QTimer
@@ -1251,9 +1327,36 @@ class OptimizerPanel(QWidget):
         cost_row.addWidget(self.slippage_spin)
         layout.addLayout(cost_row)
         
-        # Progress bar
+        # Progress bar (Step)
         self.progress_bar = QProgressBar()
         layout.addWidget(self.progress_bar)
+        
+        # Global Progress bar (Queue)
+        self.global_progress_bar = QProgressBar()
+        self.global_progress_bar.setStyleSheet(
+            "QProgressBar { border: 1px solid #673AB7; border-radius: 3px; text-align: center; background: #f5f5f5; }"
+            "QProgressBar::chunk { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #9C27B0, stop:1 #673AB7); }"
+        )
+        self.global_progress_bar.setFormat("Genel: %p%")
+        self.global_progress_bar.setVisible(False)  # Only show during Run All
+        layout.addWidget(self.global_progress_bar)
+        
+        # Live Best Result Monitor
+        self.live_monitor_frame = QFrame()
+        self.live_monitor_frame.setStyleSheet(
+            "QFrame { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #1a237e, stop:1 #283593); "
+            "border-radius: 6px; padding: 8px; margin: 4px 0; }"
+        )
+        monitor_layout = QHBoxLayout(self.live_monitor_frame)
+        monitor_layout.setContentsMargins(10, 6, 10, 6)
+        self.live_monitor_icon = QLabel("\u2b50")  # Star emoji
+        self.live_monitor_icon.setStyleSheet("font-size: 18px; color: #FFD600; background: transparent;")
+        monitor_layout.addWidget(self.live_monitor_icon)
+        self.live_monitor_label = QLabel("En Iyi Sonuc bekleniyor...")
+        self.live_monitor_label.setStyleSheet("color: #E8EAF6; font-weight: bold; font-size: 12px; background: transparent;")
+        monitor_layout.addWidget(self.live_monitor_label, 1)
+        self.live_monitor_frame.setVisible(False)  # Show during optimization
+        layout.addWidget(self.live_monitor_frame)
         
         # Status
         self.status_label = QLabel("Hazir")
@@ -1784,33 +1887,55 @@ class OptimizerPanel(QWidget):
             
         # Kuyruğu doldur
         self.optimization_queue = ["Hibrit Grup", "Genetik", "Bayesian"]
+        self._stop_requested = False
+        self._queue_total = len(self.optimization_queue)
         
-        # Genelbaşlangıç zamanı
+        # Global progress bar gorunur yap
+        self.global_progress_bar.setValue(0)
+        self.global_progress_bar.setVisible(True)
+        self.live_monitor_frame.setVisible(True)
+        self.live_monitor_label.setText("En Iyi Sonuc bekleniyor...")
+        
+        # Genel baslangic zamani
         self.total_start_time = time.time()
         
-        # İlkini başlat
+        # Ilkini baslat
         self._start_next_in_queue()
         
     def _start_next_in_queue(self):
-        """Kuyruktaki bir sonraki yöntemi başlat"""
+        """Kuyruktaki bir sonraki yontemi baslat"""
         if not self.optimization_queue:
             return
+        
+        # Update global progress
+        completed = self._queue_total - len(self.optimization_queue)
+        global_pct = int((completed / self._queue_total) * 100) if self._queue_total > 0 else 0
+        self.global_progress_bar.setValue(global_pct)
             
         method = self.optimization_queue.pop(0)
         
-        # Combo'yu güncelle
+        # Combo'yu guncelle
         index = self.method_combo.findText(method)
         if index >= 0:
             self.method_combo.setCurrentIndex(index)
             
-        # Başlat
+        # Baslat
         self._start_optimization()
     
     def _stop_optimization(self):
+        """Durdur: worker'i durdur + kuyruğu tamamen temizle"""
+        self._stop_requested = True
+        self.optimization_queue.clear()  # Kuyrugu temizle!
         if self.worker:
             self.worker.stop()
             self.timer.stop()
-            self.status_label.setText(f"Durduruldu (Süre: {self._get_elapsed_str()})")
+            self.status_label.setText(f"Durduruldu (Sure: {self._get_elapsed_str()})")
+        # UI Reset
+        self.global_progress_bar.setVisible(False)
+        self.live_monitor_frame.setVisible(False)
+        self.start_btn.setEnabled(True)
+        self.run_all_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
     
     def _on_progress(self, percent: int, message: str, elapsed: str, eta: str):
         self.progress_bar.setValue(percent)
@@ -1854,6 +1979,28 @@ class OptimizerPanel(QWidget):
         if method == "Hibrit Grup" and results:
             self.hybrid_results = results
             print(f"[CASCADE] Hibrit sonuclari kaydedildi: {len(results)} adet")
+        
+        # Live Monitor Update
+        if results and self.live_monitor_frame.isVisible():
+            best = results[0] if results else {}
+            np_val = best.get('net_profit', 0)
+            pf_val = best.get('pf', 0)
+            sh_val = best.get('sharpe', 0)
+            fit_val = best.get('fitness', 0)
+            t_val = best.get('trades', 0)
+            self.live_monitor_label.setText(
+                f"🏆 {method}: Net={np_val:,.0f}  PF={pf_val:.2f}  Sharpe={sh_val:.2f}  Fit={fit_val:,.0f}  ({t_val} islem)"
+            )
+            # Flash animation
+            self.live_monitor_frame.setStyleSheet(
+                "QFrame { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #1b5e20, stop:1 #2e7d32); "
+                "border-radius: 6px; padding: 8px; margin: 4px 0; }"
+            )
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(1500, lambda: self.live_monitor_frame.setStyleSheet(
+                "QFrame { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #1a237e, stop:1 #283593); "
+                "border-radius: 6px; padding: 8px; margin: 4px 0; }"
+            ))
         
         self._display_results(results, method)
         
@@ -1899,24 +2046,38 @@ class OptimizerPanel(QWidget):
         
         final_time = self._get_elapsed_str()
         
-        # Kuyrukta işlem varsa devam et
+        # Stop istendi mi?
+        if self._stop_requested:
+            # Kuyruk zaten temizlendi, UI zaten resetlendi
+            self._stop_requested = False
+            return
+        
+        # Kuyrukta islem varsa devam et
         if self.optimization_queue:
-            self.status_label.setText(f"Tamamlandı ({final_time}). Sıradaki başlatılıyor...")
-            # Kısa bir gecikme ile başlat
+            # Update global progress
+            completed = self._queue_total - len(self.optimization_queue)
+            global_pct = int((completed / self._queue_total) * 100) if self._queue_total > 0 else 0
+            self.global_progress_bar.setValue(global_pct)
+            
+            self.status_label.setText(f"Tamamlandi ({final_time}). Siradaki baslatiliyor...")
+            # Kisa bir gecikme ile baslat
             from PySide6.QtCore import QTimer
             QTimer.singleShot(1000, self._start_next_in_queue)
         else:
             total_time_str = ""
-            if hasattr(self, 'total_start_time'):
+            if hasattr(self, 'total_start_time') and self.total_start_time:
                 total_elapsed = time.time() - self.total_start_time
-                total_time_str = f" | Toplam Süre: {self._format_time(total_elapsed)}"
+                total_time_str = f" | Toplam Sure: {self._format_time(total_elapsed)}"
                 # Temizle
                 self.total_start_time = None
                 
             self.start_btn.setEnabled(True)
             self.run_all_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)
-            self.status_label.setText(f"Optimizasyon Tamamlandı (Adım Süresi: {final_time}{total_time_str})")
+            self.global_progress_bar.setValue(100)
+            self.global_progress_bar.setVisible(False)
+            self.live_monitor_frame.setVisible(False)
+            self.status_label.setText(f"Optimizasyon Tamamlandi (Adim Suresi: {final_time}{total_time_str})")
     
     def _display_results(self, results: list, method: str = None):
         """Sonuçları ilgili tab'a yaz"""

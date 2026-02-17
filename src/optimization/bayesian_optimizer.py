@@ -350,17 +350,14 @@ class BayesianObjective:
                 ka, iz
             )
             
-            if result is None:
+            np_val, trades, pf, max_dd, sharpe = result
+            
+            if trades == 0 or np_val <= -999:
                 return {'net_profit': -999, 'trades': 0, 'pf': 0, 'max_dd': 999, 'fitness': -999}
-                
-            np_val = result['net_profit']
-            trades = result['trades']
-            pf = result['pf']
-            max_dd = result['max_dd']
             
             # Fitness Calc
             fitness = quick_fitness(
-                np_val, pf, max_dd, trades, sharpe=0.0,
+                np_val, pf, max_dd, trades, sharpe=sharpe,
                 commission=0.0, slippage=0.0
             )
             
@@ -369,7 +366,7 @@ class BayesianObjective:
                 'trades': trades,
                 'pf': pf,
                 'max_dd': max_dd,
-                'sharpe': 0.0,
+                'sharpe': sharpe,
                 'fitness': fitness
             }
             
