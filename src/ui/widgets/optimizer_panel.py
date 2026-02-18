@@ -723,14 +723,14 @@ class OptimizationWorker(QThread):
                             best_p2_score = score
                             best_phase2 = params
                     
-                    if done % 200 == 0:
+                    if done % 50 == 0:
                         prog = 36 + int(28 * done / len(p2_tasks))
-                        # Son sonucun parametrelerini goster
-                        if result is not None:
-                            _, rp = result if result else (0, {})
-                            p2_txt = f"Mom={rp.get('mom_period','')} Trix={rp.get('trix_period','')} MH={rp.get('mom_limit_high','')} LB1={rp.get('trix_lb1','')} H2={rp.get('hhv2','')} L2={rp.get('llv2','')}"
+                        # En iyi sonucun parametrelerini goster
+                        if best_phase2:
+                            bp = best_phase2
+                            p2_txt = f"Mom={bp.get('mom_period','')} Trix={bp.get('trix_period','')} MH={bp.get('mom_limit_high','')} LB1={bp.get('trix_lb1','')} H2={bp.get('hhv2','')} L2={bp.get('llv2','')}"
                         else:
-                            p2_txt = ""
+                            p2_txt = "tarama devam ediyor..."
                         self._emit_progress(prog, f"Faz 2 [{done}/{len(p2_tasks)}]: {p2_txt}")
                         # Canlı streaming: en iyi sonucu gönder
                         if best_phase2:
@@ -827,13 +827,13 @@ class OptimizationWorker(QThread):
                 done = 0
                 for result in self.pool.imap_unordered(s4_p3_eval, p3_tasks, chunksize=max(1, len(p3_tasks) // (n_workers * 4))):
                     done += 1
-                    if done % 500 == 0:
+                    if done % 100 == 0:
                         prog = 66 + int(33 * done / len(p3_tasks))
                         # Son sonucun parametrelerini goster
                         if result is not None:
                             p3_txt = f"ML={result.get('mom_limit_low','')} LB2={result.get('trix_lb2','')} H3={result.get('hhv3','')} L3={result.get('llv3','')} KA={result.get('kar_al','')} IZ={result.get('iz_stop','')}"
                         else:
-                            p3_txt = ""
+                            p3_txt = "tarama devam ediyor..."
                         self._emit_progress(prog, f"Faz 3 [{done}/{len(p3_tasks)}]: {p3_txt}")
                         if not self._is_running:
                             self.pool.terminate()
@@ -843,8 +843,8 @@ class OptimizationWorker(QThread):
                     if result is not None:
                         final_results.append(result)
                     
-                    # Canlı streaming: her 2000 sonuçta top 50 gönder
-                    if done % 2000 == 0 and final_results:
+                    # Canlı streaming: her 500 sonuçta top 50 gönder
+                    if done % 500 == 0 and final_results:
                         from src.optimization.fitness import quick_fitness as _qf
                         temp = sorted(final_results, key=lambda x: x.get('net_profit', 0), reverse=True)[:50]
                         for _r in temp:
@@ -2518,8 +2518,15 @@ class OptimizerPanel(QWidget):
         if hasattr(self, 'total_start_time') and getattr(self, 'optimization_queue', None) is not None:
             total_elapsed = time.time() - self.total_start_time
             total_info = f"\n[GENEL TOPLAM] Süre: {self._format_time(total_elapsed)}"
-            
-        self.status_label.setText(f"{msg} (Geçen: {elapsed} - Kalan: {eta}){total_info}")
+        
+        # Mavi kutu görünürse tarama bilgisi orada, altta sadece toplam süre
+        if hasattr(self, 'live_monitor_frame') and self.live_monitor_frame.isVisible():
+            if total_info:
+                self.status_label.setText(total_info.strip())
+            else:
+                self.status_label.setText(f"Geçen: {elapsed} | Kalan: {eta}")
+        else:
+            self.status_label.setText(f"{msg} (Geçen: {elapsed} - Kalan: {eta}){total_info}")
 
     def _get_elapsed_str(self) -> str:
         if not hasattr(self, 'start_time'):
