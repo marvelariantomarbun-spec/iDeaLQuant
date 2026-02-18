@@ -202,7 +202,9 @@ def s4_p2_eval(params):
         return (score, {
             'mom_period': mom_p, 'trix_period': trix_p,
             'mom_limit_high': mh, 'trix_lb1': lb1,
-            'hhv2': h2p, 'llv2': l2p
+            'hhv2': h2p, 'llv2': l2p,
+            'net_profit': res[0], 'trades': res[1], 'pf': res[2],
+            'max_dd': res[3], 'sharpe': res[4]
         })
     return None
 

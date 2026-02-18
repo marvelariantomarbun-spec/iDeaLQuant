@@ -735,8 +735,9 @@ class OptimizationWorker(QThread):
                         # Canlı streaming: en iyi sonucu gönder
                         if best_phase2:
                             self.partial_results.emit([{
-                                'net_profit': best_p2_score, 'fitness': best_p2_score,
-                                **best_phase2, '_phase': 'Faz 2 (Layer 1)'
+                                **best_phase2,
+                                'fitness': best_p2_score,
+                                '_phase': 'Faz 2 (Layer 1)'
                             }])
                         if not self._is_running:
                             self.pool.terminate()
@@ -2137,7 +2138,7 @@ class OptimizerPanel(QWidget):
         if self.live_monitor_win and self.live_monitor_win.isVisible():
             self.live_monitor_win.update_results(results, is_final=False)
         
-        # Live monitor label'ı da güncelle
+        # Live monitor label'ı da güncelle (TR locale)
         if results:
             best = max(results, key=lambda r: r.get('fitness', r.get('net_profit', 0)))
             net = best.get('net_profit', 0)
@@ -2145,7 +2146,8 @@ class OptimizerPanel(QWidget):
             sh = best.get('sharpe', 0)
             fit = best.get('fitness', 0)
             self.live_monitor_label.setText(
-                f"  ⭐ En İyi: Net {net:,.0f} | PF {pf:.2f} | Sharpe {sh:.2f} | Fitness {fit:,.0f}  "
+                f"  En İyi: Net {net:,.0f} | PF {pf:.2f} | Sharpe {sh:.2f} | Fitness {fit:,.0f}  "
+                .replace(',', 'X').replace('.', ',').replace('X', '.')
             )
     
     # ==============================================================================
