@@ -713,7 +713,7 @@ class OptimizationWorker(QThread):
                     maxtasksperchild=500
                 )
                 done = 0
-                for result in self.pool.imap_unordered(s4_p2_eval, p2_tasks, chunksize=max(1, len(p2_tasks) // (n_workers * 4))):
+                for result in self.pool.imap_unordered(s4_p2_eval, p2_tasks, chunksize=min(500, max(1, len(p2_tasks) // (n_workers * 4)))):
                     done += 1
                     
                     # Sonucu DÖNGÜ İÇİNDE topla (eski kod bunu yapmıyordu!)
@@ -825,7 +825,7 @@ class OptimizationWorker(QThread):
                     maxtasksperchild=500
                 )
                 done = 0
-                for result in self.pool.imap_unordered(s4_p3_eval, p3_tasks, chunksize=max(1, len(p3_tasks) // (n_workers * 4))):
+                for result in self.pool.imap_unordered(s4_p3_eval, p3_tasks, chunksize=min(500, max(1, len(p3_tasks) // (n_workers * 4)))):
                     done += 1
                     if done % 100 == 0:
                         prog = 66 + int(33 * done / len(p3_tasks))
