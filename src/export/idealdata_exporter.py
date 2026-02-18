@@ -114,333 +114,8 @@ class IdealDataExporter:
         
         return str(filepath)
     
-    def export_strategy4(
-        self, 
-        params: Dict[str, Any], 
-        vade_tipi: str = "ENDEKS"
-    ) -> str:
-        """
-        Strateji 4 (TOMA + Momentum) kodunu export eder.
-        
-        Args:
-            params: Optimizasyon parametreleri
-            vade_tipi: "ENDEKS" veya "SPOT"
-            
-        Returns:
-            Oluşturulan dosya yolu
-        """
-        filename = self._generate_filename(4, vade_tipi)
-        # self.strategy4_filename = filename # Optional tracking
-        
-        code = self._generate_strategy4_code(params, vade_tipi)
-        
-        filepath = self.output_dir / f"{filename}.cs"
-        filepath.write_text(code, encoding='utf-8')
-        
-        # Parametreleri JSON olarak da kaydet
-        params_path = self.output_dir / f"{filename}_params.json"
-        params_path.write_text(json.dumps(params, indent=2, default=str), encoding='utf-8')
-        
-        return str(filepath)
 
-    def _generate_strategy4_code(self, params: Dict[str, Any], vade_tipi: str) -> str:
-        """Strateji 4 IdealData kodu oluşturur."""
-        
-        p = {
-            'toma_period': int(params.get('toma_period', 97)),
-            'toma_opt': params.get('toma_opt', 1.5),
-            'mom_period': int(params.get('mom_period', 1900)),
-            'mom_limit_high': params.get('mom_limit_high', 101.5),
-            'mom_limit_low': params.get('mom_limit_low', 98.0),
-            'trix_period': int(params.get('trix_period', 120)),
-            'hh_ll_period': int(params.get('hhv1_period', 20)), # Layer 3 (TOMA Filtre)
-            'hh_ll_long_period1': int(params.get('hhv2_period', 150)), # Layer 1 (Mom High)
-            'll_ll_long_period1': int(params.get('llv2_period', 190)), # Layer 1
-            'hhv3_period': int(params.get('hhv3_period', 150)), # Layer 2 (Mom Low)
-            'llv3_period': int(params.get('llv3_period', 190)), # Layer 2
-            'trix_lb1': int(params.get('trix_lb1', 145)),
-            'trix_lb2': int(params.get('trix_lb2', 160)),
-            'kar_al': params.get('kar_al', 0.0),
-            'iz_stop': params.get('iz_stop', 0.0),
-            'hhv2_period': int(params.get('hhv2_period', 150)), # Alias for clarity if needed
-            'llv2_period': int(params.get('llv2_period', 190)),
-        }
-        
-        # Performance Panel Code
-        perf_panel = self._get_performance_panel_code()
 
-        code = f'''// ===============================================================================================
-// STRATEJİ 4: TOMA + MOMENTUM + TRIX (SEQUENTIAL)
-// ===============================================================================================
-// Sembol: {self.symbol}
-// Periyot: {self.period} dakika
-// Vade Tipi: {vade_tipi}
-// Oluşturma: {datetime.now().strftime("%Y-%m-%d %H:%M")}
-// ===============================================================================================
-
-// --- PARAMETRELER ---
-// 1. TOMA (Phase 1)
-var TOMA_PERIOD = {p['toma_period']};
-var TOMA_OPT = {p['toma_opt']}f;
-var HHV1_PERIOD = {p['hh_ll_period']}; // TOMA Filtre
-
-// 2. GLOBAL (Phase 2 Base)
-var MOM_PERIOD = {p['mom_period']};
-var TRIX_PERIOD = {p['trix_period']};
-
-// 3. LAYER 1 (Phase 2) - Trend Teyit (Mom > High)
-var MOM_HIGH_LIMIT = {p['mom_limit_high']}f;
-var TRIX_LB1 = {p['trix_lb1']};
-var HHV2_PERIOD = {p['hhv2_period']};
-var LLV2_PERIOD = {p['llv2_period']};
-
-// 4. LAYER 2 (Phase 3) - Tepki (Mom < Low)
-var MOM_LOW_LIMIT = {p['mom_limit_low']}f;
-var TRIX_LB2 = {p['trix_lb2']};
-var HHV3_PERIOD = {p['hhv3_period']};
-var LLV3_PERIOD = {p['llv3_period']};
-
-// 5. RISK YONETIMI
-var KAR_AL = {p['kar_al']}f;
-var IZ_STOP = {p['iz_stop']}f;
-
-string VadeTipi = "{vade_tipi}";
-
-// ===============================================================================================
-// DİNAMİK BAYRAM TARİHLERİ (2024-2030)
-// ===============================================================================================
-int yil = DateTime.Now.Year;
-DateTime Ramazan, Kurban;
-
-switch(yil)
-{{
-    case 2024: Ramazan = new DateTime(2024, 4, 10); Kurban = new DateTime(2024, 6, 16); break;
-    case 2025: Ramazan = new DateTime(2025, 3, 30); Kurban = new DateTime(2025, 6, 6); break;
-    case 2026: Ramazan = new DateTime(2026, 3, 20); Kurban = new DateTime(2026, 5, 27); break;
-    case 2027: Ramazan = new DateTime(2027, 3, 9); Kurban = new DateTime(2027, 5, 16); break;
-    case 2028: Ramazan = new DateTime(2028, 2, 26); Kurban = new DateTime(2028, 5, 5); break;
-    case 2029: Ramazan = new DateTime(2029, 2, 14); Kurban = new DateTime(2029, 4, 24); break;
-    case 2030: Ramazan = new DateTime(2030, 2, 3); Kurban = new DateTime(2030, 4, 13); break;
-    default: Ramazan = new DateTime(yil, 3, 15); Kurban = new DateTime(yil, 5, 20); break;
-}}
-
-DateTime R2024 = new DateTime(2024, 4, 10); DateTime K2024 = new DateTime(2024, 6, 16);
-DateTime R2025 = new DateTime(2025, 3, 30); DateTime K2025 = new DateTime(2025, 6, 6);
-DateTime R2026 = new DateTime(2026, 3, 20); DateTime K2026 = new DateTime(2026, 5, 27);
-DateTime R2027 = new DateTime(2027, 3, 9); DateTime K2027 = new DateTime(2027, 5, 16);
-
-string[] resmiTatiller = new string[] {{ "01.01","04.23","05.01","05.19","07.15","08.30","10.29" }};
-
-// ===============================================================================================
-// VERİ VE INDIKATORLER
-// ===============================================================================================
-var V = Sistem.GrafikVerileri;
-var C = Sistem.GrafikFiyatSec("Kapanis");
-var H = Sistem.GrafikFiyatSec("Yuksek");
-var L = Sistem.GrafikFiyatSec("Dusuk");
-
-// --- TOMA HESAPLAMA (Manual Loop) ---
-// TOMA = EMA(C, Period) * (1 +/- Opt%)
-// Logic: Current Close vs Prev TOMA to determine Trend
-var EMA_TOMA = Sistem.MA(C, "Exp", TOMA_PERIOD);
-var TOMA = Sistem.Liste(0);
-var TOMA_Trend = Sistem.Liste(0); // 1: Up, -1: Down
-
-// Init
-if(Sistem.BarSayisi > 1) {{
-    TOMA[0] = C[0];
-    TOMA_Trend[0] = 1;
-}}
-
-for (int i = 1; i < Sistem.BarSayisi; i++) 
-{{
-    float altBant = EMA_TOMA[i] * (1 - TOMA_OPT / 100.0f);
-    float ustBant = EMA_TOMA[i] * (1 + TOMA_OPT / 100.0f);
-    
-    int prevTrend = (int)TOMA_Trend[i-1];
-    float prevToma = TOMA[i-1];
-    float tomaValue = prevToma;
-    int newTrend = prevTrend;
-
-    if (prevTrend == 1) // Uptrend
-    {{
-        float newToma = Math.Max(prevToma, altBant);
-        if (C[i] < newToma) {{ // Breakdown
-            newTrend = -1;
-            tomaValue = ustBant;
-        }} else {{
-            tomaValue = newToma;
-        }}
-    }}
-    else // Downtrend
-    {{
-        float newToma = Math.Min(prevToma, ustBant);
-        if (C[i] > newToma) {{ // Breakout
-            newTrend = 1;
-            tomaValue = altBant;
-        }} else {{
-            tomaValue = newToma;
-        }}
-    }}
-    
-    TOMA[i] = tomaValue;
-    TOMA_Trend[i] = newTrend;
-}}
-
-// --- DIGERLERI ---
-// TRIX = Trix(Period) => IdealData'da Sistem.Trix var mi? 
-// Genelde var. Yoksa (EMA(EMA(EMA))) - Prev / Prev * 100
-var TRIX = Sistem.Trix(TRIX_PERIOD); 
-var MOM = Sistem.Momentum(MOM_PERIOD);
-
-// HHV / LLV
-var HH1 = Sistem.HHV(HHV1_PERIOD, H);
-var LL1 = Sistem.LLV(HHV1_PERIOD, L);
-
-var HH2 = Sistem.HHV(HHV2_PERIOD, H);
-var LL2 = Sistem.LLV(LLV2_PERIOD, L);
-
-var HH3 = Sistem.HHV(HHV3_PERIOD, H);
-var LL3 = Sistem.LLV(LLV3_PERIOD, L);
-
-// ===============================================================================================
-// VADE YONETIMI (Standart)
-// ===============================================================================================
-Func<DateTime, DateTime> VadeSonuIsGunu = (dt) =>
-{{
-    var aySonu = new DateTime(dt.Year, dt.Month, DateTime.DaysInMonth(dt.Year, dt.Month));
-    var d = aySonu;
-    for (int k = 0; k < 15; k++) {{
-        if (d.DayOfWeek == DayOfWeek.Saturday || d.DayOfWeek == DayOfWeek.Sunday) {{ d = d.AddDays(-1); continue; }}
-        string mmdd = d.ToString("MM.dd");
-        bool tatil = false;
-        for (int t = 0; t < resmiTatiller.Length; t++) if (resmiTatiller[t] == mmdd) {{ tatil = true; break; }}
-        if (tatil) {{ d = d.AddDays(-1); continue; }}
-        if ((d >= R2024 && d <= R2024.AddDays(3)) || (d >= K2024 && d <= K2024.AddDays(4)) ||
-            (d >= R2025 && d <= R2025.AddDays(3)) || (d >= K2025 && d <= K2025.AddDays(4)) ||
-            (d >= R2026 && d <= R2026.AddDays(3)) || (d >= K2026 && d <= K2026.AddDays(4)) ||
-            (d >= R2027 && d <= R2027.AddDays(3)) || (d >= K2027 && d <= K2027.AddDays(4)))
-        {{ d = d.AddDays(-1); continue; }}
-        break;
-    }}
-    return d.Date;
-}};
-
-// ===============================================================================================
-// SINYAL MANTIGI
-// ===============================================================================================
-var SonYon = "";
-for (int i = 1; i < V.Count; i++) Sistem.Yon[i] = "";
-
-// Time Filter & Vade Checks
-int startBar = Math.Max(MOM_PERIOD, TRIX_PERIOD + Math.Max(TRIX_LB1, TRIX_LB2)) + 10;
-
-for (int i = startBar; i < V.Count; i++)
-{{
-    var Sinyal = "";
-    
-    // --- LAYERS ---
-    
-    // 1. MOM > HIGH (Trend Teyit)
-    if (MOM[i] > MOM_HIGH_LIMIT)
-    {{
-        // LONG: New High & Trix Low Turn
-        if (HH2[i] > HH2[i-1] && TRIX[i] < TRIX[i-TRIX_LB1] && TRIX[i] > TRIX[i-1])
-            Sinyal = "A";
-        // SHORT: New Low & Trix High Turn
-        if (LL2[i] < LL2[i-1] && TRIX[i] > TRIX[i-TRIX_LB1] && TRIX[i] < TRIX[i-1])
-            Sinyal = "S";
-    }}
-    
-    // 2. MOM < LOW (Tepki)
-    if (MOM[i] < MOM_LOW_LIMIT)
-    {{
-        // LONG: New High & Trix Low Turn (using LB2)
-        if (HH3[i] > HH3[i-1] && TRIX[i] < TRIX[i-TRIX_LB2] && TRIX[i] > TRIX[i-1])
-            Sinyal = "A";
-        // SHORT
-        if (LL3[i] < LL3[i-1] && TRIX[i] > TRIX[i-TRIX_LB2] && TRIX[i] < TRIX[i-1])
-            Sinyal = "S";
-    }}
-    
-    // 3. TOMA (Main Trend - Overwrite)
-    // TOMA Breakout rules overrides previous signals
-    if (HH1[i] > HH1[i-1] && C[i] > TOMA[i])
-        Sinyal = "A";
-    if (LL1[i] < LL1[i-1] && C[i] < TOMA[i])
-        Sinyal = "S";
-        
-    // --- EXITS (Kar Al / Iz Süren) ---
-    // (Implementation similar to Profit/Stop logic if needed, or rely on Sistem.Yon for reversal)
-    // Currently purely reversal based strategy in main logic, 
-    // unless KarAl/IzStop is active in params. 
-    // If you want hard exits, implement here.
-    // For now, mirroring Python purely reversal logic + basic stops validation later.
-    
-    // --- VADE / SEANS FILTRESI (Standart) ---
-    var dt = V[i].Date;
-    var t = dt.TimeOfDay;
-    bool gunSeansi = t >= new TimeSpan(9,30,0) && t < new TimeSpan(18,15,0);
-    bool aksamSeansi = t >= new TimeSpan(19,0,0) && t < new TimeSpan(23,0,0);
-    if (!(gunSeansi || aksamSeansi)) {{ if(SonYon!="") Sistem.Yon[i] = SonYon; continue; }}
-
-    bool vadeAyi = (VadeTipi == "SPOT") || (dt.Month % 2 == 0);
-    bool vadeSonuGun = vadeAyi && (dt.Date == VadeSonuIsGunu(dt));
-    bool arefe = dt.Date == R2024.AddDays(-1).Date || dt.Date == K2024.AddDays(-1).Date ||
-                 dt.Date == R2025.AddDays(-1).Date || dt.Date == K2025.AddDays(-1).Date ||
-                 dt.Date == R2026.AddDays(-1).Date || dt.Date == K2026.AddDays(-1).Date ||
-                 dt.Date == R2027.AddDays(-1).Date || dt.Date == K2027.AddDays(-1).Date;
-            
-    if ((arefe && t > new TimeSpan(11,30,0)) || (vadeSonuGun && !arefe && t > new TimeSpan(17,40,0)))
-    {{
-        if (SonYon != "F") {{ Sinyal = "F"; }}
-    }}
-    
-    // UPDATE
-    if (Sinyal != "" && Sinyal != SonYon)
-    {{
-        SonYon = Sinyal;
-        Sistem.Yon[i] = Sinyal;
-    }}
-    else if (SonYon != "")
-    {{
-        Sistem.Yon[i] = SonYon;
-    }}
-}}
-
-// --- CIZGILER ---
-Sistem.Cizgiler[0].Deger = TOMA;
-Sistem.Cizgiler[0].Aciklama = "TOMA";
-Sistem.Cizgiler[0].ActiveBool = true;
-Sistem.Cizgiler[0].Renk = Color.Blue;
-Sistem.Cizgiler[0].Kalinlik = 2;
-
-{perf_panel}
-'''
-        return code
-        """
-        S1 + S2 birleşik robot kodunu export eder.
-        
-        Args:
-            lot_size: İşlem lot miktarı
-            
-        Returns:
-            Oluşturulan dosya yolu
-        """
-        if not self.strategy1_filename or not self.strategy2_filename:
-            raise ValueError("Önce strategy1 ve strategy2 export edilmeli!")
-        
-        date_str = datetime.now().strftime("%Y%m%d")
-        filename = f"Robot_{self.symbol_short}_{self.period}DK_{date_str}"
-        self.robot_filename = filename
-        
-        code = self._generate_robot_code(lot_size)
-        
-        filepath = self.output_dir / f"{filename}.cs"
-        filepath.write_text(code, encoding='utf-8')
-        
-        return str(filepath)
-    
     def _get_performance_panel_code(self) -> str:
         """Kullanıcının talep ettiği standart performans paneli kodu."""
         return '''
@@ -1736,12 +1411,16 @@ return null;
         # Parametreler
         p = {
             'mom_period': int(params.get('mom_period', 1900)),
-            'mom_upper': params.get('mom_upper', 101.5),
-            'mom_lower': params.get('mom_lower', 98.0),
+            'mom_upper': params.get('mom_limit_high', params.get('mom_upper', 101.5)),
+            'mom_lower': params.get('mom_limit_low', params.get('mom_lower', 98.0)),
             'trix_period': int(params.get('trix_period', 120)),
-            'hh_ll_period': int(params.get('hh_ll_period', 20)),
-            'hh_ll_long1': int(params.get('hh_ll_long1', 150)),
-            'hh_ll_long2': int(params.get('hh_ll_long2', 190)),
+            'trix_lb1': int(params.get('trix_lb1', 145)),
+            'trix_lb2': int(params.get('trix_lb2', 160)),
+            'hh_ll_period': int(params.get('hhv1_period', params.get('hh_ll_period', 20))),
+            'hhv2_period': int(params.get('hhv2_period', params.get('hh_ll_long1', 150))),
+            'llv2_period': int(params.get('llv2_period', params.get('hh_ll_long2', 190))),
+            'hhv3_period': int(params.get('hhv3_period', 150)),
+            'llv3_period': int(params.get('llv3_period', 190)),
             'toma_period': int(params.get('toma_period', 2)),
             'toma_opt': params.get('toma_opt', 2.1),
         }
@@ -1763,9 +1442,13 @@ var MOM_PERIOD = {p['mom_period']};
 var MOM_UPPER = {p['mom_upper']}f;
 var MOM_LOWER = {p['mom_lower']}f;
 var TRIX_PERIOD = {p['trix_period']};
+var TRIX_LB1 = {p['trix_lb1']};
+var TRIX_LB2 = {p['trix_lb2']};
 var HH_LL_PERIOD = {p['hh_ll_period']};
-var HH_LL_LONG1 = {p['hh_ll_long1']};
-var HH_LL_LONG2 = {p['hh_ll_long2']};
+var HHV2_PERIOD = {p['hhv2_period']};
+var LLV2_PERIOD = {p['llv2_period']};
+var HHV3_PERIOD = {p['hhv3_period']};
+var LLV3_PERIOD = {p['llv3_period']};
 var TOMA_PERIOD = {p['toma_period']};
 var TOMA_OPT = {p['toma_opt']}f;
 
@@ -1836,11 +1519,11 @@ var TOMA_Line = Sistem.TOMA(TOMA_PERIOD, TOMA_OPT);
 var HH1 = Sistem.HHV(HH_LL_PERIOD, "Yuksek");
 var LL1 = Sistem.LLV(HH_LL_PERIOD, "Dusuk");
 
-var HH2 = Sistem.HHV(HH_LL_LONG1, "Yuksek");
-var LL2 = Sistem.LLV(HH_LL_LONG2, "Dusuk");
+var HH2 = Sistem.HHV(HHV2_PERIOD, "Yuksek");
+var LL2 = Sistem.LLV(LLV2_PERIOD, "Dusuk");
 
-var HH3 = Sistem.HHV(HH_LL_LONG1, "Yuksek"); // Kodda HH3 = HH2 ile aynı periyot (150)
-var LL3 = Sistem.LLV(HH_LL_LONG2, "Dusuk"); // Kodda LL3 = LL2 ile aynı periyot (190)
+var HH3 = Sistem.HHV(HHV3_PERIOD, "Yuksek");
+var LL3 = Sistem.LLV(LLV3_PERIOD, "Dusuk");
 
 var MOM1 = Sistem.Momentum(MOM_PERIOD);
 var TRIX1 = Sistem.TRIX(TRIX_PERIOD);
@@ -1854,8 +1537,8 @@ var Pos = 0;
 
 for (int i = 1; i < V.Count; i++) Sistem.Yon[i] = "";
 
-int vadeCooldownBar = Math.Max(MOM_PERIOD, TRIX_PERIOD * 2) + 10;
-int warmupBars = Math.Max(50, vadeCooldownBar);
+int vadeCooldownBar = Math.Max(MOM_PERIOD, TRIX_PERIOD + Math.Max(TRIX_LB1, TRIX_LB2)) + 10;
+int warmupBars = Math.Max(200, vadeCooldownBar);
 int warmupBaslangicBar = -999;
 bool warmupAktif = false;
 bool arefeFlat = false;
@@ -1920,15 +1603,15 @@ for (int i = warmupBars; i < V.Count; i++)
     // Kural 1: MOM > ÜST SINIR (101.5)
     if (MOM1[i] > MOM_UPPER)
     {{
-        if (HH2[i] > HH2[i-1] && TRIX1[i] < TRIX1[i-110] && TRIX1[i] > TRIX1[i-1]) Sinyal = "A"; 
-        if (LL2[i] < LL2[i-1] && TRIX1[i] > TRIX1[i-110] && TRIX1[i] < TRIX1[i-1]) Sinyal = "S"; 
+        if (HH2[i] > HH2[i-1] && TRIX1[i] < TRIX1[i-TRIX_LB1] && TRIX1[i] > TRIX1[i-1]) Sinyal = "A"; 
+        if (LL2[i] < LL2[i-1] && TRIX1[i] > TRIX1[i-TRIX_LB1] && TRIX1[i] < TRIX1[i-1]) Sinyal = "S"; 
     }}
     
     // Kural 2: MOM < ALT SINIR (98)
     if (MOM1[i] < MOM_LOWER)
     {{
-        if (HH3[i] > HH3[i-1] && TRIX2[i] < TRIX2[i-140] && TRIX2[i] > TRIX2[i-1]) Sinyal = "A"; 
-        if (LL3[i] < LL3[i-1] && TRIX2[i] > TRIX2[i-140] && TRIX2[i] < TRIX2[i-1]) Sinyal = "S"; 
+        if (HH3[i] > HH3[i-1] && TRIX2[i] < TRIX2[i-TRIX_LB2] && TRIX2[i] > TRIX2[i-1]) Sinyal = "A"; 
+        if (LL3[i] < LL3[i-1] && TRIX2[i] > TRIX2[i-TRIX_LB2] && TRIX2[i] < TRIX2[i-1]) Sinyal = "S"; 
     }}
     
     // Kural 3: TOMA + HHV/LLV (Ana Trend - Öncelikli, önceki sinyalleri ezer)

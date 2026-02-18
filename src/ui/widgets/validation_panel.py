@@ -1345,7 +1345,8 @@ YORUM:
             self.validation_complete.emit(self.current_process_id, opt_result['params'])
     
     def set_data(self, df: pd.DataFrame):
-        """Dışarıdan veri setini güncelle (DataPanel'den gelen filtrelenmiş veri)"""
+        """Dışarıdan veri setini güncelle (DataPanel'den sinyal)"""
+        print(f"[DEBUG] ValidationPanel.set_data called with {df.shape if df is not None else 'None'}")
         self.df = df
         if df is not None:
             # Stats label'ı güncelle (eğer varsa veya log bas)

@@ -11,10 +11,11 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox, QFormLayout, QMessageBox, QSplitter,
     QScrollArea, QCheckBox, QFrame, QGridLayout
 )
-from PySide6.QtCore import Signal, Qt, QThread
+from PySide6.QtCore import Signal, Qt, QThread, QTimer
 from typing import Dict, List, Any
 import pandas as pd
 import time
+import os
 
 from src.core.database import db
 
@@ -397,7 +398,6 @@ class ParameterGroupWidget(QGroupBox):
                 min-height: 28px;
             }
         """)
-        
         layout.addWidget(table)
         layout.setContentsMargins(5, 3, 5, 3)
         layout.setSpacing(2)
@@ -433,6 +433,7 @@ class OptimizationWorker(QThread):
     # Progress: percent, message, elapsed_str, eta_str
     progress = Signal(int, str, str, str)
     result_ready = Signal(list)
+    partial_results = Signal(list)   # Canlı streaming icin
     error = Signal(str)
     
     def __init__(self, config: dict, data, param_ranges: dict, 
@@ -454,9 +455,12 @@ class OptimizationWorker(QThread):
         self.train_pct = train_pct
         self.commission = 0.0
         self.slippage = 0.0
+        self.slippage = 0.0
         self.test_data = None  # Init
         self._is_running = True
         self.start_time = None
+        self.pool = None  # For multiprocessing pool (S4)
+        self.current_optimizer = None  # For Object-based optimizers
     
     def _emit_progress(self, percent: int, message: str):
         """İlerleme ve zaman bilgisini gönder"""
@@ -532,10 +536,31 @@ class OptimizationWorker(QThread):
         mask_arr = np.ones(len(closes), dtype=bool) 
         
         # MASK (Vade/Tatil)
+        # MASK (Vade/Tatil)
         try:
             from src.engine.data import OHLCV
             vade_tipi = self.config.get('vade_tipi', "ENDEKS")
-            ohlcv = OHLCV(self.data)
+            
+            # OHLCV expects standard English lowercase columns
+            # Create a clean DataFrame (to avoid duplicate columns if both En/Tr exist)
+            df_temp = pd.DataFrame()
+            
+            def _get_col(df, candidates):
+                for c in candidates:
+                    if c in df.columns: return df[c]
+                return None
+            
+            df_temp['datetime'] = _get_col(self.data, ['DateTime', 'Date', 'Tarih', 'datetime'])
+            df_temp['open'] = _get_col(self.data, ['Acilis', 'Open', 'open'])
+            df_temp['high'] = _get_col(self.data, ['Yuksek', 'High', 'high'])
+            df_temp['low'] = _get_col(self.data, ['Dusuk', 'Low', 'low'])
+            df_temp['close'] = _get_col(self.data, ['Kapanis', 'Close', 'close'])
+            df_temp['volume'] = _get_col(self.data, ['Hacim', 'Volume', 'volume', 'Lot'])
+            
+            # Ensure valid data
+            df_temp.dropna(subset=['datetime', 'close'], inplace=True)
+            
+            ohlcv = OHLCV(df_temp)
             mask_arr = ohlcv.get_trading_mask(vade_tipi)
             self._emit_progress(1, f"Maske uygulandı: {vade_tipi} (Aktif bar: {np.sum(mask_arr)}/{len(mask_arr)})")
         except Exception as e:
@@ -601,7 +626,7 @@ class OptimizationWorker(QThread):
                     
                     counter +=1
                     if counter % 50 == 0:
-                        self._emit_progress(5 + int(30 * counter/total_p1), f"Faz 1: TOMA={tp} Opt={to} H1={h1p}")
+                        self._emit_progress(5 + int(30 * counter/total_p1), f"Faz 1 [{counter}/{total_p1}]: TOMA={tp} Opt={to} H1={h1p} L1={l1p}")
                         if not self._is_running: return
 
                     res = fast_backtest_strategy4(
@@ -617,6 +642,13 @@ class OptimizationWorker(QThread):
                     if score > best_p1_score:
                         best_p1_score = score
                         best_phase1 = {'toma_period': tp, 'toma_opt': to, 'hhv1': h1p, 'llv1': l1p}
+                        # Canlı streaming: yeni en iyi bulunduğunda gönder
+                        self.partial_results.emit([{
+                            'net_profit': res[0], 'trades': res[1], 'pf': res[2],
+                            'max_dd': res[3], 'sharpe': res[4], 'fitness': score,
+                            'toma_period': tp, 'toma_opt': to, 'hhv1_period': h1p, 'llv1_period': l1p,
+                            '_phase': 'Faz 1 (TOMA)'
+                        }])
         
         if not best_phase1:
             self.error.emit("Faz 1 sonuc bulunamadi.")
@@ -673,26 +705,48 @@ class OptimizationWorker(QThread):
             
             n_workers = min(self.n_parallel or 16, cpu_count())
             
-            with Pool(
-                processes=n_workers,
-                initializer=s4_parallel_init,
-                initargs=(shared_data_p2,)
-            ) as pool:
+            try:
+                self.pool = Pool(
+                    processes=n_workers,
+                    initializer=s4_parallel_init,
+                    initargs=(shared_data_p2,),
+                    maxtasksperchild=500
+                )
                 done = 0
-                for result in pool.imap_unordered(s4_p2_eval, p2_tasks, chunksize=max(1, len(p2_tasks) // (n_workers * 4))):
+                for result in self.pool.imap_unordered(s4_p2_eval, p2_tasks, chunksize=max(1, len(p2_tasks) // (n_workers * 4))):
                     done += 1
-                    if done % 200 == 0:
-                        prog = 36 + int(28 * done / len(p2_tasks))
-                        self._emit_progress(prog, f"Faz 2: {done}/{len(p2_tasks)} tamamlandı")
-                        if not self._is_running:
-                            pool.terminate()
-                            return
                     
+                    # Sonucu DÖNGÜ İÇİNDE topla (eski kod bunu yapmıyordu!)
                     if result is not None:
                         score, params = result
                         if score > best_p2_score:
                             best_p2_score = score
                             best_phase2 = params
+                    
+                    if done % 200 == 0:
+                        prog = 36 + int(28 * done / len(p2_tasks))
+                        # Son sonucun parametrelerini goster
+                        if result is not None:
+                            _, rp = result if result else (0, {})
+                            p2_txt = f"Mom={rp.get('mom_period','')} Trix={rp.get('trix_period','')} MH={rp.get('mom_limit_high','')} LB1={rp.get('trix_lb1','')} H2={rp.get('hhv2','')} L2={rp.get('llv2','')}"
+                        else:
+                            p2_txt = ""
+                        self._emit_progress(prog, f"Faz 2 [{done}/{len(p2_tasks)}]: {p2_txt}")
+                        # Canlı streaming: en iyi sonucu gönder
+                        if best_phase2:
+                            self.partial_results.emit([{
+                                'net_profit': best_p2_score, 'fitness': best_p2_score,
+                                **best_phase2, '_phase': 'Faz 2 (Layer 1)'
+                            }])
+                        if not self._is_running:
+                            self.pool.terminate()
+                            self.pool = None
+                            return
+            finally:
+                if self.pool:
+                    self.pool.close()
+                    self.pool.join()
+                    self.pool = None
 
         if not best_phase2:
              # Fallback defaults if search failed or empty
@@ -763,23 +817,48 @@ class OptimizationWorker(QThread):
             
             n_workers = min(self.n_parallel or 16, cpu_count())
             
-            with Pool(
-                processes=n_workers,
-                initializer=s4_parallel_init,
-                initargs=(shared_data_p3,)
-            ) as pool:
+            try:
+                self.pool = Pool(
+                    processes=n_workers,
+                    initializer=s4_parallel_init,
+                    initargs=(shared_data_p3,),
+                    maxtasksperchild=500
+                )
                 done = 0
-                for result in pool.imap_unordered(s4_p3_eval, p3_tasks, chunksize=max(1, len(p3_tasks) // (n_workers * 4))):
+                for result in self.pool.imap_unordered(s4_p3_eval, p3_tasks, chunksize=max(1, len(p3_tasks) // (n_workers * 4))):
                     done += 1
                     if done % 500 == 0:
                         prog = 66 + int(33 * done / len(p3_tasks))
-                        self._emit_progress(prog, f"Faz 3: {done}/{len(p3_tasks)} tamamlandı")
+                        # Son sonucun parametrelerini goster
+                        if result is not None:
+                            p3_txt = f"ML={result.get('mom_limit_low','')} LB2={result.get('trix_lb2','')} H3={result.get('hhv3','')} L3={result.get('llv3','')} KA={result.get('kar_al','')} IZ={result.get('iz_stop','')}"
+                        else:
+                            p3_txt = ""
+                        self._emit_progress(prog, f"Faz 3 [{done}/{len(p3_tasks)}]: {p3_txt}")
                         if not self._is_running:
-                            pool.terminate()
+                            self.pool.terminate()
+                            self.pool = None
                             return
                     
                     if result is not None:
                         final_results.append(result)
+                    
+                    # Canlı streaming: her 2000 sonuçta top 50 gönder
+                    if done % 2000 == 0 and final_results:
+                        from src.optimization.fitness import quick_fitness as _qf
+                        temp = sorted(final_results, key=lambda x: x.get('net_profit', 0), reverse=True)[:50]
+                        for _r in temp:
+                            if 'fitness' not in _r:
+                                _r['fitness'] = _qf(_r['net_profit'], _r.get('pf',0), _r.get('max_dd',0), _r.get('trades',0), sharpe=_r.get('sharpe',0))
+                        self.partial_results.emit(temp)
+
+            finally:
+                if self.pool:
+                    self.pool.close()
+                    self.pool.join()
+                    self.pool = None
+                    
+
 
         # Final Sort - use fitness if sharpe is available, else net_profit
         from src.optimization.fitness import quick_fitness
@@ -839,16 +918,32 @@ class OptimizationWorker(QThread):
             ))
 
         self._emit_progress(10, f"Hibrit Optimizer baslatiliyor ({strategy_name})...")
+        
+        # Canlı streaming wrapper
+        _last_stream_pct = [0]
+        def _hybrid_progress(pct, msg):
+            self._emit_progress(pct, msg)
+            # Her %10 ilerleme için partial sonuçları gönder
+            if pct - _last_stream_pct[0] >= 10:
+                _last_stream_pct[0] = pct
+                try:
+                    top = optimizer.get_best_results(top_n=50)
+                    if top:
+                        self.partial_results.emit(top)
+                except Exception:
+                    pass
+        
         optimizer = HybridGroupOptimizer(
             synced_groups, 
             process_id=self.process_id, 
             strategy_index=self.strategy_index,
             is_cancelled_callback=lambda: not self._is_running,
-            on_progress_callback=self._emit_progress,
+            on_progress_callback=_hybrid_progress,
             n_parallel=self.n_parallel,
             commission=self.commission,
             slippage=self.slippage
         )
+        self.current_optimizer = optimizer
         
         self._emit_progress(10, "Iterative Coordinate Descent baslatiliyor...")
         results = optimizer.run(turbo=True, iterative=True, max_rounds=3)
@@ -905,11 +1000,32 @@ class OptimizationWorker(QThread):
             is_cancelled_callback=lambda: not self._is_running,
             narrowed_ranges=self.narrowed_ranges  # Cascade icin dar aralik
         )
+        self.current_optimizer = optimizer
         
-        # Nesil bazlı ilerleme için callback
+        # Nesil bazlı ilerleme ve canlı streaming için callback
         def on_gen_complete(gen, max_gen, best_fit):
             progress = 10 + int((gen / max_gen) * 85)
-            self._emit_progress(progress, f"Nesil {gen}/{max_gen} - En İyi: {best_fit:,.0f}")
+            # En iyi bireyin parametrelerini goster
+            param_txt = ""
+            if hasattr(optimizer, 'population_results') and optimizer.population_results:
+                try:
+                    best_ind = max(optimizer.population_results, key=lambda x: x.get('fitness', x.get('net_profit', 0)))
+                    # Fitness ve performans haric parametreleri al
+                    skip_keys = {'net_profit','trades','pf','max_dd','sharpe','fitness','win_rate','avg_win','avg_loss'}
+                    params_only = {k: v for k, v in best_ind.items() if k not in skip_keys}
+                    # Kisa format: key=val
+                    param_txt = " | " + " ".join(f"{k}={v}" for k, v in list(params_only.items())[:8])
+                except Exception:
+                    pass
+            self._emit_progress(progress, f"Nesil {gen}/{max_gen} - Fit: {best_fit:,.0f}{param_txt}")
+            # Her 3 nesilde top sonuçları gönder
+            if gen % 3 == 0 and hasattr(optimizer, 'population_results'):
+                try:
+                    top = sorted(optimizer.population_results, key=lambda x: x.get('fitness', x.get('net_profit', 0)), reverse=True)[:50]
+                    if top:
+                        self.partial_results.emit(top)
+                except Exception:
+                    pass
         
         optimizer.on_generation_complete = on_gen_complete
         
@@ -968,11 +1084,30 @@ class OptimizationWorker(QThread):
             is_cancelled_callback=lambda: not self._is_running,
             narrowed_ranges=self.narrowed_ranges  # Cascade icin dar aralik
         )
+        self.current_optimizer = optimizer
         
-        # Trial bazlı ilerleme için callback
+        # Trial bazlı ilerleme ve canlı streaming için callback
         def on_trial_complete(trial_no, max_trials, best_fit):
             progress = 10 + int((trial_no / max_trials) * 85)
-            self._emit_progress(progress, f"Deneme {trial_no}/{max_trials} - En İyi: {best_fit:,.0f}")
+            # En iyi denemenin parametrelerini goster
+            param_txt = ""
+            if hasattr(optimizer, 'all_results') and optimizer.all_results:
+                try:
+                    best_trial = max(optimizer.all_results, key=lambda x: x.get('fitness', x.get('net_profit', 0)))
+                    skip_keys = {'net_profit','trades','pf','max_dd','sharpe','fitness','win_rate','avg_win','avg_loss'}
+                    params_only = {k: v for k, v in best_trial.items() if k not in skip_keys}
+                    param_txt = " | " + " ".join(f"{k}={v}" for k, v in list(params_only.items())[:8])
+                except Exception:
+                    pass
+            self._emit_progress(progress, f"Deneme {trial_no}/{max_trials} - Fit: {best_fit:,.0f}{param_txt}")
+            # Her 10 denemede top sonuçları gönder
+            if trial_no % 10 == 0 and hasattr(optimizer, 'all_results'):
+                try:
+                    top = sorted(optimizer.all_results, key=lambda x: x.get('fitness', x.get('net_profit', 0)), reverse=True)[:50]
+                    if top:
+                        self.partial_results.emit(top)
+                except Exception:
+                    pass
             
         optimizer.on_trial_complete = on_trial_complete
         
@@ -1006,7 +1141,21 @@ class OptimizationWorker(QThread):
             self.result_ready.emit([])
     
     def stop(self):
+        """Worker'ı ve proses'i durdur"""
         self._is_running = False
+        if self.pool:
+            try:
+                self.pool.terminate()
+                self.pool.join()
+            except Exception as e:
+                print(f"Pool terminate error: {e}")
+        
+        # Obje tabanlı optimizer durdurma (Genetic/Bayesian/Hybrid)
+        if self.current_optimizer and hasattr(self.current_optimizer, 'stop'):
+             try:
+                 self.current_optimizer.stop()
+             except:
+                 pass
 
     def _validate_result(self, params):
         """Test verisi uzerinde validasyon yap"""
@@ -1178,6 +1327,11 @@ class OptimizerPanel(QWidget):
         self.hybrid_results = []  # Hibrit sonuclarini sakla (Cascade icin)
         self._stop_requested = False  # Stop button flag
         self._queue_total = 0  # Total items for global progress
+        self.live_monitor_win = None  # Canlı izleme penceresi
+        
+        # Preset Manager
+        from src.optimization.preset_manager import PresetManager
+        self.preset_manager = PresetManager()
         
         # Timer için
         from PySide6.QtCore import QTimer
@@ -1305,7 +1459,16 @@ class OptimizerPanel(QWidget):
         layout.addWidget(splitter)
         
         # İlk stratejiyi yükle
-        self._on_strategy_changed(0)
+        # self._on_strategy_changed(0) -> Artık timer ile yapılacak
+        
+        # Debounce timer for strategy params setup
+        self.setup_timer = QTimer()
+        self.setup_timer.setSingleShot(True)
+        self.setup_timer.setInterval(200) # 200ms debounce
+        self.setup_timer.timeout.connect(self._setup_strategy_params)
+        
+        # Baslangic tetiklemesi
+        self.setup_timer.start()
     
     def _create_summary_group(self) -> QGroupBox:
         """Özet ve kontrol grubu"""
@@ -1347,20 +1510,40 @@ class OptimizerPanel(QWidget):
         self.global_progress_bar.setVisible(False)  # Only show during Run All
         layout.addWidget(self.global_progress_bar)
         
-        # Live Best Result Monitor
+        # Live Best Result Monitor (2-satır: tarama + en iyi)
         self.live_monitor_frame = QFrame()
         self.live_monitor_frame.setStyleSheet(
             "QFrame { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #1a237e, stop:1 #283593); "
             "border-radius: 6px; padding: 8px; margin: 4px 0; }"
         )
-        monitor_layout = QHBoxLayout(self.live_monitor_frame)
-        monitor_layout.setContentsMargins(10, 6, 10, 6)
+        monitor_vlayout = QVBoxLayout(self.live_monitor_frame)
+        monitor_vlayout.setContentsMargins(10, 6, 10, 6)
+        monitor_vlayout.setSpacing(4)
+        
+        # Satır 1: Mevcut tarama bilgisi + timer
+        scan_row = QHBoxLayout()
+        self.live_scan_icon = QLabel("\u2699")  # Gear icon
+        self.live_scan_icon.setStyleSheet("font-size: 14px; color: #90CAF9; background: transparent;")
+        scan_row.addWidget(self.live_scan_icon)
+        self.live_scan_label = QLabel("Tarama baslatiliyor...")
+        self.live_scan_label.setStyleSheet("color: #B0BEC5; font-size: 11px; background: transparent;")
+        scan_row.addWidget(self.live_scan_label, 1)
+        self.live_timer_label = QLabel("")
+        self.live_timer_label.setStyleSheet("color: #FFD54F; font-size: 11px; font-weight: bold; background: transparent;")
+        self.live_timer_label.setAlignment(Qt.AlignRight)
+        scan_row.addWidget(self.live_timer_label)
+        monitor_vlayout.addLayout(scan_row)
+        
+        # Satır 2: En iyi sonuç
+        best_row = QHBoxLayout()
         self.live_monitor_icon = QLabel("\u2b50")  # Star emoji
-        self.live_monitor_icon.setStyleSheet("font-size: 18px; color: #FFD600; background: transparent;")
-        monitor_layout.addWidget(self.live_monitor_icon)
+        self.live_monitor_icon.setStyleSheet("font-size: 16px; color: #FFD600; background: transparent;")
+        best_row.addWidget(self.live_monitor_icon)
         self.live_monitor_label = QLabel("En Iyi Sonuc bekleniyor...")
         self.live_monitor_label.setStyleSheet("color: #E8EAF6; font-weight: bold; font-size: 12px; background: transparent;")
-        monitor_layout.addWidget(self.live_monitor_label, 1)
+        best_row.addWidget(self.live_monitor_label, 1)
+        monitor_vlayout.addLayout(best_row)
+        
         self.live_monitor_frame.setVisible(False)  # Show during optimization
         layout.addWidget(self.live_monitor_frame)
         
@@ -1397,6 +1580,21 @@ class OptimizerPanel(QWidget):
         self.resume_btn.setVisible(False)  # Only visible when checkpoint exists
         self.resume_btn.clicked.connect(self._resume_from_checkpoint)
         btn_row.addWidget(self.resume_btn)
+        
+        btn_row.addSpacing(20)
+        
+        # Preset butonları
+        self.preset_save_btn = QPushButton("💾 Preset Kaydet")
+        self.preset_save_btn.setStyleSheet("background-color: #00796B; color: white; font-size: 11px;")
+        self.preset_save_btn.setToolTip("Mevcut parametre aralıklarını kaydet (sembol+periyot+strateji)")
+        self.preset_save_btn.clicked.connect(self._save_preset)
+        btn_row.addWidget(self.preset_save_btn)
+        
+        self.preset_load_btn = QPushButton("📂 Preset Yükle")
+        self.preset_load_btn.setStyleSheet("background-color: #455A64; color: white; font-size: 11px;")
+        self.preset_load_btn.setToolTip("Kaydedilmiş parametre aralıklarını yükle")
+        self.preset_load_btn.clicked.connect(self._load_preset)
+        btn_row.addWidget(self.preset_load_btn)
         
         layout.addLayout(btn_row)
         
@@ -1633,7 +1831,15 @@ class OptimizerPanel(QWidget):
         self._on_strategy_changed(self.strategy_combo.currentIndex())
     
     def _on_strategy_changed(self, index: int):
-        """Strateji değiştiğinde parametre gruplarını güncelle"""
+        """Strateji değiştiğinde timer'ı yeniden başlat (Debounce)"""
+        # Timer varsa (henuz setup tamamlanmadiysa)
+        if hasattr(self, 'setup_timer'):
+            self.setup_timer.start()
+
+    def _setup_strategy_params(self):
+        """Timer dolunca parametre gruplarını güvenli şekilde oluştur"""
+        index = self.strategy_combo.currentIndex()
+        
         # Mevcut grupları temizle
         while self.groups_layout.count():
             item = self.groups_layout.takeAt(0)
@@ -1648,6 +1854,9 @@ class OptimizerPanel(QWidget):
             base_groups = STRATEGY3_PARAM_GROUPS
         elif index == 3:
             base_groups = STRATEGY4_PARAM_GROUPS
+            print(f"[DEBUG S4] Loaded S4 Groups: {list(base_groups.keys())}")
+            for k, v in base_groups.items():
+                print(f"  - {k}: {len(v.get('params', {}))} params")
         else:
             base_groups = STRATEGY2_PARAM_GROUPS
         period_dk = self._get_current_period_dk()
@@ -1659,6 +1868,10 @@ class OptimizerPanel(QWidget):
             self.group_widgets[group_name] = group_widget
         
         self.groups_layout.addStretch()
+        
+        # Preset otomatik yükleme dene
+        from PySide6.QtCore import QTimer as _QT2
+        _QT2.singleShot(300, self._try_auto_load_preset)
     
     def _refresh_processes(self):
         """Süreç listesini yenile"""
@@ -1727,9 +1940,14 @@ class OptimizerPanel(QWidget):
             
         for ui_method, res_list in grouped_results.items():
             self._display_results(res_list, ui_method)
+            
+        # Preset otomatik yükleme dene
+        self._try_auto_load_preset()
+
     
     def set_process(self, process_id: str):
         """DataPanel'den gelen süreç ID'sini ayarla"""
+        print(f"[DEBUG] OptimizerPanel.set_process called with {process_id}")
         self.current_process_id = process_id
         self._refresh_processes()
         
@@ -1887,10 +2105,216 @@ class OptimizerPanel(QWidget):
         self.worker.slippage = self.slippage_spin.value()
         self.worker.progress.connect(self._on_progress)
         self.worker.result_ready.connect(self._on_result)
+        self.worker.partial_results.connect(self._on_partial_results)
         self.worker.error.connect(self._on_error)
         self.worker.finished.connect(self._on_finished)
         self.worker.start()
+        
+        # Canlı İzleme Ekranını aç
+        self._open_live_monitor(strategy_index, method)
     
+    # ==============================================================================
+    # CANLI İZLEME EKRANI
+    # ==============================================================================
+    def _open_live_monitor(self, strategy_index: int, method: str):
+        """Canlı İzleme Ekranını aç veya güncelle"""
+        try:
+            from src.ui.widgets.live_monitor_window import LiveMonitorWindow
+            if self.live_monitor_win is None or not self.live_monitor_win.isVisible():
+                self.live_monitor_win = LiveMonitorWindow(
+                    strategy_index=strategy_index,
+                    method=method
+                )
+                self.live_monitor_win.showMaximized()
+            else:
+                # Pencere zaten açık — stratejiyi güncelle
+                self.live_monitor_win.set_strategy(strategy_index, method)
+        except Exception as e:
+            print(f"[LIVE MONITOR] Açılamadı: {e}")
+    
+    def _on_partial_results(self, results: list):
+        """Worker'dan gelen kısmi sonuçları canlı pencereye yönlendir"""
+        if self.live_monitor_win and self.live_monitor_win.isVisible():
+            self.live_monitor_win.update_results(results, is_final=False)
+        
+        # Live monitor label'ı da güncelle
+        if results:
+            best = max(results, key=lambda r: r.get('fitness', r.get('net_profit', 0)))
+            net = best.get('net_profit', 0)
+            pf = best.get('pf', 0)
+            sh = best.get('sharpe', 0)
+            fit = best.get('fitness', 0)
+            self.live_monitor_label.setText(
+                f"  ⭐ En İyi: Net {net:,.0f} | PF {pf:.2f} | Sharpe {sh:.2f} | Fitness {fit:,.0f}  "
+            )
+    
+    # ==============================================================================
+    # PRESET KAYIT / YUKLE
+    # ==============================================================================
+    def _save_preset(self):
+        """Mevcut parametre aralıklarını preset olarak kaydet"""
+        if not self.current_process_id:
+            QMessageBox.warning(self, "Uyarı", "Önce bir süreç seçin.")
+            return
+        
+        strategy_idx = self.strategy_combo.currentIndex()
+        strategy_name = self.strategy_combo.currentText()
+        period = self.period_combo.currentText()
+        symbol = self.process_combo.currentText().split('(')[0].strip() if self.process_combo.currentText() else "unknown"
+        
+        # Parametre aralıklarını topla
+        param_ranges = {}
+        for group_id, group_widget in self.group_widgets.items():
+            # group_widget is ParameterGroupWidget, access its param_widgets dict
+            for param_name, w in group_widget.param_widgets.items():
+                if isinstance(w, dict) and 'min' in w:
+                    param_ranges[param_name] = {
+                        'min': w['min'].value(),
+                        'max': w['max'].value(),
+                        'step': w['step'].value(),
+                        'active': w['active'].isChecked() if 'active' in w else True
+                    }
+        
+        if not param_ranges:
+            QMessageBox.warning(self, "Uyarı", "Kaydedilecek parametre bulunamadı.")
+            return
+        
+        path = self.preset_manager.save_preset(symbol, period, strategy_idx, strategy_name, param_ranges)
+        self.status_label.setText(f"💾 Preset kaydedildi: {os.path.basename(path)}")
+    
+    def _load_preset(self):
+        """Kaydedilmiş preset'i yükle (Liste üzerinden seçim)"""
+        strategy_idx = self.strategy_combo.currentIndex()
+        period = self.period_combo.currentText()
+        symbol = self.process_combo.currentText().split('(')[0].strip() if self.process_combo.currentText() else "unknown"
+        
+        # Tüm presetleri listele
+        all_presets = self.preset_manager.list_presets()
+        
+        # Uygun olanları filtrele (Strateji ve Periyot eşleşmeli)
+        compatible = []
+        for p in all_presets:
+            # Json verisinden gelen period ve strategy_name kontrolü
+            # Ancak strategy_index json'da var, listede var mi bakalim
+            # list_presets() params count donduruyor, strategy index'i dosyadan okuyor
+            # Bizim icin onemli olan strategy index eslesmesi
+            
+            # PresetManager.list_presets implementation reads JSON content
+            # Let's verify matches. 
+            # Note: list_presets helper dict keys: 'file', 'symbol', 'period', 'strategy' (name), 'created'
+            # We prefer matching by Index if available inside file, assuming list_presets could be improved or we trust name
+            
+            # Match strict on Period
+            if p.get('period') != period:
+                continue
+            
+            # Match on Strategy Name or attempt to verify Index if possible
+            # Current Strategy Name from UI
+            current_strat_name = self.strategy_combo.currentText()
+            saved_strat_name = p.get('strategy', '')
+            
+            # Simple check: Strategy name match OR filename suffix match (S1, S2...)
+            # Dosya adından S_index çıkarma: ..._S{idx}.json
+            try:
+                fname = p['file']
+                if fname.endswith(f"_S{strategy_idx+1}.json"):
+                    compatible.append(p)
+                    continue
+            except:
+                pass
+                
+            if saved_strat_name == current_strat_name:
+                compatible.append(p)
+
+        if not compatible:
+            QMessageBox.information(self, "Bilgi", f"Bu strateji ({period}) için kayıtlı hiçbir preset bulunamadı.")
+            return
+
+        from PySide6.QtWidgets import QInputDialog
+        
+        # Listeyi hazırla: "Symbol | Tarih | Dosya"
+        items = []
+        current_selection = 0
+        
+        # Sort by Date desc
+        compatible.sort(key=lambda x: x.get('created', ''), reverse=True)
+        
+        for i, p in enumerate(compatible):
+            display = f"{p['symbol']}  —  {p['created']}  ({p['file']})"
+            items.append(display)
+            # Eğer mevcut sembol ile eşleşiyorsa varsayılan seç
+            if p['symbol'] == symbol:
+                current_selection = i
+        
+        item, ok = QInputDialog.getItem(self, "Preset Yükle", 
+                                      f"Mevcut Strateji ({period}) için kayıtlar:", 
+                                      items, current_selection, False)
+        
+        if ok and item:
+            # Seçilen dosyayı bul
+            selected_idx = items.index(item)
+            selected_preset_info = compatible[selected_idx]
+            
+            # Yükle (full path)
+            import json
+            full_path = os.path.join(self.preset_manager.preset_dir, selected_preset_info['file'])
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    preset_data = json.load(f)
+                    self._apply_preset(preset_data)
+                    self.status_label.setText(f"📂 Preset yüklendi: {selected_preset_info['file']}")
+            except Exception as e:
+                QMessageBox.critical(self, "Hata", f"Preset yüklenirken hata: {e}")
+
+    def _apply_preset(self, preset: dict):
+        """Preset değerlerini spin'lere uygula"""
+        params = preset.get('params', {})
+        for group_id, group_widget in self.group_widgets.items():
+             # group_widget is ParameterGroupWidget, access its param_widgets dict
+            for param_name, w in group_widget.param_widgets.items():
+                if isinstance(w, dict) and param_name in params:
+                    p = params[param_name]
+                    try:
+                        # Check if C++ object is valid
+                        if 'min' in w and 'min' in p:
+                            w['min'].setValue(p['min'])
+                        if 'max' in w and 'max' in p:
+                            w['max'].setValue(p['max'])
+                        if 'step' in w and 'step' in p:
+                            w['step'].setValue(p['step'])
+                        if 'active' in w and 'active' in p:
+                            w['active'].setChecked(p['active'])
+                    except RuntimeError:
+                        # "Internal C++ object ... already deleted"
+                        print(f"[PRESET] Widget deleted for {param_name}, skipping.")
+                        continue
+    
+    def _try_auto_load_preset(self):
+        """Strateji veya süreç değiştiğinde otomatik preset yükleme dene"""
+        print("[DEBUG] OptimizerPanel._try_auto_load_preset called")
+        try:
+            if not self.current_process_id:
+                return
+            
+            # [FIX] Eger widget'lar henuz olusturulmadiysa veya temizlendiyse iptal et
+            if not self.group_widgets:
+                print("[PRESET] Group widgets not ready, skipping auto-load.")
+                return
+
+            strategy_idx = self.strategy_combo.currentIndex()
+            period = self.period_combo.currentText()
+            symbol = self.process_combo.currentText().split('(')[0].strip() if self.process_combo.currentText() else ""
+            if not symbol:
+                return
+            preset = self.preset_manager.load_preset(symbol, period, strategy_idx)
+            if preset:
+                self._apply_preset(preset)
+                self.status_label.setText(f"📂 Preset otomatik yüklendi ({preset.get('created', '')})")
+        except Exception as e:
+            print(f"[PRESET] Auto-load failed: {e}")
+            import traceback
+            traceback.print_exc()
+
     # ==============================================================================
     # CHECKPOINT (Resume) LOGIC
     # ==============================================================================
@@ -2078,6 +2502,11 @@ class OptimizerPanel(QWidget):
         self.current_message = message
         self.current_eta = eta
         self._update_status_label()
+        
+        # Canli monitor scan label guncelle
+        if hasattr(self, 'live_scan_label') and self.live_monitor_frame.isVisible():
+            self.live_scan_label.setText(message)
+            self.live_timer_label.setText(f"Gecen: {elapsed} | Kalan: {eta}")
     
     def _update_status_label(self):
         elapsed = self._get_elapsed_str()
@@ -2136,6 +2565,10 @@ class OptimizerPanel(QWidget):
                 "QFrame { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #1a237e, stop:1 #283593); "
                 "border-radius: 6px; padding: 8px; margin: 4px 0; }"
             ))
+        
+        # Canlı İzleme Ekranına final sonuçları gönder
+        if self.live_monitor_win and self.live_monitor_win.isVisible():
+            self.live_monitor_win.update_results(results, method=method, is_final=True)
         
         self._display_results(results, method)
         

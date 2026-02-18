@@ -1,4 +1,25 @@
 
+## 2026-02-19 (Thread Safety, Warmup Guard & Live Monitor UX)
+
+### ✅ Yapılanlar
+- **Thread Safety Crash Fix (0xC0000005):**
+  - S4 Phase 2 `pool.imap_unordered` sonuçları döngü içinde toplanmıyordu → stale result → access violation. Düzeltildi.
+  - `maxtasksperchild=500` eklendi (bellek sızıntısı koruması).
+- **Dinamik Warmup Guard:**
+  - Python: `range(200, n)` → `range(max(200, trix_lb1+1, trix_lb2+1), n)` — negatif index wrap-around engellendi.
+  - C# Exporter: Hardcoded TRIX lookback (110/140) → dinamik `TRIX_LB1`/`TRIX_LB2`, HH3/LL3 ayrı periyot.
+- **Ölü Kod Temizliği:** 325 satırlık duplicate `export_strategy4` + `_generate_strategy4_code` silindi.
+- **Canlı İzleme Geliştirmeleri:**
+  - S4 Phase 1/2'ye `partial_results.emit()` eklendi.
+  - `live_monitor_frame` 2 satır: ⚙ tarama + ⭐ en iyi sonuç. Timer monitoring alanına taşındı.
+  - Tüm fazlarda tam parametre detayları. Genetik/Bayesian callback'lere parametre bilgisi eklendi.
+
+### 📌 Mevcut Durum
+- **Aktif Faz:** Faz 6 - Desktop UI Testi & İyileştirme
+- **Sıradaki Adım:** S4 optimizasyon testi (warmup + live monitor doğrulama)
+
+---
+
 ## 2026-02-17 (Critical Fixes & Premium UX)
 
 ### ✅ Yapılanlar

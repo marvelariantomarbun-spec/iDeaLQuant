@@ -33,6 +33,10 @@ class DataPanel(QWidget):
         self.df = None
         self.current_process_id = None
         self._setup_ui()
+        
+        # Otomatik yükleme (UI hazir olduktan sonra)
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(100, self._try_auto_load_last_session)
     
     def _setup_ui(self):
         """UI bileşenlerini oluştur"""
@@ -40,17 +44,18 @@ class DataPanel(QWidget):
         layout.setSpacing(15)
         
         # Veri kaynağı seçimi (Tab)
-        source_tabs = QTabWidget()
+        self.source_tabs = QTabWidget()
         
         # Tab 1: IdealData Binary
         ideal_tab = self._create_ideal_tab()
-        source_tabs.addTab(ideal_tab, "IdealData")
+        self.source_tabs.addTab(ideal_tab, "IdealData")
         
         # Tab 2: CSV
         csv_tab = self._create_csv_tab()
-        source_tabs.addTab(csv_tab, "CSV Dosyası")
+        csv_tab = self._create_csv_tab()
+        self.source_tabs.addTab(csv_tab, "CSV Dosyası")
         
-        layout.addWidget(source_tabs)
+        layout.addWidget(self.source_tabs)
         
         # Filtre grubu
         filter_group = self._create_filter_group()
@@ -399,13 +404,15 @@ class DataPanel(QWidget):
             process_id = db.create_process(
                 symbol=symbol,
                 period=period,
-                data_file=Path(csv_path).name,
+                data_file=str(Path(csv_path).resolve()),
                 data_rows=len(df)
             )
             self.current_process_id = process_id
             
             # Signals gönder
+            print(f"[DEBUG] DataPanel: Emitting data_loaded (Shape: {df.shape})")
             self.data_loaded.emit(self.df)
+            print(f"[DEBUG] DataPanel: Emitting process_created ({process_id})")
             self.process_created.emit(process_id)
             
             QMessageBox.information(
@@ -504,3 +511,68 @@ class DataPanel(QWidget):
         from src.ui.widgets.database_manager import DatabaseManager
         dialog = DatabaseManager(self)
         dialog.exec()
+
+
+    def _try_auto_load_last_session(self):
+        """Son oturumu otomatik yükle"""
+        try:
+            processes = db.get_all_processes()
+            if not processes:
+                return
+            
+            last_process = processes[0]
+            data_file = last_process.get('data_file', '')
+            
+            if not data_file or not Path(data_file).exists():
+                return
+                
+            print(f"[AUTO-LOAD] Last session found: {last_process['symbol']} ({last_process['process_id']})")
+            
+            # Veri tipini belirle
+            is_csv = str(data_file).lower().endswith('.csv')
+            
+            if is_csv:
+                # CSV Yükle
+                self.source_tabs.setCurrentIndex(1)
+                self.csv_path_edit.setText(data_file)
+                self._load_csv_data()
+            else:
+                # IdealData Yükle
+                self.source_tabs.setCurrentIndex(0)
+                
+                # Sembol ve Periyot ayristir
+                # Symbol format: VIP_X030 or similar
+                # Period format: 1dk or 1
+                
+                full_symbol = last_process['symbol']
+                period_str = last_process['period'].replace('dk', '') # '1dk' -> '1'
+                
+                if '_' in full_symbol:
+                    parts = full_symbol.split('_', 1)
+                    market = parts[0]
+                    symbol = parts[1]
+                else:
+                    market = "VIP" # Fallback
+                    symbol = full_symbol
+                
+                # UI Set
+                self.market_combo.setCurrentText(market)
+                self.period_combo.setCurrentText(period_str)
+                
+                # Sembolleri yenile ki symbol_combo dolsun
+                self._refresh_symbols()
+                
+                # Sembolu sec
+                index = self.symbol_combo.findText(symbol)
+                if index >= 0:
+                    self.symbol_combo.setCurrentIndex(index)
+                else:
+                    self.symbol_combo.setCurrentText(symbol)
+
+                # Yükle
+                self._load_ideal_data()
+                
+        except Exception as e:
+            print(f"[AUTO-LOAD] Failed: {e}")
+            import traceback
+            traceback.print_exc()

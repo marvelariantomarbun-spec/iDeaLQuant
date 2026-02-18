@@ -19,6 +19,7 @@ from .main_window import MainWindow
 
 def main():
     """Ana uygulama başlatıcı"""
+    print("[DEBUG] App Starting...")
     # High DPI desteği
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough

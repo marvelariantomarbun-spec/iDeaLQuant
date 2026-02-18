@@ -672,12 +672,28 @@ class HybridGroupOptimizer:
         self.on_progress = on_progress_callback
         self.commission, self.slippage = commission, slippage
         self.group_results, self.combined_results, self.final_results = {}, [], []
+        self.pool = None  # Process pool for termination support
 
     def get_default_params(self, exclude_group: str = None) -> Dict[str, Any]:
         defaults = {}
         for g in self.groups:
             if g.name != exclude_group: defaults.update(g.default_values)
         return defaults
+
+    def stop(self):
+        """Optimizasyonu dışarıdan durdur"""
+        if self._is_cancelled:
+            # Callback returns True -> handled in loops
+            pass
+            
+        if self.pool:
+            try:
+                self.pool.terminate()
+                self.pool.join()
+            except Exception as e:
+                print(f"Hybrid Pool Terminate Error: {e}")
+            finally:
+                self.pool = None
 
     def generate_combinations(self, params: Dict[str, List[Any]]) -> List[Dict[str, Any]]:
         keys, values = list(params.keys()), list(params.values())
@@ -691,8 +707,19 @@ class HybridGroupOptimizer:
         results = []
         if self.n_parallel > 1:
             tasks = [({**base_params, **c}, self.strategy_index, self.commission, self.slippage) for c in combos]
-            with Pool(processes=self.n_parallel, initializer=_init_group_pool, initargs=(self.strategy_index,)) as pool:
-                raw = pool.map(_eval_combo_wrapper, tasks)
+            try:
+                self.pool = Pool(processes=self.n_parallel, initializer=_init_group_pool, initargs=(self.strategy_index,))
+                raw = self.pool.map(_eval_combo_wrapper, tasks)
+                self.pool.close()
+                self.pool.join()
+                self.pool = None
+            except Exception as e:
+                print(f"Hybrid Pool Execution Error: {e}")
+                if self.pool:
+                    self.pool.terminate()
+                    self.pool = None
+                return []
+
             for i, score in enumerate(raw):
                 if score['net_profit'] > 0: results.append({'group': group.name, **combos[i], **score})
         else:
@@ -1021,8 +1048,18 @@ class HybridGroupOptimizer:
         
         # Paralel calistir
         print(f"  {cpu_count()} cekirdek ile paralel calistiriliyor...")
-        with Pool(processes=cpu_count()) as pool:
-            results = pool.starmap(_evaluate_params_static, tasks)
+        try:
+            self.pool = Pool(processes=cpu_count())
+            results = self.pool.starmap(_evaluate_params_static, tasks)
+            self.pool.close()
+            self.pool.join()
+            self.pool = None
+        except Exception as e:
+            print(f"Hybrid Combination Pool Error: {e}")
+            if self.pool:
+                self.pool.terminate()
+                self.pool = None
+            return
         
         # Sonuclari filtrele ve ekle
         for merged_params, score in zip([t[0] for t in tasks], results):

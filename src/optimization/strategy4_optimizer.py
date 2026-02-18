@@ -275,11 +275,13 @@ def fast_backtest_strategy4(closes,
     # Constants for signal mapping
     # 0: None, 1: Long (A), -1: Short (S)
     
-    # Warmup needs to be max(TRIX_LB, MOM_P, etc) -> handled by caller loop start
+    # Warmup: en büyük lookback parametresine göre dinamik hesapla
+    # trix_lookback1/2 en büyük olabilir (200+ bar)
+    min_warmup = max(200, trix_lookback1 + 1, trix_lookback2 + 1)
     
     son_yon = 0 # Last Direction
     
-    for i in range(200, n): # Safe warmup
+    for i in range(min_warmup, n): # Dinamik warmup
         
         # --- TRADING MASK CHECK ---
         if not mask_arr[i]:
