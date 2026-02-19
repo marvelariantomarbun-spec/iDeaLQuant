@@ -944,14 +944,14 @@ class OptimizationWorker(QThread):
                     if result is not None:
                         final_results.append(result)
                     
-                    # Canlı streaming: her 500 sonuçta top 50 gönder
-                    if done % 500 == 0 and final_results:
-                        from src.optimization.fitness import quick_fitness as _qf
-                        temp = sorted(final_results, key=lambda x: x.get('net_profit', 0), reverse=True)[:50]
-                        for _r in temp:
-                            if 'fitness' not in _r:
-                                _r['fitness'] = _qf(_r['net_profit'], _r.get('pf',0), _r.get('max_dd',0), _r.get('trades',0), sharpe=_r.get('sharpe',0))
-                        self.partial_results.emit(temp)
+                    # GECICI KAPATILDI: partial_results.emit crash testi
+                    # if done % 500 == 0 and final_results:
+                    #     from src.optimization.fitness import quick_fitness as _qf
+                    #     temp = sorted(final_results, key=lambda x: x.get('net_profit', 0), reverse=True)[:50]
+                    #     for _r in temp:
+                    #         if 'fitness' not in _r:
+                    #             _r['fitness'] = _qf(_r['net_profit'], _r.get('pf',0), _r.get('max_dd',0), _r.get('trades',0), sharpe=_r.get('sharpe',0))
+                    #     self.partial_results.emit(temp)
 
             finally:
                 if self.pool:
