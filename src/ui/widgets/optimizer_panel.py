@@ -673,16 +673,16 @@ class OptimizationWorker(QThread):
                     if score > best_p1_score:
                         best_p1_score = score
                         best_phase1 = {'toma_period': tp, 'toma_opt': to, 'hhv1': h1p, 'llv1': l1p}
-                        # Canlı streaming: yeni en iyi bulunduğunda gönder
-                        try:
-                            self.partial_results.emit([{
-                                'net_profit': res[0], 'trades': res[1], 'pf': res[2],
-                                'max_dd': res[3], 'sharpe': res[4], 'fitness': score,
-                                'toma_period': tp, 'toma_opt': to, 'hhv1_period': h1p, 'llv1_period': l1p,
-                                '_phase': 'Faz 1 (TOMA)'
-                            }])
-                        except Exception as e:
-                            print(f"[DEBUG P1] Emit hatasi: {e}", flush=True)
+                        # GECICI KAPATILDI: partial_results.emit crash testi
+                        # try:
+                        #     self.partial_results.emit([{
+                        #         'net_profit': res[0], 'trades': res[1], 'pf': res[2],
+                        #         'max_dd': res[3], 'sharpe': res[4], 'fitness': score,
+                        #         'toma_period': tp, 'toma_opt': to, 'hhv1_period': h1p, 'llv1_period': l1p,
+                        #         '_phase': 'Faz 1 (TOMA)'
+                        #     }])
+                        # except Exception as e:
+                        #     print(f"[DEBUG P1] Emit hatasi: {e}", flush=True)
         
         if not best_phase1:
             self.error.emit("Faz 1 sonuc bulunamadi.")
@@ -2206,13 +2206,13 @@ class OptimizerPanel(QWidget):
         self.worker.slippage = self.slippage_spin.value()
         self.worker.progress.connect(self._on_progress)
         self.worker.result_ready.connect(self._on_result)
-        self.worker.partial_results.connect(self._on_partial_results)
+        # self.worker.partial_results.connect(self._on_partial_results)  # GECICI KAPATILDI
         self.worker.error.connect(self._on_error)
         self.worker.finished.connect(self._on_finished)
         self.worker.start()
         
-        # Canlı İzleme Ekranını aç
-        self._open_live_monitor(strategy_index, method)
+        # Canlı İzleme Ekranını aç — GECICI KAPATILDI
+        # self._open_live_monitor(strategy_index, method)
     
     # ==============================================================================
     # CANLI İZLEME EKRANI
