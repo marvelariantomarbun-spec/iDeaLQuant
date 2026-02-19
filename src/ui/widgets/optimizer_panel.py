@@ -547,6 +547,19 @@ class OptimizationWorker(QThread):
         from src.optimization.strategy4_optimizer import fast_backtest_strategy4, IndicatorCache
         import numpy as np
         
+        # Checkpoint: dosyaya yaz (process olse bile kalir)
+        _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '..', 'crash_log.txt')
+        _log_path = os.path.abspath(_log_path)
+        def _cp(msg):
+            try:
+                with open(_log_path, 'a', encoding='utf-8') as f:
+                    f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+                    f.flush()
+            except: pass
+            print(f"[CP] {msg}", flush=True)
+        
+        _cp("_run_sequential_layer() BASLADI")
+        
         # 1. Veri Hazirligi
         self._emit_progress(1, "Veri analiz ediliyor...")
         dates = self.data['DateTime'].values
@@ -675,6 +688,7 @@ class OptimizationWorker(QThread):
             self.error.emit("Faz 1 sonuc bulunamadi.")
             return
 
+        _cp(f"FAZ 1 BITTI: {best_phase1}")
         self._emit_progress(35, f"Faz 1 En Iyi: TOMA {best_phase1['toma_period']}/{best_phase1['toma_opt']}, H1:{best_phase1['hhv1']}")
         
         # ==============================================================================
@@ -702,6 +716,7 @@ class OptimizationWorker(QThread):
             'hhv': {hp: cache.get_hhv(hp) for hp in set(list(hhv2_ranges) + list(hhv3_ranges))},
             'llv': {lp: cache.get_llv(lp) for lp in set(list(llv2_ranges) + list(llv3_ranges))},
         }
+        _cp(f"shared_data_p2 olusturuldu: {sd_mb:.0f} MB")
         
         # Build task GENERATOR — yields on-demand, ~0 bytes memory (was ~10 GB list!)
         def p2_gen():
@@ -777,6 +792,7 @@ class OptimizationWorker(QThread):
                     initargs=(shared_data_p2,),
                     maxtasksperchild=50000
                 )
+                _cp("Pool olusturuldu, imap basliyor...")
                 print(f"[DEBUG P2] Pool olusturuldu, imap basliyor...", flush=True)
                 done = 0
                 _last_emit_time = time.time()
@@ -784,6 +800,8 @@ class OptimizationWorker(QThread):
                     done += 1
                     
                     # Sonucu DÖNGÜ İÇİNDE topla (eski kod bunu yapmıyordu!)
+                    if done == 1:
+                        _cp(f"Ilk imap sonucu alindi (result={result is not None})")
                     if result is not None:
                         score, params = result
                         if score > best_p2_score:
@@ -792,10 +810,10 @@ class OptimizationWorker(QThread):
                     
                     # Progress: her 500 iterasyonda (50 çok sık, GUI thread'i boğar)
                     _now = time.time()
-                    if done % 500 == 0:
+                    if done % 5000 == 0:
+                        _cp(f"P2 ilerleme: {done}/{total_p2}")
                         try:
                             prog = 36 + int(28 * done / total_p2)
-                            # En iyi sonucun parametrelerini goster
                             if best_phase2:
                                 bp = best_phase2
                                 p2_txt = f"Mom={bp.get('mom_period','')} Trix={bp.get('trix_period','')} MH={bp.get('mom_limit_high','')} LB1={bp.get('trix_lb1','')} H2={bp.get('hhv2','')} L2={bp.get('llv2','')}"
@@ -805,17 +823,17 @@ class OptimizationWorker(QThread):
                         except Exception as e:
                             print(f"[DEBUG P2] Progress emit hatasi: {e}", flush=True)
                         
-                        # Canlı streaming: max 2 saniyede bir (GUI thread'i bogmamak icin)
-                        if best_phase2 and (_now - _last_emit_time) >= 2.0:
-                            _last_emit_time = _now
-                            try:
-                                self.partial_results.emit([{
-                                    **best_phase2,
-                                    'fitness': best_p2_score,
-                                    '_phase': 'Faz 2 (Layer 1)'
-                                }])
-                            except Exception as e:
-                                print(f"[DEBUG P2] Partial emit hatasi: {e}", flush=True)
+                        # GECICI KAPATILDI: partial_results.emit crash testi
+                        # if best_phase2 and (_now - _last_emit_time) >= 2.0:
+                        #     _last_emit_time = _now
+                        #     try:
+                        #         self.partial_results.emit([{
+                        #         **best_phase2,
+                        #         'fitness': best_p2_score,
+                        #         '_phase': 'Faz 2 (Layer 1)'
+                        #     }])
+                        #     except Exception as e:
+                        #         print(f"[DEBUG P2] Partial emit hatasi: {e}", flush=True)
                         
                         if not self._is_running:
                             self.pool.terminate()
@@ -2217,20 +2235,31 @@ class OptimizerPanel(QWidget):
     
     def _on_partial_results(self, results: list):
         """Worker'dan gelen kısmi sonuçları canlı pencereye yönlendir"""
-        if self.live_monitor_win and self.live_monitor_win.isVisible():
-            self.live_monitor_win.update_results(results, is_final=False)
-        
-        # Live monitor label'ı da güncelle (TR locale)
-        if results:
-            best = max(results, key=lambda r: r.get('fitness', r.get('net_profit', 0)))
-            net = best.get('net_profit', 0)
-            pf = best.get('pf', 0)
-            sh = best.get('sharpe', 0)
-            fit = best.get('fitness', 0)
-            self.live_monitor_label.setText(
-                f"  En İyi: Net {net:,.0f} | PF {pf:.2f} | Sharpe {sh:.2f} | Fitness {fit:,.0f}  "
-                .replace(',', 'X').replace('.', ',').replace('X', '.')
-            )
+        try:
+            if self.live_monitor_win and self.live_monitor_win.isVisible():
+                self.live_monitor_win.update_results(results, is_final=False)
+            
+            # Live monitor label'ı da güncelle (TR locale)
+            if results:
+                best = max(results, key=lambda r: r.get('fitness', r.get('net_profit', 0)))
+                net = best.get('net_profit', 0)
+                pf = best.get('pf', 0)
+                sh = best.get('sharpe', 0)
+                fit = best.get('fitness', 0)
+                if hasattr(self, 'live_monitor_label') and self.live_monitor_label:
+                    self.live_monitor_label.setText(
+                        f"  En İyi: Net {net:,.0f} | PF {pf:.2f} | Sharpe {sh:.2f} | Fitness {fit:,.0f}  "
+                        .replace(',', 'X').replace('.', ',').replace('X', '.')
+                    )
+        except Exception as e:
+            # CRASH LOG: GUI thread'deki hatayi dosyaya yaz
+            try:
+                import time as _t
+                _lp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '..', 'crash_log.txt')
+                with open(os.path.abspath(_lp), 'a') as f:
+                    f.write(f"[{_t.strftime('%H:%M:%S')}] _on_partial_results CRASH: {e}\n")
+            except: pass
+            print(f"[CRASH] _on_partial_results: {e}", flush=True)
     
     # ==============================================================================
     # PRESET KAYIT / YUKLE
