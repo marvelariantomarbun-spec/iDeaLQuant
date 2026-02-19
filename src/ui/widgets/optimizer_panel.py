@@ -489,6 +489,19 @@ class OptimizationWorker(QThread):
     def run(self):
         self.start_time = time.time()
         
+        # Crash log: dosyaya yaz (process olurse bile kalir)
+        import sys as _sys
+        _crash_log = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'crash_log.txt')
+        
+        def _write_crash(msg):
+            try:
+                with open(_crash_log, 'a', encoding='utf-8') as f:
+                    f.write(f"\n[{time.strftime('%H:%M:%S')}] {msg}\n")
+            except:
+                pass
+        
+        _write_crash("=== OptimizationWorker.run() BASLADI ===")
+        
         # Auto-Split (Train/Test)
         original_data = self.data
         test_data = None
@@ -518,10 +531,15 @@ class OptimizationWorker(QThread):
                 
             # restore data after run
             self.data = original_data
+            _write_crash("=== OptimizationWorker.run() BASARIYLA BITTI ===")
             
-        except Exception as e:
+        except BaseException as e:
             import traceback
-            self.error.emit(f"{str(e)}\n{traceback.format_exc()}")
+            tb = traceback.format_exc()
+            _write_crash(f"CRASH: {e}\n{tb}")
+            print(f"[CRASH] {e}\n{tb}", flush=True)
+            if isinstance(e, Exception):
+                self.error.emit(f"{str(e)}\n{tb}")
             self.data = original_data
 
     def _run_sequential_layer(self):
@@ -735,7 +753,8 @@ class OptimizationWorker(QThread):
             from multiprocessing import Pool, cpu_count
             from src.optimization.strategy4_optimizer import s4_parallel_init, s4_p2_eval
             
-            n_workers = min(self.n_parallel or 16, cpu_count())
+            # Windows'ta max 16 worker (32+ pipe IPC cokuyor)
+            n_workers = min(self.n_parallel or 16, cpu_count(), 16)
             
             # Bellek korumasi: shared_data cok buyukse worker sayisini azalt
             max_total_mb = sd_mb * (n_workers + 1)  # her worker'a pickle kopya
@@ -746,9 +765,8 @@ class OptimizationWorker(QThread):
             
             p2_chunk = min(500, max(1, total_p2 // (n_workers * 4)))
             
-            print(f"[DEBUG P2] Pool olusturuluyor: {n_workers} worker, chunksize={p2_chunk}")
-            print(f"[DEBUG P2] Tahmini toplam RAM: {sd_mb * (n_workers + 1):.0f} MB")
-            _sys.stdout.flush()
+            print(f"[DEBUG P2] Pool olusturuluyor: {n_workers} worker, chunksize={p2_chunk}", flush=True)
+            print(f"[DEBUG P2] Tahmini toplam RAM: {sd_mb * (n_workers + 1):.0f} MB", flush=True)
             
             try:
                 self.pool = Pool(
@@ -757,8 +775,7 @@ class OptimizationWorker(QThread):
                     initargs=(shared_data_p2,),
                     maxtasksperchild=50000
                 )
-                print(f"[DEBUG P2] Pool olusturuldu, imap basliyor...")
-                _sys.stdout.flush()
+                print(f"[DEBUG P2] Pool olusturuldu, imap basliyor...", flush=True)
                 done = 0
                 for result in self.pool.imap_unordered(s4_p2_eval, p2_gen(), chunksize=p2_chunk):
                     done += 1
@@ -862,7 +879,7 @@ class OptimizationWorker(QThread):
             from multiprocessing import Pool, cpu_count
             from src.optimization.strategy4_optimizer import s4_parallel_init, s4_p3_eval
             
-            n_workers = min(self.n_parallel or 16, cpu_count())
+            n_workers = min(self.n_parallel or 16, cpu_count(), 16)
             p3_chunk = min(500, max(1, total_p3 // (n_workers * 4)))
             
             try:
