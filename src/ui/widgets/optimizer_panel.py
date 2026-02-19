@@ -710,7 +710,7 @@ class OptimizationWorker(QThread):
                     processes=n_workers,
                     initializer=s4_parallel_init,
                     initargs=(shared_data_p2,),
-                    maxtasksperchild=500
+                    maxtasksperchild=50000
                 )
                 done = 0
                 for result in self.pool.imap_unordered(s4_p2_eval, p2_tasks, chunksize=min(500, max(1, len(p2_tasks) // (n_workers * 4)))):
@@ -823,7 +823,7 @@ class OptimizationWorker(QThread):
                     processes=n_workers,
                     initializer=s4_parallel_init,
                     initargs=(shared_data_p3,),
-                    maxtasksperchild=500
+                    maxtasksperchild=50000
                 )
                 done = 0
                 for result in self.pool.imap_unordered(s4_p3_eval, p3_tasks, chunksize=min(500, max(1, len(p3_tasks) // (n_workers * 4)))):
