@@ -682,28 +682,34 @@ class OptimizationWorker(QThread):
             'llv': {lp: cache.get_llv(lp) for lp in set(list(llv2_ranges) + list(llv3_ranges))},
         }
         
-        # Build flat task list — ONLY SCALARS (6 values per task, ~50 bytes)
-        p2_tasks = []
-        for mom_p in mom_periods:
-            for trix_p in trix_periods:
-                for h2p in hhv2_ranges:
-                    for l2p in llv2_ranges:
-                        for mh, lb1 in mom_high_ranges:
-                            # TRIX Lookback Constraint: lb1 <= trix_p * 3
-                            if lb1 > trix_p * 3:
-                                continue
-                            p2_tasks.append((mom_p, trix_p, h2p, l2p, mh, lb1))
+        # Build task GENERATOR — yields on-demand, ~0 bytes memory (was ~10 GB list!)
+        def p2_gen():
+            for mom_p in mom_periods:
+                for trix_p in trix_periods:
+                    for h2p in hhv2_ranges:
+                        for l2p in llv2_ranges:
+                            for mh, lb1 in mom_high_ranges:
+                                if lb1 > trix_p * 3:
+                                    continue
+                                yield (mom_p, trix_p, h2p, l2p, mh, lb1)
         
-        self._emit_progress(36, f"Faz 2: {len(p2_tasks)} kombinasyon ({len(p2_tasks)*50//1024} KB bellek)...")
+        # Calculate total count arithmetically (don't materialize!)
+        total_p2 = 0
+        for trix_p in trix_periods:
+            valid_mh_lb = sum(1 for mh, lb1 in mom_high_ranges if lb1 <= trix_p * 3)
+            total_p2 += len(mom_periods) * len(hhv2_ranges) * len(llv2_ranges) * valid_mh_lb
+        
+        self._emit_progress(36, f"Faz 2: {total_p2:,} kombinasyon...".replace(',', '.'))
         
         best_phase2 = None
         best_p2_score = -float('inf')
         
-        if len(p2_tasks) > 0:
+        if total_p2 > 0:
             from multiprocessing import Pool, cpu_count
             from src.optimization.strategy4_optimizer import s4_parallel_init, s4_p2_eval
             
             n_workers = min(self.n_parallel or 16, cpu_count())
+            p2_chunk = min(500, max(1, total_p2 // (n_workers * 4)))
             
             try:
                 self.pool = Pool(
@@ -713,7 +719,7 @@ class OptimizationWorker(QThread):
                     maxtasksperchild=50000
                 )
                 done = 0
-                for result in self.pool.imap_unordered(s4_p2_eval, p2_tasks, chunksize=min(500, max(1, len(p2_tasks) // (n_workers * 4)))):
+                for result in self.pool.imap_unordered(s4_p2_eval, p2_gen(), chunksize=p2_chunk):
                     done += 1
                     
                     # Sonucu DÖNGÜ İÇİNDE topla (eski kod bunu yapmıyordu!)
@@ -724,14 +730,14 @@ class OptimizationWorker(QThread):
                             best_phase2 = params
                     
                     if done % 50 == 0:
-                        prog = 36 + int(28 * done / len(p2_tasks))
+                        prog = 36 + int(28 * done / total_p2)
                         # En iyi sonucun parametrelerini goster
                         if best_phase2:
                             bp = best_phase2
                             p2_txt = f"Mom={bp.get('mom_period','')} Trix={bp.get('trix_period','')} MH={bp.get('mom_limit_high','')} LB1={bp.get('trix_lb1','')} H2={bp.get('hhv2','')} L2={bp.get('llv2','')}"
                         else:
                             p2_txt = "tarama devam ediyor..."
-                        self._emit_progress(prog, f"Faz 2 [{done}/{len(p2_tasks)}]: {p2_txt}")
+                        self._emit_progress(prog, f"Faz 2 [{done:,}/{total_p2:,}]: {p2_txt}".replace(',', '.'))
                         # Canlı streaming: en iyi sonucu gönder
                         if best_phase2:
                             self.partial_results.emit([{
@@ -798,25 +804,25 @@ class OptimizationWorker(QThread):
         }
         
         # Build flat task list — ONLY SCALARS + tiny meta dict
-        p3_tasks = []
-        for h3p in hhv3_ranges:
-            for l3p in llv3_ranges:
-                for ml, lb2 in mom_low_ranges:
-                    # Relaxed TRIX Constraint for Phase 3: 
-                    # Phase 2 might have picked a small TRIX Period, don't kill Phase 3 exploration.
-                    # We accept all lb2 ranges defined by user.
-                    for ka, iz in risk_ranges:
-                        p3_tasks.append((h3p, l3p, ml, lb2, ka, iz, p3_meta))
+        # Build task GENERATOR for Phase 3 — zero memory
+        def p3_gen():
+            for h3p in hhv3_ranges:
+                for l3p in llv3_ranges:
+                    for ml, lb2 in mom_low_ranges:
+                        for ka, iz in risk_ranges:
+                            yield (h3p, l3p, ml, lb2, ka, iz, p3_meta)
         
-        self._emit_progress(66, f"Faz 3: {len(p3_tasks)} kombinasyon ({len(p3_tasks)*200//1024//1024} MB bellek)...")
+        total_p3 = len(hhv3_ranges) * len(llv3_ranges) * len(mom_low_ranges) * len(risk_ranges)
+        self._emit_progress(66, f"Faz 3: {total_p3:,} kombinasyon...".replace(',', '.'))
         
         final_results = []
         
-        if len(p3_tasks) > 0:
+        if total_p3 > 0:
             from multiprocessing import Pool, cpu_count
             from src.optimization.strategy4_optimizer import s4_parallel_init, s4_p3_eval
             
             n_workers = min(self.n_parallel or 16, cpu_count())
+            p3_chunk = min(500, max(1, total_p3 // (n_workers * 4)))
             
             try:
                 self.pool = Pool(
@@ -826,16 +832,16 @@ class OptimizationWorker(QThread):
                     maxtasksperchild=50000
                 )
                 done = 0
-                for result in self.pool.imap_unordered(s4_p3_eval, p3_tasks, chunksize=min(500, max(1, len(p3_tasks) // (n_workers * 4)))):
+                for result in self.pool.imap_unordered(s4_p3_eval, p3_gen(), chunksize=p3_chunk):
                     done += 1
                     if done % 100 == 0:
-                        prog = 66 + int(33 * done / len(p3_tasks))
+                        prog = 66 + int(33 * done / total_p3)
                         # Son sonucun parametrelerini goster
                         if result is not None:
                             p3_txt = f"ML={result.get('mom_limit_low','')} LB2={result.get('trix_lb2','')} H3={result.get('hhv3','')} L3={result.get('llv3','')} KA={result.get('kar_al','')} IZ={result.get('iz_stop','')}"
                         else:
                             p3_txt = "tarama devam ediyor..."
-                        self._emit_progress(prog, f"Faz 3 [{done}/{len(p3_tasks)}]: {p3_txt}")
+                        self._emit_progress(prog, f"Faz 3 [{done:,}/{total_p3:,}]: {p3_txt}".replace(',', '.'))
                         if not self._is_running:
                             self.pool.terminate()
                             self.pool = None
