@@ -661,12 +661,15 @@ class OptimizationWorker(QThread):
                         best_p1_score = score
                         best_phase1 = {'toma_period': tp, 'toma_opt': to, 'hhv1': h1p, 'llv1': l1p}
                         # Canlı streaming: yeni en iyi bulunduğunda gönder
-                        self.partial_results.emit([{
-                            'net_profit': res[0], 'trades': res[1], 'pf': res[2],
-                            'max_dd': res[3], 'sharpe': res[4], 'fitness': score,
-                            'toma_period': tp, 'toma_opt': to, 'hhv1_period': h1p, 'llv1_period': l1p,
-                            '_phase': 'Faz 1 (TOMA)'
-                        }])
+                        try:
+                            self.partial_results.emit([{
+                                'net_profit': res[0], 'trades': res[1], 'pf': res[2],
+                                'max_dd': res[3], 'sharpe': res[4], 'fitness': score,
+                                'toma_period': tp, 'toma_opt': to, 'hhv1_period': h1p, 'llv1_period': l1p,
+                                '_phase': 'Faz 1 (TOMA)'
+                            }])
+                        except Exception as e:
+                            print(f"[DEBUG P1] Emit hatasi: {e}", flush=True)
         
         if not best_phase1:
             self.error.emit("Faz 1 sonuc bulunamadi.")
@@ -753,8 +756,7 @@ class OptimizationWorker(QThread):
             from multiprocessing import Pool, cpu_count
             from src.optimization.strategy4_optimizer import s4_parallel_init, s4_p2_eval
             
-            # Windows'ta max 16 worker (32+ pipe IPC cokuyor)
-            n_workers = min(self.n_parallel or 16, cpu_count(), 16)
+            n_workers = min(self.n_parallel or 16, cpu_count())
             
             # Bellek korumasi: shared_data cok buyukse worker sayisini azalt
             max_total_mb = sd_mb * (n_workers + 1)  # her worker'a pickle kopya
@@ -777,6 +779,7 @@ class OptimizationWorker(QThread):
                 )
                 print(f"[DEBUG P2] Pool olusturuldu, imap basliyor...", flush=True)
                 done = 0
+                _last_emit_time = time.time()
                 for result in self.pool.imap_unordered(s4_p2_eval, p2_gen(), chunksize=p2_chunk):
                     done += 1
                     
@@ -787,22 +790,33 @@ class OptimizationWorker(QThread):
                             best_p2_score = score
                             best_phase2 = params
                     
-                    if done % 50 == 0:
-                        prog = 36 + int(28 * done / total_p2)
-                        # En iyi sonucun parametrelerini goster
-                        if best_phase2:
-                            bp = best_phase2
-                            p2_txt = f"Mom={bp.get('mom_period','')} Trix={bp.get('trix_period','')} MH={bp.get('mom_limit_high','')} LB1={bp.get('trix_lb1','')} H2={bp.get('hhv2','')} L2={bp.get('llv2','')}"
-                        else:
-                            p2_txt = "tarama devam ediyor..."
-                        self._emit_progress(prog, f"Faz 2 [{done:,}/{total_p2:,}]: {p2_txt}".replace(',', '.'))
-                        # Canlı streaming: en iyi sonucu gönder
-                        if best_phase2:
-                            self.partial_results.emit([{
-                                **best_phase2,
-                                'fitness': best_p2_score,
-                                '_phase': 'Faz 2 (Layer 1)'
-                            }])
+                    # Progress: her 500 iterasyonda (50 çok sık, GUI thread'i boğar)
+                    _now = time.time()
+                    if done % 500 == 0:
+                        try:
+                            prog = 36 + int(28 * done / total_p2)
+                            # En iyi sonucun parametrelerini goster
+                            if best_phase2:
+                                bp = best_phase2
+                                p2_txt = f"Mom={bp.get('mom_period','')} Trix={bp.get('trix_period','')} MH={bp.get('mom_limit_high','')} LB1={bp.get('trix_lb1','')} H2={bp.get('hhv2','')} L2={bp.get('llv2','')}"
+                            else:
+                                p2_txt = "tarama devam ediyor..."
+                            self._emit_progress(prog, f"Faz 2 [{done:,}/{total_p2:,}]: {p2_txt}".replace(',', '.'))
+                        except Exception as e:
+                            print(f"[DEBUG P2] Progress emit hatasi: {e}", flush=True)
+                        
+                        # Canlı streaming: max 2 saniyede bir (GUI thread'i bogmamak icin)
+                        if best_phase2 and (_now - _last_emit_time) >= 2.0:
+                            _last_emit_time = _now
+                            try:
+                                self.partial_results.emit([{
+                                    **best_phase2,
+                                    'fitness': best_p2_score,
+                                    '_phase': 'Faz 2 (Layer 1)'
+                                }])
+                            except Exception as e:
+                                print(f"[DEBUG P2] Partial emit hatasi: {e}", flush=True)
+                        
                         if not self._is_running:
                             self.pool.terminate()
                             self.pool = None
@@ -879,7 +893,7 @@ class OptimizationWorker(QThread):
             from multiprocessing import Pool, cpu_count
             from src.optimization.strategy4_optimizer import s4_parallel_init, s4_p3_eval
             
-            n_workers = min(self.n_parallel or 16, cpu_count(), 16)
+            n_workers = min(self.n_parallel or 16, cpu_count())
             p3_chunk = min(500, max(1, total_p3 // (n_workers * 4)))
             
             try:
@@ -890,16 +904,20 @@ class OptimizationWorker(QThread):
                     maxtasksperchild=50000
                 )
                 done = 0
+                _last_p3_emit = time.time()
                 for result in self.pool.imap_unordered(s4_p3_eval, p3_gen(), chunksize=p3_chunk):
                     done += 1
-                    if done % 100 == 0:
-                        prog = 66 + int(33 * done / total_p3)
-                        # Son sonucun parametrelerini goster
-                        if result is not None:
-                            p3_txt = f"ML={result.get('mom_limit_low','')} LB2={result.get('trix_lb2','')} H3={result.get('hhv3','')} L3={result.get('llv3','')} KA={result.get('kar_al','')} IZ={result.get('iz_stop','')}"
-                        else:
-                            p3_txt = "tarama devam ediyor..."
-                        self._emit_progress(prog, f"Faz 3 [{done:,}/{total_p3:,}]: {p3_txt}".replace(',', '.'))
+                    if done % 500 == 0:
+                        try:
+                            prog = 66 + int(33 * done / total_p3)
+                            # Son sonucun parametrelerini goster
+                            if result is not None:
+                                p3_txt = f"ML={result.get('mom_limit_low','')} LB2={result.get('trix_lb2','')} H3={result.get('hhv3','')} L3={result.get('llv3','')} KA={result.get('kar_al','')} IZ={result.get('iz_stop','')}"
+                            else:
+                                p3_txt = "tarama devam ediyor..."
+                            self._emit_progress(prog, f"Faz 3 [{done:,}/{total_p3:,}]: {p3_txt}".replace(',', '.'))
+                        except Exception as e:
+                            print(f"[DEBUG P3] Progress emit hatasi: {e}", flush=True)
                         if not self._is_running:
                             self.pool.terminate()
                             self.pool = None
