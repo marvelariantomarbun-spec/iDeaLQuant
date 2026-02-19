@@ -810,7 +810,7 @@ class OptimizationWorker(QThread):
                     
                     # Progress: her 500 iterasyonda (50 çok sık, GUI thread'i boğar)
                     _now = time.time()
-                    if done % 5000 == 0:
+                    if done % 500 == 0:
                         _cp(f"P2 ilerleme: {done}/{total_p2}")
                         try:
                             prog = 36 + int(28 * done / total_p2)
