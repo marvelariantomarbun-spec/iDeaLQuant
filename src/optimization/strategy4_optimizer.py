@@ -173,6 +173,12 @@ def s4_parallel_init(shared_data):
     """Initializer for Phase 2/3 workers. shared_data is a dict of ALL needed arrays."""
     global _g_s4
     _g_s4 = shared_data
+    # Suppress BrokenPipeError on Windows when parent process exits
+    import signal
+    try:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    except (OSError, ValueError):
+        pass
 
 def s4_p2_eval(params):
     """
