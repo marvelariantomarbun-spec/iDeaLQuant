@@ -1,0 +1,23 @@
+
+[22:47:18] === OptimizationWorker.run() BASLADI ===
+[22:47:18] _run_sequential_layer() BASLADI
+[22:48:37] FAZ 1 BITTI: {'toma_period': 3, 'toma_opt': 0.9, 'hhv1': 375, 'llv1': 105}
+
+[22:48:39] CRASH: cannot access local variable 'sd_mb' where it is not associated with a value
+Traceback (most recent call last):
+  File "D:\Projects\IdealQuant\src\ui\widgets\optimizer_panel.py", line 522, in run
+    self._run_sequential_layer()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "D:\Projects\IdealQuant\src\ui\widgets\optimizer_panel.py", line 719, in _run_sequential_layer
+    _cp(f"shared_data_p2 olusturuldu: {sd_mb:.0f} MB")
+                                       ^^^^^
+UnboundLocalError: cannot access local variable 'sd_mb' where it is not associated with a value
+
+
+[22:48:40] === OptimizationWorker.run() BASLADI ===
+
+[22:49:16] === OptimizationWorker.run() BASARIYLA BITTI ===
+
+[22:49:17] === OptimizationWorker.run() BASLADI ===
+
+[22:50:01] === OptimizationWorker.run() BASARIYLA BITTI ===

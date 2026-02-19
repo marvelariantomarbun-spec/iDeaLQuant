@@ -716,7 +716,7 @@ class OptimizationWorker(QThread):
             'hhv': {hp: cache.get_hhv(hp) for hp in set(list(hhv2_ranges) + list(hhv3_ranges))},
             'llv': {lp: cache.get_llv(lp) for lp in set(list(llv2_ranges) + list(llv3_ranges))},
         }
-        _cp(f"shared_data_p2 olusturuldu: {sd_mb:.0f} MB")
+        _cp("shared_data_p2 olusturuldu")
         
         # Build task GENERATOR — yields on-demand, ~0 bytes memory (was ~10 GB list!)
         def p2_gen():
