@@ -699,7 +699,34 @@ class OptimizationWorker(QThread):
             valid_mh_lb = sum(1 for mh, lb1 in mom_high_ranges if lb1 <= trix_p * 3)
             total_p2 += len(mom_periods) * len(hhv2_ranges) * len(llv2_ranges) * valid_mh_lb
         
-        self._emit_progress(36, f"Faz 2: {total_p2:,} kombinasyon...".replace(',', '.'))
+        # --- MEMORY DIAGNOSTIC ---
+        import sys as _sys
+        sd_bytes = 0
+        for k, v in shared_data_p2.items():
+            if isinstance(v, np.ndarray):
+                sd_bytes += v.nbytes
+            elif isinstance(v, dict):
+                for kk, vv in v.items():
+                    if isinstance(vv, np.ndarray):
+                        sd_bytes += vv.nbytes
+        sd_mb = sd_bytes / (1024 * 1024)
+        n_arrays = sum(1 for k, v in shared_data_p2.items() if isinstance(v, np.ndarray)) + \
+                   sum(1 for k, v in shared_data_p2.items() if isinstance(v, dict) for kk, vv in v.items() if isinstance(vv, np.ndarray))
+        print(f"[DEBUG P2] shared_data boyutu: {sd_mb:.0f} MB ({n_arrays} array)")
+        print(f"[DEBUG P2] Kombinasyon sayisi: {total_p2:,}".replace(',', '.'))
+        
+        try:
+            import psutil
+            proc = psutil.Process()
+            mem_info = proc.memory_info()
+            sys_mem = psutil.virtual_memory()
+            print(f"[DEBUG P2] Ana proses RAM: {mem_info.rss / 1024 / 1024:.0f} MB")
+            print(f"[DEBUG P2] Sistem RAM: {sys_mem.used / 1024 / 1024 / 1024:.1f} GB / {sys_mem.total / 1024 / 1024 / 1024:.1f} GB ({sys_mem.percent}%)")
+        except ImportError:
+            print("[DEBUG P2] psutil yok, RAM izlenemiyor")
+        # --- END DIAGNOSTIC ---
+        
+        self._emit_progress(36, f"Faz 2: {total_p2:,} kombinasyon ({sd_mb:.0f} MB shared data)...".replace(',', '.'))
         
         best_phase2 = None
         best_p2_score = -float('inf')
@@ -709,7 +736,19 @@ class OptimizationWorker(QThread):
             from src.optimization.strategy4_optimizer import s4_parallel_init, s4_p2_eval
             
             n_workers = min(self.n_parallel or 16, cpu_count())
+            
+            # Bellek korumasi: shared_data cok buyukse worker sayisini azalt
+            max_total_mb = sd_mb * (n_workers + 1)  # her worker'a pickle kopya
+            if max_total_mb > 8000:  # 8 GB limitini asmamasi icin
+                old_n = n_workers
+                n_workers = max(2, int(8000 / sd_mb) - 1)
+                print(f"[DEBUG P2] Worker azaltildi: {old_n} -> {n_workers} ({max_total_mb:.0f} MB > 8 GB)")
+            
             p2_chunk = min(500, max(1, total_p2 // (n_workers * 4)))
+            
+            print(f"[DEBUG P2] Pool olusturuluyor: {n_workers} worker, chunksize={p2_chunk}")
+            print(f"[DEBUG P2] Tahmini toplam RAM: {sd_mb * (n_workers + 1):.0f} MB")
+            _sys.stdout.flush()
             
             try:
                 self.pool = Pool(
@@ -718,6 +757,8 @@ class OptimizationWorker(QThread):
                     initargs=(shared_data_p2,),
                     maxtasksperchild=50000
                 )
+                print(f"[DEBUG P2] Pool olusturuldu, imap basliyor...")
+                _sys.stdout.flush()
                 done = 0
                 for result in self.pool.imap_unordered(s4_p2_eval, p2_gen(), chunksize=p2_chunk):
                     done += 1
