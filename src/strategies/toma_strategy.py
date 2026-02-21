@@ -141,8 +141,8 @@ class TomaStrategy:
             hh3 = self.cache.get_hhv(hh3_p)
             ll3 = self.cache.get_llv(ll3_p)
             
-            trix_lb1 = getattr(self, 'trix_lb1', 110)
-            trix_lb2 = getattr(self, 'trix_lb2', 140)
+            trix_lb1 = int(getattr(self, 'trix_lb1', 110))
+            trix_lb2 = int(getattr(self, 'trix_lb2', 140))
             
             mom1 = self.cache.get_momentum(self.mom_period)
             trix1 = self.cache.get_trix(self.trix_period)
@@ -167,8 +167,8 @@ class TomaStrategy:
             ll3 = LLV(lows, ll3_p)
             
             # TRIX Lookbacks
-            trix_lb1 = getattr(self, 'trix_lb1', 110)
-            trix_lb2 = getattr(self, 'trix_lb2', 140)
+            trix_lb1 = int(getattr(self, 'trix_lb1', 110))
+            trix_lb2 = int(getattr(self, 'trix_lb2', 140))
 
             # 4. Momentum (1900)
             mom1 = Momentum(closes, self.mom_period)
