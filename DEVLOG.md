@@ -1,4 +1,22 @@
 
+## 2026-02-22 (OOS Penalty Global Integration)
+
+### ✅ Anti-Overfit: OOS-Aware Re-Ranking (Tüm Sistem)
+- **Global Uygulama:** S4 Sequential Layer'da bulunan "OOS Penalty" mantığı (negatif test kârına %90 ceza) tüm sisteme yayıldı.
+- **`optimizer_panel.py`**: Hibrit, Genetik ve Bayesian runner metodları OOS validasyonu sonrası sonuçları ceza/bonus formülüne göre yeniden sıralıyor.
+- **Standalone Optimizerlar**: `strategy1_optimizer.py`, `strategy2_optimizer.py`, `strategy3_optimizer.py` dosyaları artık kendi içinde %70/%30 split yaparak OOS validasyonu ve cezalı sıralama yapıyor.
+- **Ceza Formülü:**
+  - `test_net < 0` → **%90 Ceza**
+  - `test_net > 0` → **%0-30 Bonus** (PF kalitesine göre)
+
+### 📁 Değişen Dosyalar (4)
+`optimizer_panel.py`, `strategy1_optimizer.py`, `strategy2_optimizer.py`, `strategy3_optimizer.py`
+
+### 📌 Mevcut Durum
+- **Sıradaki Adım:** Standalone optimizer'lar ile yeni parametre setleri bulup validasyon panelinde karşılaştırma.
+
+---
+
 ## 2026-02-21 (Post-Optimization Anti-Overfit & Bug Fixes)
 
 ### ✅ Bug Fixes

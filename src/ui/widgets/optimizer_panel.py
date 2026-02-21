@@ -1205,13 +1205,33 @@ class OptimizationWorker(QThread):
         # OOS Validasyon
         if self.do_oos and self.test_data is not None:
              self._emit_progress(98, "Test verisinde validasyon yapiliyor...")
-             excluded = {'net_profit', 'trades', 'pf', 'max_dd', 'sharpe', 'fitness', 'group', 'win_count', 'win_rate'}
+             excluded = {'net_profit', 'trades', 'pf', 'max_dd', 'sharpe', 'fitness', 'group', 'win_count', 'win_rate',
+                         'robust_fitness', 'density_score', 'oos_penalized_fitness',
+                         'test_net', 'test_trades', 'test_pf', 'test_dd', 'test_sharpe'}
              
              for res in results:
                  # Parametreleri ayikla
                  params = {k: v for k, v in res.items() if k not in excluded}
                  oos_res = self._validate_result(params)
                  res.update(oos_res)
+             
+             # === OOS-AWARE RE-RANKING ===
+             for r in results:
+                 test_net = r.get('test_net', None)
+                 if test_net is not None:
+                     base = r.get('robust_fitness', r.get('fitness', 0))
+                     if test_net < 0:
+                         r['oos_penalized_fitness'] = base * 0.10
+                     elif test_net > 0:
+                         test_pf = r.get('test_pf', 1.0)
+                         oos_bonus = min(0.30, max(0, (test_pf - 1.0) * 0.30))
+                         r['oos_penalized_fitness'] = base * (1.0 + oos_bonus)
+                     else:
+                         r['oos_penalized_fitness'] = base * 0.50
+                 else:
+                     r['oos_penalized_fitness'] = r.get('robust_fitness', r.get('fitness', 0))
+             
+             results.sort(key=lambda x: x.get('oos_penalized_fitness', 0), reverse=True)
         
         self._emit_progress(100, "Tamamlandı!")
         self.result_ready.emit(results)
@@ -1318,6 +1338,19 @@ class OptimizationWorker(QThread):
                 oos_res = self._validate_result(best_params)
                 formatted_result.update(oos_res)
                 
+                # === OOS-AWARE RE-RANKING ===
+                test_net = formatted_result.get('test_net', None)
+                if test_net is not None:
+                    base = formatted_result.get('robust_fitness', formatted_result.get('fitness', 0))
+                    if test_net < 0:
+                        formatted_result['oos_penalized_fitness'] = base * 0.10
+                    elif test_net > 0:
+                        test_pf = formatted_result.get('test_pf', 1.0)
+                        oos_bonus = min(0.30, max(0, (test_pf - 1.0) * 0.30))
+                        formatted_result['oos_penalized_fitness'] = base * (1.0 + oos_bonus)
+                    else:
+                        formatted_result['oos_penalized_fitness'] = base * 0.50
+                
             self.result_ready.emit([formatted_result])
         else:
             self.result_ready.emit([])
@@ -1417,6 +1450,19 @@ class OptimizationWorker(QThread):
                 self._emit_progress(98, "Test verisinde validasyon yapiliyor...")
                 oos_res = self._validate_result(best_params)
                 formatted_result.update(oos_res)
+                
+                # === OOS-AWARE RE-RANKING ===
+                test_net = formatted_result.get('test_net', None)
+                if test_net is not None:
+                    base = formatted_result.get('robust_fitness', formatted_result.get('fitness', 0))
+                    if test_net < 0:
+                        formatted_result['oos_penalized_fitness'] = base * 0.10
+                    elif test_net > 0:
+                        test_pf = formatted_result.get('test_pf', 1.0)
+                        oos_bonus = min(0.30, max(0, (test_pf - 1.0) * 0.30))
+                        formatted_result['oos_penalized_fitness'] = base * (1.0 + oos_bonus)
+                    else:
+                        formatted_result['oos_penalized_fitness'] = base * 0.50
             
             self.result_ready.emit([formatted_result])
         else:

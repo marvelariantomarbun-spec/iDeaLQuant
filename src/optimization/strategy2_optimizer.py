@@ -463,14 +463,86 @@ def run_strategy2_optimization():
         'use_mfi': True,
         'use_vol': True
     }
-    # Note: Logic can be improved to expand ranges dynamically
-    # For now, strict local search
     
     results2 = run_parallel_stage("STAGE 2 (DRONE)", stage2_grid)
     
+    if not results2:
+        print("Stage 2 sonuc bulunamadi.")
+        return
+    
     df2 = pd.DataFrame(results2)
-    df2.sort_values('NP', ascending=False).to_csv("d:/Projects/IdealQuant/results/strategy2_final_results.csv", index=False)
+    df2['Score'] = df2['NP'] * df2['PF'] / (1 + df2['DD']/1000)
+    df2 = df2.sort_values('Score', ascending=False)
+    
+    # === OOS VALIDATION (Top 50) ===
+    print("\n--- OOS Validation (Top 50) ---")
+    df_full = load_data()
+    if df_full is not None:
+        n = len(df_full)
+        split = int(n * 0.7)
+        df_test = df_full.iloc[split:].reset_index(drop=True)
+        df_test['Tipik'] = (df_test['Yuksek'] + df_test['Dusuk'] + df_test['Kapanis']) / 3
+        test_cache = IndicatorCache(df_test)
+        test_mask = np.ones(len(df_test), dtype=bool)
+        
+        top50 = df2.head(50).to_dict('records')
+        for r in top50:
+            try:
+                ars_arr = test_cache.get_ars(int(r['ARS_E']), int(r['ARS_A']), float(r['ARS_M']))
+                mom_arr = test_cache.get_mom(int(r['MOM']))
+                hhv_arr = test_cache.get_hhv(int(r['BRK']))
+                llv_arr = test_cache.get_llv(int(r['BRK']))
+                rsi_arr = test_cache.get_rsi(14)
+                
+                mfi_p = int(r.get('MFI', 14))
+                vol_p = int(r.get('VOL', 14))
+                mfi_arr = test_cache.get_mfi(mfi_p)
+                mfi_hhv = test_cache.get_mfi_hhv(mfi_p, mfi_p)
+                mfi_llv = test_cache.get_mfi_llv(mfi_p, mfi_p)
+                vol_hhv = test_cache.get_volume_hhv(vol_p)
+                
+                np_val, tr, pf, dd = fast_backtest_strategy2(
+                    test_cache.closes, test_cache.highs, test_cache.lows, test_cache.lots,
+                    ars_arr, hhv_arr, llv_arr, mom_arr, rsi_arr,
+                    mfi_arr, mfi_hhv, mfi_llv, vol_hhv, test_mask,
+                    int(r['MOM']), int(r['BRK']), 14,
+                    float(r['TP']), float(r['TS']),
+                    70, 30, True, True
+                )
+                r['test_net'] = np_val
+                r['test_trades'] = tr
+                r['test_pf'] = pf
+            except Exception as e:
+                print(f"  OOS hata: {e}")
+                r['test_net'] = None
+            
+            # === OOS-AWARE RE-RANKING ===
+            test_net = r.get('test_net', None)
+            base = r.get('Score', 0)
+            if test_net is not None:
+                if test_net < 0:
+                    r['oos_penalized_score'] = base * 0.10
+                elif test_net > 0:
+                    test_pf = r.get('test_pf', 1.0)
+                    oos_bonus = min(0.30, max(0, (test_pf - 1.0) * 0.30))
+                    r['oos_penalized_score'] = base * (1.0 + oos_bonus)
+                else:
+                    r['oos_penalized_score'] = base * 0.50
+            else:
+                r['oos_penalized_score'] = base
+        
+        top50.sort(key=lambda x: x.get('oos_penalized_score', 0), reverse=True)
+        df_final = pd.DataFrame(top50)
+        
+        best2 = df_final.iloc[0]
+        print(f"\nBEST S2 Result (OOS Re-Ranked):\n{best2.to_string()}")
+    else:
+        df_final = df2.head(50)
+    
+    os.makedirs("d:/Projects/IdealQuant/results", exist_ok=True)
+    df_final.to_csv("d:/Projects/IdealQuant/results/strategy2_final_results.csv", index=False)
     print("Sonuclar kaydedildi.")
+
 
 if __name__ == "__main__":
     import multiprocessing

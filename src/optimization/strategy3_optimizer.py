@@ -337,9 +337,76 @@ def run_strategy3_optimization():
     if final_results:
         df = pd.DataFrame(final_results)
         df['Score'] = df['NP'] * df['PF'] # Simple Score
-        best = df.nlargest(1, 'Score').iloc[0]
-        print(f"\nBEST S3 Result:\n{best.to_string()}")
-        df.sort_values('Score', ascending=False).head(50).to_csv(r"d:\Projects\IdealQuant\results\strategy3_results.csv")
+        df = df.sort_values('Score', ascending=False)
+        
+        # === OOS VALIDATION (Top 50) ===
+        print("\n--- OOS Validation (Top 50) ---")
+        df_full, mask_full = load_data_and_mask()
+        if df_full is not None:
+            n = len(df_full)
+            split = int(n * 0.7)
+            df_test = df_full.iloc[split:].reset_index(drop=True)
+            mask_test = mask_full[split:]
+            test_cache = IndicatorCache(df_test)
+            
+            top50 = df.head(50).to_dict('records')
+            for r in top50:
+                try:
+                    atr_p = int(r['ATR_P'])
+                    ema_arr = test_cache.get_ema(21)
+                    dsma_arr = test_cache.get_dsma(50)
+                    sma_arr = test_cache.get_sma(20)
+                    mom_arr = test_cache.get_mom(60)
+                    hh_arr = test_cache.get_hhv(25)
+                    ll_arr = test_cache.get_llv(25)
+                    atr_arr = test_cache.get_atr(atr_p)
+                    vol_hhv_arr = test_cache.get_vol_hhv(14)
+                    
+                    np_val, tr, pf, dd = fast_backtest_paradise(
+                        test_cache.closes, test_cache.highs, test_cache.lows, test_cache.volumes,
+                        ema_arr, dsma_arr, sma_arr, mom_arr,
+                        hh_arr, ll_arr, atr_arr, vol_hhv_arr,
+                        mask_test,
+                        float(r['ML']), float(r['MH']),
+                        float(r['SL']), float(r['TP']), float(r['TRL']),
+                        True  # yon_modu_cift
+                    )
+                    r['test_net'] = np_val
+                    r['test_trades'] = tr
+                    r['test_pf'] = pf
+                except Exception as e:
+                    print(f"  OOS hata: {e}")
+                    r['test_net'] = None
+                
+                # === OOS-AWARE RE-RANKING ===
+                test_net = r.get('test_net', None)
+                base = r.get('Score', 0)
+                if test_net is not None:
+                    if test_net < 0:
+                        r['oos_penalized_score'] = base * 0.10
+                    elif test_net > 0:
+                        test_pf = r.get('test_pf', 1.0)
+                        oos_bonus = min(0.30, max(0, (test_pf - 1.0) * 0.30))
+                        r['oos_penalized_score'] = base * (1.0 + oos_bonus)
+                    else:
+                        r['oos_penalized_score'] = base * 0.50
+                else:
+                    r['oos_penalized_score'] = base
+            
+            # Re-rank by OOS penalized score
+            top50.sort(key=lambda x: x.get('oos_penalized_score', 0), reverse=True)
+            df_final = pd.DataFrame(top50)
+            
+            best = df_final.iloc[0]
+            print(f"\nBEST S3 Result (OOS Re-Ranked):\n{best.to_string()}")
+        else:
+            df_final = df.head(50)
+            best = df_final.iloc[0]
+            print(f"\nBEST S3 Result:\n{best.to_string()}")
+        
+        os.makedirs(r"d:\Projects\IdealQuant\results", exist_ok=True)
+        df_final.to_csv(r"d:\Projects\IdealQuant\results\strategy3_results.csv", index=False)
+
 
 if __name__ == "__main__":
     import multiprocessing
