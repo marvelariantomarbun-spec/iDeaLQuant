@@ -98,67 +98,116 @@ class MonteCarloWorker(QThread):
 
 
 class WFAWorker(QThread):
-    """Walk-Forward Analysis thread'i"""
+    """Walk-Forward Analysis thread'i (Multi-Window)"""
     progress = Signal(int)
     result = Signal(dict)
     error = Signal(str)
     
-    def __init__(self, cache, strategy_idx, params, costs, split_ratio=0.7):
+    def __init__(self, cache, strategy_idx, params, costs, split_ratio=0.7, n_windows=5):
         super().__init__()
         self.cache = cache
         self.strategy_idx = strategy_idx
         self.params = params
         self.costs = costs
         self.split_ratio = split_ratio
+        self.n_windows = max(2, n_windows)
         
     def run(self):
         try:
             n = len(self.cache.closes)
-            split_idx = int(n * self.split_ratio)
             
-            # 1. In-Sample (IS)
-            is_closes = self.cache.closes[:split_idx]
-            # IS için sinyalleri tekrar üretmek yerine tam listeden bölüyoruz
-            # Gerçek WFA'da IS'de optimize edilip OOS'da test edilir. 
-            # Burada mevcut parametrelerin iki dönemdeki performansını karşılaştırıyoruz.
-            
+            # Strateji oluştur ve tüm sinyalleri bir kez hesapla
             if self.strategy_idx == 0:
                 strategy = ScoreBasedStrategy.from_config_dict(self.cache, self.params)
             elif self.strategy_idx == 2:
                 strategy = ParadiseStrategy.from_config_dict(self.cache, self.params)
-            elif self.strategy_idx == 3: # Strategy 4
+            elif self.strategy_idx == 3:
                 strategy = TomaStrategy.from_config_dict(self.cache, self.params)
             else:
                 strategy = ARSTrendStrategyV2.from_config_dict(self.cache, self.params)
                 
             signals, ex_long, ex_short = strategy.generate_all_signals()
             
-            # IS Backtest
-            is_pnl, is_trades, is_pf, is_dd = backtest_with_summary(
-                is_closes, signals[:split_idx], ex_long[:split_idx], ex_short[:split_idx],
-                self.costs['commission'], self.costs['slippage']
-            )
+            # Multi-Window WFA
+            # Veriyi n_windows pencereye böl, her pencerede IS/OOS ayrımı yap
+            window_size = n // self.n_windows
+            if window_size < 100:
+                # Veri çok kısa — single split'e geri dön
+                self.n_windows = 1
+                window_size = n
             
-            # OOS Backtest
-            oos_closes = self.cache.closes[split_idx:]
-            oos_pnl, oos_trades, oos_pf, oos_dd = backtest_with_summary(
-                oos_closes, signals[split_idx:], ex_long[split_idx:], ex_short[split_idx:],
-                self.costs['commission'], self.costs['slippage']
-            )
+            window_results = []
+            total_is_pnl = 0
+            total_oos_pnl = 0
+            total_is_trades = 0
+            total_oos_trades = 0
             
-            # Efficiency (Annualized Profit Ratio)
-            is_days = max(1, split_idx / 500) # Yaklaşık gün (5dk veri farzıyla)
-            oos_days = max(1, (n - split_idx) / 500)
+            for w in range(self.n_windows):
+                w_start = w * window_size
+                w_end = min(w_start + window_size, n) if w < self.n_windows - 1 else n
+                w_len = w_end - w_start
+                
+                split_idx = w_start + int(w_len * self.split_ratio)
+                
+                # IS Backtest (pencere içi eğitim bölümü)
+                is_closes = self.cache.closes[w_start:split_idx]
+                is_pnl, is_trades, is_pf, is_dd = backtest_with_summary(
+                    is_closes, 
+                    signals[w_start:split_idx], 
+                    ex_long[w_start:split_idx], 
+                    ex_short[w_start:split_idx],
+                    self.costs['commission'], self.costs['slippage']
+                )
+                
+                # OOS Backtest (pencere içi test bölümü)
+                oos_closes = self.cache.closes[split_idx:w_end]
+                oos_pnl, oos_trades, oos_pf, oos_dd = backtest_with_summary(
+                    oos_closes, 
+                    signals[split_idx:w_end], 
+                    ex_long[split_idx:w_end], 
+                    ex_short[split_idx:w_end],
+                    self.costs['commission'], self.costs['slippage']
+                )
+                
+                # Pencere efficiency
+                is_bars = split_idx - w_start
+                oos_bars = w_end - split_idx
+                is_daily = is_pnl / max(1, is_bars / 500)
+                oos_daily = oos_pnl / max(1, oos_bars / 500)
+                w_eff = (oos_daily / is_daily * 100) if is_daily > 0 else 0
+                
+                window_results.append({
+                    'window': w + 1,
+                    'is_pnl': is_pnl, 'is_trades': is_trades, 'is_pf': is_pf,
+                    'oos_pnl': oos_pnl, 'oos_trades': oos_trades, 'oos_pf': oos_pf,
+                    'efficiency': w_eff
+                })
+                
+                total_is_pnl += is_pnl
+                total_oos_pnl += oos_pnl
+                total_is_trades += is_trades
+                total_oos_trades += oos_trades
+                
+                self.progress.emit(int((w + 1) / self.n_windows * 100))
             
-            is_daily = is_pnl / is_days
-            oos_daily = oos_pnl / oos_days
+            # Toplam efficiency (tüm pencerelerin ortalaması)
+            avg_efficiency = sum(wr['efficiency'] for wr in window_results) / len(window_results) if window_results else 0
             
-            efficiency = (oos_daily / is_daily * 100) if is_daily > 0 else 0
+            # Toplam IS/OOS PF
+            total_is_pf = 0
+            total_oos_pf = 0
+            if window_results:
+                pf_vals_is = [wr['is_pf'] for wr in window_results if wr['is_pf'] > 0]
+                pf_vals_oos = [wr['oos_pf'] for wr in window_results if wr['oos_pf'] > 0]
+                total_is_pf = sum(pf_vals_is) / len(pf_vals_is) if pf_vals_is else 0
+                total_oos_pf = sum(pf_vals_oos) / len(pf_vals_oos) if pf_vals_oos else 0
             
             self.result.emit({
-                'is_pnl': is_pnl, 'is_trades': is_trades, 'is_pf': is_pf,
-                'oos_pnl': oos_pnl, 'oos_trades': oos_trades, 'oos_pf': oos_pf,
-                'efficiency': efficiency
+                'is_pnl': total_is_pnl, 'is_trades': total_is_trades, 'is_pf': round(total_is_pf, 2),
+                'oos_pnl': total_oos_pnl, 'oos_trades': total_oos_trades, 'oos_pf': round(total_oos_pf, 2),
+                'efficiency': avg_efficiency,
+                'n_windows': self.n_windows,
+                'window_results': window_results
             })
             
         except Exception as e:
@@ -823,29 +872,51 @@ YORUM:
         df = self._load_data_for_process(opt_result['process_id'])
         cache = IndicatorCache(df)
         
+        # UI'dan ayarları oku
+        split_ratio = self.wfa_train_pct.value() / 100.0
+        n_windows = self.wfa_windows.value()
+        
         self.wfa_run_btn.setEnabled(False)
-        self.wfa_worker = WFAWorker(cache, opt_result['strategy_index'], opt_result['params'], costs)
+        self.wfa_worker = WFAWorker(cache, opt_result['strategy_index'], opt_result['params'], costs, split_ratio=split_ratio, n_windows=n_windows)
         self.wfa_worker.result.connect(self._on_wfa_result)
         self.wfa_worker.error.connect(lambda e: QMessageBox.critical(self, "Hata", e))
         self.wfa_worker.finished.connect(lambda: self.wfa_run_btn.setEnabled(True))
         self.wfa_worker.start()
 
     def _on_wfa_result(self, res: dict):
+        train_pct = int(self.wfa_train_pct.value())
+        test_pct = 100 - train_pct
+        n_w = res.get('n_windows', 1)
+        
         text = f"""
 ╔══════════════════════════════════════════════════════════╗
 ║              WALK-FORWARD ANALİZ SONUÇLARI               ║
 ╠══════════════════════════════════════════════════════════╣
-║ METRİK             ║ IN-SAMPLE (70%)  ║ OUT-OF-SAMPLE (30%) ║
+║ METRİK             ║ IN-SAMPLE ({train_pct}%)  ║ OUT-OF-SAMPLE ({test_pct}%) ║
 ╠══════════════════════════════════════════════════════════╣
 ║ Net Kâr            ║ {res['is_pnl']:>15,.0f}  ║ {res['oos_pnl']:>17,.0f}  ║
 ║ İşlem Sayısı       ║ {res['is_trades']:>15,}  ║ {res['oos_trades']:>17,}  ║
 ║ Profit Factor      ║ {res['is_pf']:>15.2f}  ║ {res['oos_pf']:>17.2f}  ║
 ╠══════════════════════════════════════════════════════════╣
 ║ WFA VERİMLİLİĞİ    : %{res['efficiency']:>10.1f}                        ║
+║ Pencere Sayısı     : {n_w:>10}                        ║
 ╚══════════════════════════════════════════════════════════╝
-
-YORUM:
 """
+        # Pencere detayları
+        window_results = res.get('window_results', [])
+        if window_results and len(window_results) > 1:
+            text += "\nPENCERE DETAYLARI:\n"
+            text += f"{'Pencere':>8} | {'IS Kâr':>10} | {'OOS Kâr':>10} | {'IS PF':>7} | {'OOS PF':>7} | {'WFA %':>7}\n"
+            text += "-" * 60 + "\n"
+            for wr in window_results:
+                text += f"  {wr['window']:>5}   | {wr['is_pnl']:>10,.0f} | {wr['oos_pnl']:>10,.0f} | {wr['is_pf']:>7.2f} | {wr['oos_pf']:>7.2f} | {wr['efficiency']:>6.1f}%\n"
+            text += "-" * 60 + "\n"
+            
+            # Kârlı pencere oranı
+            profitable_windows = sum(1 for wr in window_results if wr['oos_pnl'] > 0)
+            text += f"Kârlı Pencereler: {profitable_windows}/{len(window_results)} ({profitable_windows/len(window_results)*100:.0f}%)\n"
+
+        text += "\nYORUM:\n"
         if res['efficiency'] > 80:
             text += "✓ Mükemmel! Strateji iki dönemde de benzer verimlilikte."
         elif res['efficiency'] > 50:

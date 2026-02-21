@@ -1098,6 +1098,33 @@ class OptimizationWorker(QThread):
             for r in top_results[:50]:  # Top 50 icin validasyon
                 oos_res = self._validate_s4_result(r)
                 r.update(oos_res)
+            
+            # === OOS-AWARE RE-RANKING ===
+            # Test karı negatif olanları cezalandır
+            for r in top_results[:50]:
+                test_net = r.get('test_net', None)
+                if test_net is not None:
+                    base = r.get('robust_fitness', r.get('fitness', 0))
+                    if test_net < 0:
+                        # Test'te zarar → agresif ceza (%90 düşür)
+                        r['oos_penalized_fitness'] = base * 0.10
+                    elif test_net > 0:
+                        # Test'te kâr → bonus (%0-30 arası, test kâlitesine göre)
+                        test_pf = r.get('test_pf', 1.0)
+                        oos_bonus = min(0.30, max(0, (test_pf - 1.0) * 0.30))
+                        r['oos_penalized_fitness'] = base * (1.0 + oos_bonus)
+                    else:
+                        r['oos_penalized_fitness'] = base * 0.50
+                else:
+                    r['oos_penalized_fitness'] = r.get('robust_fitness', r.get('fitness', 0))
+            
+            # OOS testi yapılmamış olanlar olduğu gibi kalsın
+            for r in top_results[50:]:
+                r['oos_penalized_fitness'] = r.get('robust_fitness', r.get('fitness', 0))
+            
+            # Test sonuçlarına göre yeniden sırala
+            top_results.sort(key=lambda x: x.get('oos_penalized_fitness', 0), reverse=True)
+            _cp(f"OOS RE-RANK: #1 test_net={top_results[0].get('test_net', 'N/A')}, penalized_fitness={top_results[0].get('oos_penalized_fitness', 0):.2f}")
         
         self._emit_progress(100, "Optimizasyon Tamamlandi!")
         self.result_ready.emit(top_results)
