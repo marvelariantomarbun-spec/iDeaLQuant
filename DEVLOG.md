@@ -1,5 +1,31 @@
 
+## 2026-02-21 (Post-Optimization Anti-Overfit & Bug Fixes)
+
+### ✅ Bug Fixes
+- **BUG-1: kar_al/iz_stop Hiç Çalışmıyordu:** `ka / 100.0` dönüşümü — 4 dosyada düzeltildi.
+- **BUG-2: Validasyon Paneli WFA/MC = 0:** `TomaStrategy` exit signals + Signal enum→int dönüşümü.
+- **BUG-3: STRATEGY4_PARAMS Yanlış Aralıklar:** TOMA 1-4, HHV/LLV 5-1200, Mom 100-10000, TRIX 10-300.
+
+### ✅ Anti-Overfit: Robust Fitness Sistemi
+- **`quick_fitness` Yeniden Tasarlandı:** `score = profit × quality × risk × trades` (4 eşit faktör, log-profit).
+- **`calculate_robust_fitness`:** Komşu yoğunluğu analizi — izole overfit %50 ceza, kalabalık plato tam puan.
+- Entegre: Hibrit, Genetik, Bayesian, S4 Sequential (tüm optimizer'lar).
+- **S4 Phase 3 Heap:** TOP_N 1000 → 5000.
+
+### 📁 Değişen Dosyalar (8)
+`fitness.py`, `strategy4_optimizer.py`, `genetic_optimizer.py`, `bayesian_optimizer.py`, `hybrid_group_optimizer.py`, `optimizer_panel.py`, `toma_strategy.py`
+
+### 📌 Mevcut Durum
+- **Sıradaki Adım:** Yeni optimizasyon çalıştırıp robust sonuçları test etme
+
+---
+
 ## 2026-02-19 (Thread Safety, Warmup Guard & Live Monitor UX)
+
+### ⚠️ Bekleyen UI Düzeltmesi
+- **Progress Bar Contrast Fix:** "Genel" progress bar'ın `#f5f5f5` (beyaz) zemin üzerinde beyaz yazı ile görünmez olduğu tespit edildi.
+  - Çözüm: Style sheet'e `QProgressBar { color: black; }` eklenecek.
+  - Durum: Optimizasyon işlemi devam ettiği için kod değişikliği beklemede.
 
 ### ✅ Yapılanlar
 - **Thread Safety Crash Fix (0xC0000005):**

@@ -124,29 +124,29 @@ STRATEGY3_PARAMS = {
     'atr_trail': (0.5, 6.0, 0.25, False),
 }
 
-# Strateji 4 (TOMA) Parametre Uzayi (12 parametre)
+# Strateji 4 (TOMA) Parametre Uzayi (16 parametre)
 STRATEGY4_PARAMS = {
     # TOMA (Layer 3)
-    'toma_period': (10, 200, 5, True),
-    'toma_opt': (0.1, 5.0, 0.1, False),
-    'hhv1_period': (10, 50, 5, True),
-    'llv1_period': (10, 50, 5, True),
+    'toma_period': (1, 4, 1, True),
+    'toma_opt': (0.1, 4.0, 0.1, False),
+    'hhv1_period': (5, 1200, 5, True),
+    'llv1_period': (5, 1200, 5, True),
     
     # Global Settings
-    'mom_period': (100, 3000, 100, True),
-    'trix_period': (10, 200, 10, True),
+    'mom_period': (100, 10000, 100, True),
+    'trix_period': (10, 300, 10, True),
     
     # Layer 1 (Mom High)
-    'mom_limit_high': (95.0, 110.0, 0.5, False),
-    'trix_lb1': (50, 200, 5, True),
-    'hhv2_period': (50, 300, 10, True),
-    'llv2_period': (50, 300, 10, True),
+    'mom_limit_high': (100.25, 109.75, 0.25, False),
+    'trix_lb1': (10, 300, 10, True),
+    'hhv2_period': (5, 1200, 5, True),
+    'llv2_period': (5, 1200, 5, True),
     
     # Layer 2 (Mom Low)
-    'mom_limit_low': (90.0, 105.0, 0.5, False),
-    'trix_lb2': (50, 200, 5, True),
-    'hhv3_period': (50, 300, 10, True),
-    'llv3_period': (50, 300, 10, True),
+    'mom_limit_low': (90.25, 99.75, 0.25, False),
+    'trix_lb2': (10, 300, 10, True),
+    'hhv3_period': (5, 1200, 5, True),
+    'llv3_period': (5, 1200, 5, True),
     
     # Risk
     'kar_al': (0.0, 10.0, 0.5, False),
@@ -575,7 +575,7 @@ class FitnessEvaluator:
                 mask_arr, 
                 ml, mh, 
                 trix_lb1, trix_lb2, 
-                ka, iz
+                ka / 100.0, iz / 100.0
             )
             
             np_val, trades, pf, max_dd, sharpe = result
@@ -790,6 +790,35 @@ class GeneticOptimizer:
                 pool.join()
         
         elapsed = time() - start_time
+        
+        # === ROBUST RE-RANKING ===
+        # Son popülasyondan tüm sonuçları topla ve küme yoğunluğuna göre yeniden sırala
+        try:
+            from src.optimization.fitness import calculate_robust_fitness
+            all_evaluated = []
+            for ind in self.population:
+                params = self.param_space.decode(ind)
+                result = self.evaluator.evaluate(params)
+                result.update(params)
+                all_evaluated.append(result)
+            
+            if len(all_evaluated) >= 3:
+                calculate_robust_fitness(all_evaluated)
+                all_evaluated.sort(key=lambda x: x.get('robust_fitness', 0), reverse=True)
+                
+                # En iyi robust sonucu seç
+                best_robust = all_evaluated[0]
+                old_fitness = self.best_fitness
+                
+                # Parametre anahtarlarını ayır
+                param_names = set(self.param_space.param_names)
+                self.best_params = {k: v for k, v in best_robust.items() if k in param_names}
+                self.best_result = {k: v for k, v in best_robust.items() if k not in param_names}
+                self.best_fitness = best_robust.get('robust_fitness', best_robust.get('fitness', 0))
+                
+                print(f"  [ROBUST] Re-rank: raw_best={old_fitness:,.0f} -> robust_best={self.best_fitness:,.2f} (density={best_robust.get('density_score', 0):.2f})")
+        except Exception as e:
+            print(f"  [WARN] Robust re-rank skipped: {e}")
         
         result = {
             'best_params': self.best_params,

@@ -218,8 +218,10 @@ def s4_p3_eval(params):
     """
     Phase 3: Single parameter combination evaluation.
     params: (h3p, l3p, ml, lb2, ka, iz, meta_dict)  — SCALARS + tiny metadata dict
-    Returns: result dict or None
+    Returns: result dict (with fitness) or None
     """
+    from src.optimization.fitness import quick_fitness
+    
     h3p, l3p, ml, lb2, ka, iz, meta = params
     g = _g_s4
     
@@ -231,22 +233,26 @@ def s4_p3_eval(params):
         g['mom_fixed'], g['trix_fixed'], g['mask'],
         ml, meta['fix_mh'],
         meta['fix_lb1'], lb2,
-        ka, iz
+        ka / 100.0, iz / 100.0
     )
     
     np_val, tr, pf, dd, sh = res
-    if np_val > 0:
-        return {
-            'toma_period': meta['fix_tp'], 'toma_opt': meta['fix_to'],
-            'hhv1_period': meta['p1_hhv1'], 'llv1_period': meta['p1_llv1'],
-            'mom_period': meta['fix_mom_p'], 'trix_period': meta['fix_trix_p'],
-            'mom_limit_high': meta['fix_mh'], 'trix_lb1': meta['fix_lb1'],
-            'hhv2_period': meta['p2_hhv2'], 'llv2_period': meta['p2_llv2'],
-            'mom_limit_low': ml, 'trix_lb2': lb2,
-            'hhv3_period': h3p, 'llv3_period': l3p,
-            'kar_al': ka, 'iz_stop': iz,
-            'net_profit': np_val, 'trades': tr, 'pf': pf, 'max_dd': dd, 'sharpe': sh
-        }
+    # Erken filtreleme: anlamsız sonuçları worker'da ele
+    if np_val > 0 and pf >= 1.0 and tr >= 5:
+        fitness = quick_fitness(np_val, pf, dd, tr, sharpe=sh)
+        if fitness > 0:
+            return {
+                'toma_period': meta['fix_tp'], 'toma_opt': meta['fix_to'],
+                'hhv1_period': meta['p1_hhv1'], 'llv1_period': meta['p1_llv1'],
+                'mom_period': meta['fix_mom_p'], 'trix_period': meta['fix_trix_p'],
+                'mom_limit_high': meta['fix_mh'], 'trix_lb1': meta['fix_lb1'],
+                'hhv2_period': meta['p2_hhv2'], 'llv2_period': meta['p2_llv2'],
+                'mom_limit_low': ml, 'trix_lb2': lb2,
+                'hhv3_period': h3p, 'llv3_period': l3p,
+                'kar_al': ka, 'iz_stop': iz,
+                'net_profit': np_val, 'trades': tr, 'pf': pf, 'max_dd': dd,
+                'sharpe': sh, 'fitness': fitness
+            }
     return None
 
 # --- FAST BACKTEST (Strategy 4 Logic - Multi-Layer) ---

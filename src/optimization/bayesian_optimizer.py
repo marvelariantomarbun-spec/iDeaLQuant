@@ -347,7 +347,7 @@ class BayesianObjective:
                 mask_arr, 
                 ml, mh, 
                 trix_lb1, trix_lb2, 
-                ka, iz
+                ka / 100.0, iz / 100.0
             )
             
             np_val, trades, pf, max_dd, sharpe = result
@@ -691,6 +691,35 @@ class BayesianOptimizer:
         )
         
         elapsed = time() - start_time
+        
+        # === ROBUST RE-RANKING ===
+        # Optuna trial geçmişinden top sonuçları topla ve küme yoğunluğuna göre sırala
+        try:
+            from src.optimization.fitness import calculate_robust_fitness
+            # Başarılı triallerden sonuç listesi oluştur
+            all_evaluated = []
+            for trial in self.study.trials:
+                if trial.state == optuna.trial.TrialState.COMPLETE and trial.value is not None:
+                    entry = trial.params.copy()
+                    entry['fitness'] = trial.value
+                    all_evaluated.append(entry)
+            
+            if len(all_evaluated) >= 3:
+                calculate_robust_fitness(all_evaluated)
+                all_evaluated.sort(key=lambda x: x.get('robust_fitness', 0), reverse=True)
+                
+                best_robust = all_evaluated[0]
+                old_fitness = self.objective.best_fitness
+                
+                # Re-evaluate best robust params to get full metrics
+                _metric_keys = {'fitness', 'robust_fitness', 'density_score'}
+                robust_params = {k: v for k, v in best_robust.items() if k not in _metric_keys}
+                self.objective.best_params = robust_params
+                self.objective.best_fitness = best_robust.get('robust_fitness', best_robust.get('fitness', 0))
+                
+                print(f"  [ROBUST] Re-rank: raw_best={old_fitness:,.2f} -> robust_best={self.objective.best_fitness:,.2f} (density={best_robust.get('density_score', 0):.2f})")
+        except Exception as e:
+            print(f"  [WARN] Robust re-rank skipped: {e}")
         
         result = {
             'best_params': self.objective.best_params,

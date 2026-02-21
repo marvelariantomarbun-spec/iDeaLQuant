@@ -545,9 +545,15 @@ class OptimizationWorker(QThread):
     def _run_sequential_layer(self):
         """Strateji 4 (TOMA) Sequential Layer Optimizasyonu (Full Parametreler)"""
         from src.optimization.strategy4_optimizer import fast_backtest_strategy4, IndicatorCache
+        from src.optimization.checkpoint_manager import CheckpointManager
         import numpy as np
+        import heapq
         
-        # Checkpoint: dosyaya yaz (process olse bile kalir)
+        # Checkpoint Manager
+        ckpt = CheckpointManager()
+        job_id = CheckpointManager.make_job_id(self.strategy_index, 'Hibrit Grup', self.process_id)
+        
+        # Crash log: dosyaya yaz (process olurse bile kalir)
         _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '..', 'crash_log.txt')
         _log_path = os.path.abspath(_log_path)
         def _cp(msg):
@@ -559,6 +565,27 @@ class OptimizationWorker(QThread):
             print(f"[CP] {msg}", flush=True)
         
         _cp("_run_sequential_layer() BASLADI")
+        
+        # --- RESUME: Onceki checkpoint'i kontrol et ---
+        saved = ckpt.load(job_id)
+        resume_phase = 0  # 0 = bastan basla
+        best_phase1 = None
+        best_phase2 = None
+        p3_skip = 0
+        p3_saved_heap = []
+        if saved:
+            resume_phase = saved.get('current_phase', 0)
+            _cp(f"CHECKPOINT BULUNDU: Faz {resume_phase}'den devam edilecek")
+            if resume_phase >= 2:
+                best_phase1 = saved.get('best_phase1')
+                _cp(f"  Faz 1 sonucu yuklendi: {best_phase1}")
+            if resume_phase >= 3:
+                best_phase2 = saved.get('best_phase2')
+                p3_skip = saved.get('p3_done', 0)
+                p3_saved_heap = saved.get('p3_top_results', [])
+                _cp(f"  Faz 2 sonucu yuklendi: {best_phase2}")
+                _cp(f"  Faz 3: {p3_skip} iterasyondan devam, {len(p3_saved_heap)} kayitli sonuc")
+            self._emit_progress(5, f"Checkpoint bulundu — Faz {resume_phase}'den devam ediliyor...")
         
         # 1. Veri Hazirligi
         self._emit_progress(1, "Veri analiz ediliyor...")
@@ -629,7 +656,16 @@ class OptimizationWorker(QThread):
         # ==============================================================================
         # PHASE 1: TOMA Scan (TOMA Params + Layer 3 Filters)
         # ==============================================================================
-        self._emit_progress(5, f"FAZ 1: TOMA ve Filtre Taramasi ({len(toma_ranges)*len(hhv1_ranges)} kombinasyon)...")
+        # --- FAZ 1: TOMA Scan (Skip if resumed) ---
+        if resume_phase >= 2 and best_phase1:
+            self._emit_progress(35, f"[RESUME] Faz 1 atlandi: {best_phase1}")
+            _cp(f"RESUME: Faz 1 atlaniyor")
+        else:
+            # Faz 1 hesaplama baslangici
+            pass
+        
+        if not best_phase1:  # Faz 1 henuz yapilmadiysa
+            self._emit_progress(5, f"FAZ 1: TOMA ve Filtre Taramasi ({len(toma_ranges)*len(hhv1_ranges)} kombinasyon)...")
         
         # Pre-load required cache for Phase 1 (hhv1/llv1)
         # mom/trix not used in Phase 1 if layers are disabled
@@ -641,216 +677,226 @@ class OptimizationWorker(QThread):
         dummy_hhv3 = np.zeros(len(closes))
         dummy_llv3 = np.zeros(len(closes))
         
-        best_phase1 = None
-        best_p1_score = -float('inf')
+        if not best_phase1:  # Sadece Faz 1 henuz yapilmadiysa scan yap
+            best_p1_score = -float('inf')
         
-        counter = 0
-        total_p1 = len(toma_ranges) * len(hhv1_ranges) * len(llv1_ranges)
+            counter = 0
+            total_p1 = len(toma_ranges) * len(hhv1_ranges) * len(llv1_ranges)
         
-        for tp, to in toma_ranges:
-            toma_val, toma_trend = cache.get_toma(tp, to)
-            
-            for h1p in hhv1_ranges:
-                hhv1 = cache.get_hhv(h1p)
-                for l1p in llv1_ranges:
-                    llv1 = cache.get_llv(l1p)
-                    
-                    counter +=1
-                    if counter % 50 == 0:
-                        self._emit_progress(5 + int(30 * counter/total_p1), f"Faz 1 [{counter}/{total_p1}]: TOMA={tp} Opt={to} H1={h1p} L1={l1p}")
-                        if not self._is_running: return
+            for tp, to in toma_ranges:
+                toma_val, toma_trend = cache.get_toma(tp, to)
+                
+                for h1p in hhv1_ranges:
+                    hhv1 = cache.get_hhv(h1p)
+                    for l1p in llv1_ranges:
+                        llv1 = cache.get_llv(l1p)
+                        
+                        counter +=1
+                        if counter % 50 == 0:
+                            self._emit_progress(5 + int(30 * counter/total_p1), f"Faz 1 [{counter}/{total_p1}]: TOMA={tp} Opt={to} H1={h1p} L1={l1p}")
+                            if not self._is_running: return
 
-                    res = fast_backtest_strategy4(
-                        closes, toma_trend, toma_val,
-                        hhv1, llv1, dummy_hhv2, dummy_llv2, dummy_hhv3, dummy_llv3,
-                        dummy_mom, dummy_trix, mask_arr,
-                        p_mom_low_dummy, p_mom_high_dummy,
-                        100, 100, # Dummy Trix LBs
-                        0.0, 0.0 # No Risk
-                    )
-                    
-                    score = res[0] * res[2] if res[2] > 0 else 0 # NP * PF
-                    if score > best_p1_score:
-                        best_p1_score = score
-                        best_phase1 = {'toma_period': tp, 'toma_opt': to, 'hhv1': h1p, 'llv1': l1p}
-                        # GECICI KAPATILDI: partial_results.emit crash testi
-                        # try:
-                        #     self.partial_results.emit([{
-                        #         'net_profit': res[0], 'trades': res[1], 'pf': res[2],
-                        #         'max_dd': res[3], 'sharpe': res[4], 'fitness': score,
-                        #         'toma_period': tp, 'toma_opt': to, 'hhv1_period': h1p, 'llv1_period': l1p,
-                        #         '_phase': 'Faz 1 (TOMA)'
-                        #     }])
-                        # except Exception as e:
-                        #     print(f"[DEBUG P1] Emit hatasi: {e}", flush=True)
+                        res = fast_backtest_strategy4(
+                            closes, toma_trend, toma_val,
+                            hhv1, llv1, dummy_hhv2, dummy_llv2, dummy_hhv3, dummy_llv3,
+                            dummy_mom, dummy_trix, mask_arr,
+                            p_mom_low_dummy, p_mom_high_dummy,
+                            100, 100, # Dummy Trix LBs
+                            0.0, 0.0 # No Risk
+                        )
+                        
+                        score = res[0] * res[2] if res[2] > 0 else 0 # NP * PF
+                        if score > best_p1_score:
+                            best_p1_score = score
+                            best_phase1 = {'toma_period': tp, 'toma_opt': to, 'hhv1': h1p, 'llv1': l1p}
         
         if not best_phase1:
             self.error.emit("Faz 1 sonuc bulunamadi.")
             return
 
         _cp(f"FAZ 1 BITTI: {best_phase1}")
+        # CHECKPOINT: Faz 1 sonucunu diske yaz
+        ckpt.save(job_id, {
+            'current_phase': 2,
+            'best_phase1': best_phase1,
+        })
+        _cp("CHECKPOINT: Faz 1 diske yazildi")
         self._emit_progress(35, f"Faz 1 En Iyi: TOMA {best_phase1['toma_period']}/{best_phase1['toma_opt']}, H1:{best_phase1['hhv1']}")
         
         # ==============================================================================
         # PHASE 2: Layer 1 + Global Indicators (PARALLEL — Lightweight)
         # ==============================================================================
-        self._emit_progress(35, "FAZ 2: Global Indikatorler ve Layer 1 (PARALEL)...")
+        if resume_phase >= 3 and best_phase2:
+            self._emit_progress(65, f"[RESUME] Faz 2 atlandi: {best_phase2}")
+            _cp(f"RESUME: Faz 2 atlaniyor")
+            # Faz 3 icin gerekli cache/array'leri yine de hazirla
+            fix_tp, fix_to = best_phase1['toma_period'], best_phase1['toma_opt']
+            toma_val, toma_trend = cache.get_toma(fix_tp, fix_to)
+            hhv1 = cache.get_hhv(best_phase1['hhv1'])
+            llv1 = cache.get_llv(best_phase1['llv1'])
+        else:
+            # Faz 2 hesaplama
+            self._emit_progress(35, "FAZ 2: Global Indikatorler ve Layer 1 (PARALEL)...")
         
-        # Fix Phase 1
-        fix_tp, fix_to = best_phase1['toma_period'], best_phase1['toma_opt']
-        toma_val, toma_trend = cache.get_toma(fix_tp, fix_to)
-        hhv1 = cache.get_hhv(best_phase1['hhv1'])
-        llv1 = cache.get_llv(best_phase1['llv1'])
-        
-        # Pre-compute all indicator arrays into shared_data dict
-        # This dict is serialized ONCE to each worker via initializer (not per-task!)
-        shared_data_p2 = {
-            'closes': closes,
-            'toma_trend': toma_trend,
-            'toma_val': toma_val,
-            'hhv1': hhv1,
-            'llv1': llv1,
-            'mask': mask_arr,
-            'mom': {mp: cache.get_mom(mp) for mp in mom_periods},
-            'trix': {tp: cache.get_trix(tp) for tp in trix_periods},
-            'hhv': {hp: cache.get_hhv(hp) for hp in set(list(hhv2_ranges) + list(hhv3_ranges))},
-            'llv': {lp: cache.get_llv(lp) for lp in set(list(llv2_ranges) + list(llv3_ranges))},
-        }
-        _cp("shared_data_p2 olusturuldu")
-        
-        # Build task GENERATOR — yields on-demand, ~0 bytes memory (was ~10 GB list!)
-        def p2_gen():
-            for mom_p in mom_periods:
-                for trix_p in trix_periods:
-                    for h2p in hhv2_ranges:
-                        for l2p in llv2_ranges:
-                            for mh, lb1 in mom_high_ranges:
-                                if lb1 > trix_p * 3:
-                                    continue
-                                yield (mom_p, trix_p, h2p, l2p, mh, lb1)
-        
-        # Calculate total count arithmetically (don't materialize!)
-        total_p2 = 0
-        for trix_p in trix_periods:
-            valid_mh_lb = sum(1 for mh, lb1 in mom_high_ranges if lb1 <= trix_p * 3)
-            total_p2 += len(mom_periods) * len(hhv2_ranges) * len(llv2_ranges) * valid_mh_lb
-        
-        # --- MEMORY DIAGNOSTIC ---
-        import sys as _sys
-        sd_bytes = 0
-        for k, v in shared_data_p2.items():
-            if isinstance(v, np.ndarray):
-                sd_bytes += v.nbytes
-            elif isinstance(v, dict):
-                for kk, vv in v.items():
-                    if isinstance(vv, np.ndarray):
-                        sd_bytes += vv.nbytes
-        sd_mb = sd_bytes / (1024 * 1024)
-        n_arrays = sum(1 for k, v in shared_data_p2.items() if isinstance(v, np.ndarray)) + \
-                   sum(1 for k, v in shared_data_p2.items() if isinstance(v, dict) for kk, vv in v.items() if isinstance(vv, np.ndarray))
-        print(f"[DEBUG P2] shared_data boyutu: {sd_mb:.0f} MB ({n_arrays} array)")
-        print(f"[DEBUG P2] Kombinasyon sayisi: {total_p2:,}".replace(',', '.'))
-        
-        try:
-            import psutil
-            proc = psutil.Process()
-            mem_info = proc.memory_info()
-            sys_mem = psutil.virtual_memory()
-            print(f"[DEBUG P2] Ana proses RAM: {mem_info.rss / 1024 / 1024:.0f} MB")
-            print(f"[DEBUG P2] Sistem RAM: {sys_mem.used / 1024 / 1024 / 1024:.1f} GB / {sys_mem.total / 1024 / 1024 / 1024:.1f} GB ({sys_mem.percent}%)")
-        except ImportError:
-            print("[DEBUG P2] psutil yok, RAM izlenemiyor")
-        # --- END DIAGNOSTIC ---
-        
-        self._emit_progress(36, f"Faz 2: {total_p2:,} kombinasyon ({sd_mb:.0f} MB shared data)...".replace(',', '.'))
-        
-        best_phase2 = None
-        best_p2_score = -float('inf')
-        
-        if total_p2 > 0:
-            from multiprocessing import Pool, cpu_count
-            from src.optimization.strategy4_optimizer import s4_parallel_init, s4_p2_eval
+            # Fix Phase 1
+            fix_tp, fix_to = best_phase1['toma_period'], best_phase1['toma_opt']
+            toma_val, toma_trend = cache.get_toma(fix_tp, fix_to)
+            hhv1 = cache.get_hhv(best_phase1['hhv1'])
+            llv1 = cache.get_llv(best_phase1['llv1'])
             
-            n_workers = min(self.n_parallel or 16, cpu_count())
+            # Pre-compute all indicator arrays into shared_data dict
+            shared_data_p2 = {
+                'closes': closes,
+                'toma_trend': toma_trend,
+                'toma_val': toma_val,
+                'hhv1': hhv1,
+                'llv1': llv1,
+                'mask': mask_arr,
+                'mom': {mp: cache.get_mom(mp) for mp in mom_periods},
+                'trix': {tp: cache.get_trix(tp) for tp in trix_periods},
+                'hhv': {hp: cache.get_hhv(hp) for hp in set(list(hhv2_ranges) + list(hhv3_ranges))},
+                'llv': {lp: cache.get_llv(lp) for lp in set(list(llv2_ranges) + list(llv3_ranges))},
+            }
+            _cp(f"shared_data_p2 olusturuldu")
             
-            # Bellek korumasi: shared_data cok buyukse worker sayisini azalt
-            max_total_mb = sd_mb * (n_workers + 1)  # her worker'a pickle kopya
-            if max_total_mb > 8000:  # 8 GB limitini asmamasi icin
-                old_n = n_workers
-                n_workers = max(2, int(8000 / sd_mb) - 1)
-                print(f"[DEBUG P2] Worker azaltildi: {old_n} -> {n_workers} ({max_total_mb:.0f} MB > 8 GB)")
+            # Build task GENERATOR
+            def p2_gen():
+                for mom_p in mom_periods:
+                    for trix_p in trix_periods:
+                        for h2p in hhv2_ranges:
+                            for l2p in llv2_ranges:
+                                for mh, lb1 in mom_high_ranges:
+                                    if lb1 > trix_p * 3:
+                                        continue
+                                    yield (mom_p, trix_p, h2p, l2p, mh, lb1)
             
-            p2_chunk = min(500, max(1, total_p2 // (n_workers * 4)))
+            # Calculate total count arithmetically
+            total_p2 = 0
+            for trix_p in trix_periods:
+                valid_mh_lb = sum(1 for mh, lb1 in mom_high_ranges if lb1 <= trix_p * 3)
+                total_p2 += len(mom_periods) * len(hhv2_ranges) * len(llv2_ranges) * valid_mh_lb
             
-            print(f"[DEBUG P2] Pool olusturuluyor: {n_workers} worker, chunksize={p2_chunk}", flush=True)
-            print(f"[DEBUG P2] Tahmini toplam RAM: {sd_mb * (n_workers + 1):.0f} MB", flush=True)
+            # --- MEMORY DIAGNOSTIC ---
+            import sys as _sys
+            sd_bytes = 0
+            for k, v in shared_data_p2.items():
+                if isinstance(v, np.ndarray):
+                    sd_bytes += v.nbytes
+                elif isinstance(v, dict):
+                    for kk, vv in v.items():
+                        if isinstance(vv, np.ndarray):
+                            sd_bytes += vv.nbytes
+            sd_mb = sd_bytes / (1024 * 1024)
+            n_arrays = sum(1 for k, v in shared_data_p2.items() if isinstance(v, np.ndarray)) + \
+                       sum(1 for k, v in shared_data_p2.items() if isinstance(v, dict) for kk, vv in v.items() if isinstance(vv, np.ndarray))
+            print(f"[DEBUG P2] shared_data boyutu: {sd_mb:.0f} MB ({n_arrays} array)")
+            print(f"[DEBUG P2] Kombinasyon sayisi: {total_p2:,}".replace(',', '.'))
             
             try:
-                self.pool = Pool(
-                    processes=n_workers,
-                    initializer=s4_parallel_init,
-                    initargs=(shared_data_p2,),
-                    maxtasksperchild=50000
-                )
-                _cp("Pool olusturuldu, imap basliyor...")
-                print(f"[DEBUG P2] Pool olusturuldu, imap basliyor...", flush=True)
-                done = 0
-                _last_emit_time = time.time()
-                for result in self.pool.imap_unordered(s4_p2_eval, p2_gen(), chunksize=p2_chunk):
-                    done += 1
-                    
-                    # Sonucu DÖNGÜ İÇİNDE topla (eski kod bunu yapmıyordu!)
-                    if done == 1:
-                        _cp(f"Ilk imap sonucu alindi (result={result is not None})")
-                    if result is not None:
-                        score, params = result
-                        if score > best_p2_score:
-                            best_p2_score = score
-                            best_phase2 = params
-                    
-                    # Progress: her 500 iterasyonda (50 çok sık, GUI thread'i boğar)
-                    _now = time.time()
-                    if done % 500 == 0:
-                        _cp(f"P2 ilerleme: {done}/{total_p2}")
-                        try:
-                            prog = 36 + int(28 * done / total_p2)
-                            if best_phase2:
-                                bp = best_phase2
-                                p2_txt = f"Mom={bp.get('mom_period','')} Trix={bp.get('trix_period','')} MH={bp.get('mom_limit_high','')} LB1={bp.get('trix_lb1','')} H2={bp.get('hhv2','')} L2={bp.get('llv2','')}"
-                            else:
-                                p2_txt = "tarama devam ediyor..."
-                            self._emit_progress(prog, f"Faz 2 [{done:,}/{total_p2:,}]: {p2_txt}".replace(',', '.'))
-                        except Exception as e:
-                            print(f"[DEBUG P2] Progress emit hatasi: {e}", flush=True)
+                import psutil
+                proc = psutil.Process()
+                mem_info = proc.memory_info()
+                sys_mem = psutil.virtual_memory()
+                print(f"[DEBUG P2] Ana proses RAM: {mem_info.rss / 1024 / 1024:.0f} MB")
+                print(f"[DEBUG P2] Sistem RAM: {sys_mem.used / 1024 / 1024 / 1024:.1f} GB / {sys_mem.total / 1024 / 1024 / 1024:.1f} GB ({sys_mem.percent}%)")
+            except ImportError:
+                print("[DEBUG P2] psutil yok, RAM izlenemiyor")
+            # --- END DIAGNOSTIC ---
+            
+            self._emit_progress(36, f"Faz 2: {total_p2:,} kombinasyon ({sd_mb:.0f} MB shared data)...".replace(',', '.'))
+            
+            best_p2_score = -float('inf')
+            
+            if total_p2 > 0:
+                from multiprocessing import Pool, cpu_count
+                from src.optimization.strategy4_optimizer import s4_parallel_init, s4_p2_eval
+                
+                n_workers = min(self.n_parallel or 16, cpu_count())
+                
+                # Bellek korumasi
+                max_total_mb = sd_mb * (n_workers + 1)
+                if max_total_mb > 8000:
+                    old_n = n_workers
+                    n_workers = max(2, int(8000 / sd_mb) - 1)
+                    print(f"[DEBUG P2] Worker azaltildi: {old_n} -> {n_workers} ({max_total_mb:.0f} MB > 8 GB)")
+                
+                p2_chunk = min(500, max(1, total_p2 // (n_workers * 4)))
+                
+                print(f"[DEBUG P2] Pool olusturuluyor: {n_workers} worker, chunksize={p2_chunk}", flush=True)
+                print(f"[DEBUG P2] Tahmini toplam RAM: {sd_mb * (n_workers + 1):.0f} MB", flush=True)
+                
+                try:
+                    self.pool = Pool(
+                        processes=n_workers,
+                        initializer=s4_parallel_init,
+                        initargs=(shared_data_p2,),
+                        maxtasksperchild=50000
+                    )
+                    _cp("Pool olusturuldu, imap basliyor...")
+                    print(f"[DEBUG P2] Pool olusturuldu, imap basliyor...", flush=True)
+                    done = 0
+                    _last_emit_time = time.time()
+                    for result in self.pool.imap_unordered(s4_p2_eval, p2_gen(), chunksize=p2_chunk):
+                        done += 1
                         
-                        # GECICI KAPATILDI: partial_results.emit crash testi
-                        # if best_phase2 and (_now - _last_emit_time) >= 2.0:
-                        #     _last_emit_time = _now
-                        #     try:
-                        #         self.partial_results.emit([{
-                        #         **best_phase2,
-                        #         'fitness': best_p2_score,
-                        #         '_phase': 'Faz 2 (Layer 1)'
-                        #     }])
-                        #     except Exception as e:
-                        #         print(f"[DEBUG P2] Partial emit hatasi: {e}", flush=True)
+                        if done == 1:
+                            _cp(f"Ilk imap sonucu alindi (result={result is not None})")
+                        if result is not None:
+                            score, params = result
+                            if score > best_p2_score:
+                                best_p2_score = score
+                                best_phase2 = params
                         
-                        if not self._is_running:
-                            self.pool.terminate()
-                            self.pool = None
-                            return
-            finally:
-                if self.pool:
-                    self.pool.close()
-                    self.pool.join()
-                    self.pool = None
+                        _now = time.time()
+                        if done % 500 == 0:
+                            _cp(f"P2 ilerleme: {done}/{total_p2}")
+                            try:
+                                prog = 36 + int(28 * done / total_p2)
+                                if best_phase2:
+                                    bp = best_phase2
+                                    p2_txt = f"Mom={bp.get('mom_period','')} Trix={bp.get('trix_period','')} MH={bp.get('mom_limit_high','')} LB1={bp.get('trix_lb1','')} H2={bp.get('hhv2','')} L2={bp.get('llv2','')}"
+                                else:
+                                    p2_txt = "tarama devam ediyor..."
+                                self._emit_progress(prog, f"Faz 2 [{done:,}/{total_p2:,}]: {p2_txt}".replace(',', '.'))
+                            except Exception as e:
+                                print(f"[DEBUG P2] Progress emit hatasi: {e}", flush=True)
+                            
+                            if not self._is_running:
+                                self.pool.terminate()
+                                self.pool = None
+                                return
+                finally:
+                    if self.pool:
+                        self.pool.close()
+                        self.pool.join()
+                        self.pool = None
 
-        if not best_phase2:
-             # Fallback defaults if search failed or empty
-             best_phase2 = {'mom_period': 1900, 'trix_period': 120, 'mom_limit_high': 101.5, 'trix_lb1': 145, 'hhv2':150, 'llv2':190}
-             
-        self._emit_progress(65, f"Faz 2 En Iyi: MomP {best_phase2['mom_period']}, Limit {best_phase2['mom_limit_high']}")
+            if not best_phase2:
+                 best_phase2 = {'mom_period': 1900, 'trix_period': 120, 'mom_limit_high': 101.5, 'trix_lb1': 145, 'hhv2':150, 'llv2':190}
+            
+            # CHECKPOINT: Faz 2 sonucunu diske yaz
+            ckpt.save(job_id, {
+                'current_phase': 3,
+                'best_phase1': best_phase1,
+                'best_phase2': best_phase2,
+            })
+            _cp("CHECKPOINT: Faz 2 diske yazildi")
+            self._emit_progress(65, f"Faz 2 En Iyi: MomP {best_phase2['mom_period']}, Limit {best_phase2['mom_limit_high']}")
 
+        # ==============================================================================
+        # FORCE GARBAGE COLLECTION & HANDLE CLEANUP BETWEEN PHASES
+        # ==============================================================================
+        self._emit_progress(65, "Bellek Temizligi (GC) yapiliyor...")
+        _cp("GC basladi.")
+        try:
+            if 'shared_data_p2' in dir():
+                del shared_data_p2
+            import gc
+            gc.collect()
+            _cp("GC tamamlandi.")
+        except Exception as e:
+            _cp(f"GC Hatasi: {e}")
+            
         # ==============================================================================
         # PHASE 3: Layer 2 + Risk (PARALLEL — Lightweight)
         # ==============================================================================
@@ -867,31 +913,38 @@ class OptimizationWorker(QThread):
         hhv2 = cache.get_hhv(best_phase2['hhv2'])
         llv2 = cache.get_llv(best_phase2['llv2'])
         
-        # Update shared data for Phase 3 (reuse arrays from Phase 2, add fixed Phase 2 arrays)
-        shared_data_p3 = {
-            'closes': closes,
-            'toma_trend': toma_trend,
-            'toma_val': toma_val,
-            'hhv1': hhv1,
-            'llv1': llv1,
-            'mask': mask_arr,
-            'hhv2_fixed': hhv2,
-            'llv2_fixed': llv2,
-            'mom_fixed': mom_arr,
-            'trix_fixed': trix_arr,
-            # HHV/LLV dict for Phase 3 variable arrays
-            'hhv': {hp: cache.get_hhv(hp) for hp in hhv3_ranges},
-            'llv': {lp: cache.get_llv(lp) for lp in llv3_ranges},
-        }
-        
-        # Metadata dict (sent once per task, tiny ~200 bytes)
-        p3_meta = {
-            'fix_mh': fix_mh, 'fix_lb1': fix_lb1,
-            'fix_tp': fix_tp, 'fix_to': fix_to,
-            'p1_hhv1': best_phase1['hhv1'], 'p1_llv1': best_phase1['llv1'],
-            'fix_mom_p': fix_mom_p, 'fix_trix_p': fix_trix_p,
-            'p2_hhv2': best_phase2['hhv2'], 'p2_llv2': best_phase2['llv2'],
-        }
+        try:
+            # Update shared data for Phase 3 (reuse arrays from Phase 2, add fixed Phase 2 arrays)
+            shared_data_p3 = {
+                'closes': closes,
+                'toma_trend': toma_trend,
+                'toma_val': toma_val,
+                'hhv1': hhv1,
+                'llv1': llv1,
+                'mask': mask_arr,
+                'hhv2_fixed': hhv2,
+                'llv2_fixed': llv2,
+                'mom_fixed': mom_arr,
+                'trix_fixed': trix_arr,
+                # HHV/LLV dict for Phase 3 variable arrays
+                'hhv': {hp: cache.get_hhv(hp) for hp in hhv3_ranges},
+                'llv': {lp: cache.get_llv(lp) for lp in llv3_ranges},
+            }
+            _cp("P3 shared_data basariyla olusturuldu.")
+            
+            # Metadata dict (sent once per task, tiny ~200 bytes)
+            p3_meta = {
+                'fix_mh': fix_mh, 'fix_lb1': fix_lb1,
+                'fix_tp': fix_tp, 'fix_to': fix_to,
+                'p1_hhv1': best_phase1['hhv1'], 'p1_llv1': best_phase1['llv1'],
+                'fix_mom_p': fix_mom_p, 'fix_trix_p': fix_trix_p,
+                'p2_hhv2': best_phase2['hhv2'], 'p2_llv2': best_phase2['llv2'],
+            }
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            _cp(f"P3 shared_data olusturma HATASI: {e}\n{tb}")
+            raise e
         
         # Build flat task list — ONLY SCALARS + tiny meta dict
         # Build task GENERATOR for Phase 3 — zero memory
@@ -904,74 +957,140 @@ class OptimizationWorker(QThread):
         
         total_p3 = len(hhv3_ranges) * len(llv3_ranges) * len(mom_low_ranges) * len(risk_ranges)
         self._emit_progress(66, f"Faz 3: {total_p3:,} kombinasyon...".replace(',', '.'))
+        _cp(f"P3 total kombinasyon hesaplandi: {total_p3:,}".replace(',', '.'))
         
-        final_results = []
+        # Top-N Heap: bellekte en iyi 5000 sonucu tut
+        # (robust re-ranking'in geniş havuzdan çalışması için 1000'den artırıldı)
+        TOP_N = 5000
+        final_heap = []  # min-heap: (fitness, counter, result_dict)
+        
+        # Resume: onceki checkpoint'ten heap yukle
+        heap_counter = 0
+        if p3_saved_heap:
+            for r in p3_saved_heap:
+                f = r.get('fitness', r.get('net_profit', 0) * r.get('pf', 0))
+                heap_counter += 1
+                heapq.heappush(final_heap, (f, heap_counter, r))
+            _cp(f"P3 RESUME: {len(final_heap)} sonuc heap'e yuklendi")
         
         if total_p3 > 0:
             from multiprocessing import Pool, cpu_count
             from src.optimization.strategy4_optimizer import s4_parallel_init, s4_p3_eval
             
             n_workers = min(self.n_parallel or 16, cpu_count())
-            p3_chunk = min(500, max(1, total_p3 // (n_workers * 4)))
+            p3_chunk = min(100, max(1, total_p3 // (n_workers * 10)))
+            
+            _cp(f"P3 icin Pool hazirlaniyor: workers={n_workers}, chunk={p3_chunk}")
             
             try:
+                _cp("P3 Pool() baslatiliyor...")
                 self.pool = Pool(
                     processes=n_workers,
                     initializer=s4_parallel_init,
                     initargs=(shared_data_p3,),
                     maxtasksperchild=50000
                 )
-                done = 0
+                _cp("P3 Pool olusturuldu.")
+                done = p3_skip  # Resume: atlanan iterasyondan devam
                 _last_p3_emit = time.time()
-                for result in self.pool.imap_unordered(s4_p3_eval, p3_gen(), chunksize=p3_chunk):
-                    done += 1
-                    if done % 500 == 0:
-                        try:
-                            prog = 66 + int(33 * done / total_p3)
-                            # Son sonucun parametrelerini goster
-                            if result is not None:
-                                p3_txt = f"ML={result.get('mom_limit_low','')} LB2={result.get('trix_lb2','')} H3={result.get('hhv3','')} L3={result.get('llv3','')} KA={result.get('kar_al','')} IZ={result.get('iz_stop','')}"
-                            else:
-                                p3_txt = "tarama devam ediyor..."
-                            self._emit_progress(prog, f"Faz 3 [{done:,}/{total_p3:,}]: {p3_txt}".replace(',', '.'))
-                        except Exception as e:
-                            print(f"[DEBUG P3] Progress emit hatasi: {e}", flush=True)
-                        if not self._is_running:
-                            self.pool.terminate()
-                            self.pool = None
-                            return
-                    
-                    if result is not None:
-                        final_results.append(result)
-                    
-                    # GECICI KAPATILDI: partial_results.emit crash testi
-                    # if done % 500 == 0 and final_results:
-                    #     from src.optimization.fitness import quick_fitness as _qf
-                    #     temp = sorted(final_results, key=lambda x: x.get('net_profit', 0), reverse=True)[:50]
-                    #     for _r in temp:
-                    #         if 'fitness' not in _r:
-                    #             _r['fitness'] = _qf(_r['net_profit'], _r.get('pf',0), _r.get('max_dd',0), _r.get('trades',0), sharpe=_r.get('sharpe',0))
-                    #     self.partial_results.emit(temp)
+                _last_ckpt_time = time.time()
+                try:
+                    _cp(f"P3 imap_unordered loop basliyor (skip={p3_skip}).")
+                    for result in self.pool.imap_unordered(s4_p3_eval, p3_gen(), chunksize=p3_chunk):
+                        done += 1
+                        heap_counter += 1
+                        if done == 1:
+                            _cp("P3 ilk result alindi.")
+                        
+                        # Top-N Heap: sadece en iyi 1000 sonucu tut
+                        if result is not None:
+                            f_score = result.get('fitness', 0)
+                            if len(final_heap) < TOP_N:
+                                heapq.heappush(final_heap, (f_score, heap_counter, result))
+                            elif f_score > final_heap[0][0]:
+                                heapq.heapreplace(final_heap, (f_score, heap_counter, result))
+                        
+                        if done % 500 == 0:
+                            try:
+                                prog = 66 + int(33 * done / total_p3)
+                                if result is not None:
+                                    p3_txt = f"ML={result.get('mom_limit_low','')} LB2={result.get('trix_lb2','')} H3={result.get('hhv3','')} L3={result.get('llv3','')} KA={result.get('kar_al','')} IZ={result.get('iz_stop','')}"
+                                else:
+                                    p3_txt = "tarama devam ediyor..."
+                                self._emit_progress(prog, f"Faz 3 [{done:,}/{total_p3:,}]: {p3_txt} (Heap: {len(final_heap)})".replace(',', '.'))
+                            except Exception as e:
+                                print(f"[DEBUG P3] Progress emit hatasi: {e}", flush=True)
+                            if not self._is_running:
+                                _cp("P3: _is_running False, checkpoint kaydediliyor...")
+                                # Duraklatma: mevcut durumu checkpoint'e yaz
+                                ckpt.save(job_id, {
+                                    'current_phase': 3,
+                                    'best_phase1': best_phase1,
+                                    'best_phase2': best_phase2,
+                                    'p3_done': done,
+                                    'p3_total': total_p3,
+                                    'p3_top_results': [item[2] for item in sorted(final_heap, reverse=True)],
+                                })
+                                _cp(f"P3 CHECKPOINT KAYDEDILDI: {done}/{total_p3} iterasyon, {len(final_heap)} sonuc")
+                                self.pool.terminate()
+                                self.pool = None
+                                return
+                        
+                        # Periyodik checkpoint: her 5 dakikada
+                        _now = time.time()
+                        if _now - _last_ckpt_time > 300:  # 5 dakika
+                            _last_ckpt_time = _now
+                            ckpt.save(job_id, {
+                                'current_phase': 3,
+                                'best_phase1': best_phase1,
+                                'best_phase2': best_phase2,
+                                'p3_done': done,
+                                'p3_total': total_p3,
+                                'p3_top_results': [item[2] for item in sorted(final_heap, reverse=True)],
+                            })
+                            _cp(f"P3 PERIYODIK CHECKPOINT: {done}/{total_p3}")
+                            
+                except Exception as loop_e:
+                    import traceback
+                    tb = traceback.format_exc()
+                    _cp(f"P3 LOOP HATASI: {loop_e}\n{tb}")
+                    raise loop_e
 
             finally:
                 if self.pool:
                     self.pool.close()
                     self.pool.join()
                     self.pool = None
+                    _cp("P3 Pool kapandi.")
                     
 
 
-        # Final Sort - use fitness if sharpe is available, else net_profit
-        from src.optimization.fitness import quick_fitness
-        for r in final_results:
-            sh = r.get('sharpe', 0.0)
-            r['fitness'] = quick_fitness(
-                r['net_profit'], r['pf'], r['max_dd'], r['trades'],
-                sharpe=sh, commission=0.0, slippage=0.0
-            )
+        # Heap'ten final listeye cikar (fitness zaten worker'da hesaplandi)
+        final_results = [item[2] for item in sorted(final_heap, reverse=True)]
         
-        final_results.sort(key=lambda x: x.get('fitness', x['net_profit']), reverse=True)
+        # Fitness eksik olanlari (resume'dan gelenler) yeniden hesapla
+        from src.optimization.fitness import quick_fitness, calculate_robust_fitness
+        for r in final_results:
+            if 'fitness' not in r:
+                sh = r.get('sharpe', 0.0)
+                r['fitness'] = quick_fitness(
+                    r['net_profit'], r['pf'], r['max_dd'], r['trades'],
+                    sharpe=sh, commission=0.0, slippage=0.0
+                )
+        
+        # === ROBUST RE-RANKING (Küme Yoğunluğu) ===
+        if len(final_results) >= 3:
+            calculate_robust_fitness(final_results)
+            final_results.sort(key=lambda x: x.get('robust_fitness', x.get('fitness', 0)), reverse=True)
+            _cp(f"ROBUST RE-RANK: Top result density={final_results[0].get('density_score', 0):.2f}")
+        else:
+            final_results.sort(key=lambda x: x.get('fitness', 0), reverse=True)
+        
         top_results = final_results[:500]  # Show Top 500
+        
+        # Basarili tamamlanma: checkpoint temizle
+        ckpt.delete(job_id)
+        _cp(f"CHECKPOINT TEMIZLENDI: {job_id}")
         
         # OOS Validation for S4
         if self.do_oos and self.test_data is not None and top_results:
@@ -1073,6 +1192,10 @@ class OptimizationWorker(QThread):
     def _run_genetic(self):
         """Genetik Algoritma optimizasyonu - Her iki strateji için"""
         from src.optimization.genetic_optimizer import GeneticOptimizer, GeneticConfig
+        from src.optimization.checkpoint_manager import CheckpointManager
+        
+        ckpt = CheckpointManager()
+        job_id = CheckpointManager.make_job_id(self.strategy_index, 'Genetik', self.process_id)
         
         strategy_name = {0: "Strateji 1", 1: "Strateji 2", 2: "Paradise"}.get(self.strategy_index, "Strateji")
         
@@ -1127,6 +1250,19 @@ class OptimizationWorker(QThread):
                         self.partial_results.emit(top)
                 except Exception:
                     pass
+            # Checkpoint: her 5 nesilde diske yaz
+            if gen % 5 == 0:
+                try:
+                    best_data = optimizer.population_results[0] if hasattr(optimizer, 'population_results') and optimizer.population_results else {}
+                    ckpt.save(job_id, {
+                        'method': 'genetic',
+                        'generation': gen,
+                        'max_gen': max_gen,
+                        'best_fitness': best_fit,
+                        'best_result': best_data,
+                    })
+                except Exception:
+                    pass
         
         optimizer.on_generation_complete = on_gen_complete
         
@@ -1158,10 +1294,17 @@ class OptimizationWorker(QThread):
             self.result_ready.emit([formatted_result])
         else:
             self.result_ready.emit([])
+        
+        # Basarili tamamlanma: checkpoint temizle
+        ckpt.delete(job_id)
     
     def _run_bayesian(self):
         """Bayesian (Optuna) optimizasyonu - Her iki strateji için"""
         from src.optimization.bayesian_optimizer import BayesianOptimizer
+        from src.optimization.checkpoint_manager import CheckpointManager
+        
+        ckpt = CheckpointManager()
+        job_id = CheckpointManager.make_job_id(self.strategy_index, 'Bayesian', self.process_id)
         
         strategy_name = {0: "Strateji 1", 1: "Strateji 2", 2: "Paradise"}.get(self.strategy_index, "Strateji")
         
@@ -1209,7 +1352,18 @@ class OptimizationWorker(QThread):
                         self.partial_results.emit(top)
                 except Exception:
                     pass
-            
+            # Checkpoint: her 50 trial'da diske yaz
+            if trial_no % 50 == 0:
+                try:
+                    ckpt.save(job_id, {
+                        'method': 'bayesian',
+                        'trial': trial_no,
+                        'max_trials': max_trials,
+                        'best_fitness': best_fit,
+                        'best_params': getattr(optimizer.objective, 'best_params', {}) if hasattr(optimizer, 'objective') else {},
+                    })
+                except Exception:
+                    pass
         optimizer.on_trial_complete = on_trial_complete
         
         self._emit_progress(15, "Akıllı arama başlıyor...")
@@ -1240,6 +1394,9 @@ class OptimizationWorker(QThread):
             self.result_ready.emit([formatted_result])
         else:
             self.result_ready.emit([])
+        
+        # Basarili tamamlanma: checkpoint temizle
+        ckpt.delete(job_id)
     
     def stop(self):
         """Worker'ı ve proses'i durdur"""
@@ -1345,7 +1502,7 @@ class OptimizationWorker(QThread):
                 closes, toma_trend, toma_val,
                 hhv1, llv1, hhv2, llv2, hhv3, llv3,
                 mom_arr, trix_arr, mask_arr,
-                ml, mh, lb1, lb2, ka, iz
+                ml, mh, lb1, lb2, ka / 100.0, iz / 100.0
             )
             
             return {
@@ -2484,24 +2641,67 @@ class OptimizerPanel(QWidget):
     
     def _check_checkpoint(self):
         """Baslangicta checkpoint kontrolu yap, varsa 'Devam Et' butonunu goster"""
+        # 1) Kuyruk checkpoint'i (Run All icin)
         cp = self._load_checkpoint()
-        if cp and cp.get('remaining_queue'):
-            remaining = cp['remaining_queue']
-            ts = cp.get('timestamp', '?')
+        has_queue = cp and cp.get('remaining_queue')
+        
+        # 2) Per-method checkpoint'ler (CheckpointManager)
+        method_checkpoints = []
+        try:
+            from src.optimization.checkpoint_manager import CheckpointManager
+            ckpt = CheckpointManager()
+            all_cp = ckpt.list_all()
+            for job_id, data in all_cp.items():
+                ts = data.get('timestamp', '?')
+                method = data.get('method', job_id)
+                phase = data.get('current_phase', data.get('phase', data.get('round', data.get('generation', data.get('trial', '?')))))
+                method_checkpoints.append(f"{job_id} (faz/round: {phase}, {ts})")
+        except Exception as e:
+            print(f"[CHECKPOINT] CheckpointManager tarama hatasi: {e}")
+        
+        if has_queue or method_checkpoints:
             self.resume_btn.setVisible(True)
-            self.resume_btn.setToolTip(
-                f"Son kesinti: {ts}\nKalan: {', '.join(remaining)}"
-            )
-            self.status_label.setText(
-                f"⚡ Checkpoint bulundu ({ts}) — {', '.join(remaining)} kaldı. 'Devam Et' ile sürdürün."
-            )
+            
+            tooltip_parts = []
+            if has_queue:
+                remaining = cp['remaining_queue']
+                ts = cp.get('timestamp', '?')
+                tooltip_parts.append(f"Kuyruk kesinti: {ts}\nKalan: {', '.join(remaining)}")
+            if method_checkpoints:
+                tooltip_parts.append("Metod checkpoint'leri:\n" + "\n".join(f"  • {c}" for c in method_checkpoints))
+            
+            self.resume_btn.setToolTip("\n".join(tooltip_parts))
+            
+            # Status mesaji
+            if has_queue and method_checkpoints:
+                self.status_label.setText(f"⚡ {len(method_checkpoints)} checkpoint + kuyruk bulundu. 'Devam Et' ile sürdürün.")
+            elif has_queue:
+                remaining = cp['remaining_queue']
+                ts = cp.get('timestamp', '?')
+                self.status_label.setText(f"⚡ Checkpoint ({ts}) — {', '.join(remaining)} kaldı.")
+            else:
+                self.status_label.setText(f"⚡ {len(method_checkpoints)} checkpoint bulundu. 'Devam Et' ile kaldığı yerden sürdürün.")
         else:
             self.resume_btn.setVisible(False)
     
     def _resume_from_checkpoint(self):
         """Checkpoint'ten devam et"""
+        from PySide6.QtWidgets import QMessageBox
+        
+        # 1) Queue checkpoint varsa
         cp = self._load_checkpoint()
-        if not cp or not cp.get('remaining_queue'):
+        has_queue = cp and cp.get('remaining_queue')
+        
+        # 2) Per-method checkpoint'ler
+        method_checkpoints = {}
+        try:
+            from src.optimization.checkpoint_manager import CheckpointManager
+            ckpt = CheckpointManager()
+            method_checkpoints = ckpt.list_all()
+        except Exception:
+            pass
+        
+        if not has_queue and not method_checkpoints:
             QMessageBox.information(self, "Bilgi", "Devam edilecek checkpoint bulunamadi.")
             self.resume_btn.setVisible(False)
             return
@@ -2510,40 +2710,90 @@ class OptimizerPanel(QWidget):
             QMessageBox.warning(self, "Uyari", "Lutfen once veri yukleyin, sonra 'Devam Et' basiniz.")
             return
         
-        # Restore state
-        remaining = cp['remaining_queue']
-        strategy_idx = cp.get('strategy_index', 0)
+        # Kuyruk checkpoint varsa: kuyruğu devam ettir (eski mantik)
+        if has_queue:
+            remaining = cp['remaining_queue']
+            strategy_idx = cp.get('strategy_index', 0)
+            
+            if strategy_idx < self.strategy_combo.count():
+                self.strategy_combo.setCurrentIndex(strategy_idx)
+            
+            self.validation_check.setChecked(cp.get('validation_enabled', False))
+            self.split_spin.setValue(cp.get('split_pct', 80))
+            self.commission_spin.setValue(cp.get('commission', 0))
+            self.slippage_spin.setValue(cp.get('slippage', 0))
+            
+            if cp.get('process_id'):
+                self.current_process_id = cp['process_id']
+            
+            self.optimization_queue = list(remaining)
+            self._stop_requested = False
+            self._queue_total = cp.get('queue_total', 3)
+            
+            self.global_progress_bar.setValue(0)
+            self.global_progress_bar.setVisible(True)
+            self.live_monitor_frame.setVisible(True)
+            self.live_monitor_label.setText("Checkpoint'ten devam ediliyor...")
+            self.resume_btn.setVisible(False)
+            
+            self.total_start_time = time.time()
+            self._start_next_in_queue()
+            return
         
-        # Strateji combo'sunu ayarla
-        if strategy_idx < self.strategy_combo.count():
-            self.strategy_combo.setCurrentIndex(strategy_idx)
-        
-        # Validation ayarlari
-        self.validation_check.setChecked(cp.get('validation_enabled', False))
-        self.split_spin.setValue(cp.get('split_pct', 80))
-        self.commission_spin.setValue(cp.get('commission', 0))
-        self.slippage_spin.setValue(cp.get('slippage', 0))
-        
-        # Process ID
-        if cp.get('process_id'):
-            self.current_process_id = cp['process_id']
-        
-        # Kuyruğu yükle
-        self.optimization_queue = list(remaining)
-        self._stop_requested = False
-        self._queue_total = cp.get('queue_total', 3)
-        
-        # UI
-        self.global_progress_bar.setValue(0)
-        self.global_progress_bar.setVisible(True)
-        self.live_monitor_frame.setVisible(True)
-        self.live_monitor_label.setText("Checkpoint'ten devam ediliyor...")
-        self.resume_btn.setVisible(False)
-        
-        self.total_start_time = time.time()
-        
-        # Sıradakini başlat
-        self._start_next_in_queue()
+        # Yalnizca per-method checkpoint varsa: ilk checkpoint'i sec ve baslat
+        if method_checkpoints:
+            # Birden fazla varsa: hangi checkpoint'ten devam?
+            job_ids = list(method_checkpoints.keys())
+            
+            if len(job_ids) == 1:
+                selected_job = job_ids[0]
+            else:
+                # Secim dialogu goster
+                from PySide6.QtWidgets import QInputDialog
+                labels = []
+                for jid, data in method_checkpoints.items():
+                    ts = data.get('timestamp', '?')
+                    phase = data.get('current_phase', data.get('phase', data.get('round', data.get('generation', data.get('trial', '?')))))
+                    labels.append(f"{jid}  |  faz: {phase}  |  {ts}")
+                
+                chosen, ok = QInputDialog.getItem(
+                    self, "Checkpoint Seç", "Hangi checkpoint'ten devam etmek istiyorsunuz?",
+                    labels, 0, False
+                )
+                if not ok:
+                    return
+                selected_job = job_ids[labels.index(chosen)]
+            
+            # Job ID'den strateji ve metodu cikar
+            data = method_checkpoints[selected_job]
+            # job_id format: s{strategy_index}_{method}_{process_id}
+            parts = selected_job.split('_', 2)
+            strategy_idx = int(parts[0][1:]) if parts[0].startswith('s') else 0
+            method_name = parts[1] if len(parts) > 1 else "Hibrit Grup"
+            
+            # Metot ismini combo'daki isme cevir
+            method_map = {
+                'Hibrit Grup': 'Hibrit Grup',
+                'Genetik': 'Genetik',
+                'Bayesian': 'Bayesian',
+                'S4 Sirali': 'Hibrit Grup',  # S4 combo'da "Hibrit Grup" olarak gorulur cunku _run_sequential_layer icin
+            }
+            combo_method = method_map.get(method_name, method_name)
+            
+            # UI'i ayarla
+            if strategy_idx < self.strategy_combo.count():
+                self.strategy_combo.setCurrentIndex(strategy_idx)
+            # Method combo'sunu bul
+            idx = self.method_combo.findText(combo_method)
+            if idx >= 0:
+                self.method_combo.setCurrentIndex(idx)
+            
+            self.resume_btn.setVisible(False)
+            self.status_label.setText(f"Checkpoint'ten devam ediliyor: {selected_job}")
+            
+            # Normal start_optimization'u cagir — worker icerideki 
+            # checkpoint'i otomatik bulup resume edecek
+            self._start_optimization()
 
     def _run_all_optimizers(self):
         """Tüm optimizasyon yöntemlerini sırayla çalıştır"""

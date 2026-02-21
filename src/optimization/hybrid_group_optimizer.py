@@ -826,7 +826,9 @@ class HybridGroupOptimizer:
             drone_results = self.run_group_optimization(drone_group)
             
             all_results = satellite_results + drone_results
-            all_results.sort(key=lambda x: x.get('fitness', x.get('net_profit', 0)), reverse=True)
+            from src.optimization.fitness import calculate_robust_fitness
+            calculate_robust_fitness(all_results)
+            all_results.sort(key=lambda x: x.get('robust_fitness', x.get('fitness', 0)), reverse=True)
             self.group_results[group.name] = all_results[:15]
             print(f"  [OK] {group.name}: {len(all_results)} sonuc => Top 15 secildi")
 
@@ -834,25 +836,67 @@ class HybridGroupOptimizer:
         """
         Iterative Coordinate Descent: Her round'da gruplar diger gruplarin 
         EN IYI bulunan degerlerini kullanarak tekrar optimize edilir.
+        Checkpoint destegi: Her grup tamamlandiginda diske yazar.
         """
+        from src.optimization.checkpoint_manager import CheckpointManager
+        ckpt = CheckpointManager()
+        job_id = CheckpointManager.make_job_id(
+            self.strategy_index, 'Hibrit Grup', self.process_id or 'default'
+        )
+        
         print("\n" + "="*60)
         print("  ITERATIVE COORDINATE DESCENT")
         print("="*60)
+        
+        # Resume: checkpoint varsa yukle
+        saved = ckpt.load(job_id)
+        resume_round = 0
+        resume_group_idx = -1
         
         # Baslangic: Tum gruplar default degerlerle
         current_best = {}
         for g in self.groups:
             current_best[g.name] = g.default_values.copy()
         
+        if saved and saved.get('phase') == 'iterative':
+            resume_round = saved.get('round', 0)
+            resume_group_idx = saved.get('group_idx', -1)
+            saved_best = saved.get('current_best', {})
+            if saved_best:
+                current_best.update(saved_best)
+            saved_results = saved.get('group_results', {})
+            if saved_results:
+                self.group_results.update(saved_results)
+            print(f"  [RESUME] Round {resume_round}, Grup {resume_group_idx}'den devam ediliyor")
+        
         total_groups = len(self.independent_groups)
         
         for round_num in range(1, max_rounds + 1):
+            # Resume: tamamlanan round'lari atla
+            if round_num < resume_round:
+                print(f"\n--- ROUND {round_num}/{max_rounds} [ATLANDI] ---")
+                continue
+            
             print(f"\n--- ROUND {round_num}/{max_rounds} ---")
             round_start_fitness = {}
             round_end_fitness = {}
             
             for i, group in enumerate(self.independent_groups):
+                # Resume: tamamlanan gruplari atla
+                if round_num == resume_round and i <= resume_group_idx:
+                    print(f"  [RESUME] {group.name} atlandi")
+                    continue
+                
                 if self._is_cancelled and self._is_cancelled():
+                    # Durdurma: checkpoint kaydet
+                    ckpt.save(job_id, {
+                        'phase': 'iterative',
+                        'round': round_num,
+                        'group_idx': i - 1,
+                        'current_best': current_best,
+                        'group_results': {k: v[:15] for k, v in self.group_results.items()},
+                    })
+                    print(f"  [CHECKPOINT] Kaydedildi: Round {round_num}, Grup {i-1}")
                     break
                 
                 # Progress: Round ve grup bazli
@@ -901,6 +945,9 @@ class HybridGroupOptimizer:
                         all_results = satellite_results
                     
                     all_results.sort(key=lambda x: x.get('fitness', x.get('net_profit', 0)), reverse=True)
+                    from src.optimization.fitness import calculate_robust_fitness
+                    calculate_robust_fitness(all_results)
+                    all_results.sort(key=lambda x: x.get('robust_fitness', x.get('fitness', 0)), reverse=True)
                     self.group_results[group.name] = all_results[:15]
                     
                     # current_best guncelle
@@ -909,6 +956,15 @@ class HybridGroupOptimizer:
                             if key in all_results[0]:
                                 current_best[group.name][key] = all_results[0][key]
                         round_end_fitness[group.name] = all_results[0].get('fitness', 0)
+                
+                # Grup tamamlandi: checkpoint kaydet
+                ckpt.save(job_id, {
+                    'phase': 'iterative',
+                    'round': round_num,
+                    'group_idx': i,
+                    'current_best': current_best,
+                    'group_results': {k: v[:15] for k, v in self.group_results.items()},
+                })
             
             # Yakinsama kontrolu
             max_improvement = 0
@@ -1102,6 +1158,14 @@ class HybridGroupOptimizer:
         
         self.run_combination_phase()
         self.run_cascaded_phase()
+        
+        # Basarili tamamlanma: checkpoint temizle
+        from src.optimization.checkpoint_manager import CheckpointManager
+        ckpt = CheckpointManager()
+        job_id = CheckpointManager.make_job_id(
+            self.strategy_index, 'Hibrit Grup', self.process_id or 'default'
+        )
+        ckpt.delete(job_id)
         
         if self.on_progress:
             self.on_progress(100, "Tamamlandi!")

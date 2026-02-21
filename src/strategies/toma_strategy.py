@@ -90,9 +90,33 @@ class TomaStrategy:
         return instance
 
     def generate_all_signals(self):
+        from .common import Signal
         signals = self.calculate_signals(self.closes, self.highs, self.lows)
-        # Exits not implemented in local logic yet, returning empty lists
-        return signals, [False]*len(signals), [False]*len(signals)
+        n = len(signals)
+        exits_long = [False] * n
+        exits_short = [False] * n
+        
+        # Always-in system: opposite signal = exit
+        pos = 0  # 0=flat, 1=long, -1=short
+        for i in range(n):
+            if signals[i] == Signal.LONG:
+                if pos == -1:
+                    exits_short[i] = True  # Close short
+                pos = 1
+            elif signals[i] == Signal.SHORT:
+                if pos == 1:
+                    exits_long[i] = True  # Close long
+                pos = -1
+        
+        # Convert Signal enum to int for backtest compatibility
+        int_signals = [0] * n
+        for i in range(n):
+            if signals[i] == Signal.LONG:
+                int_signals[i] = 1
+            elif signals[i] == Signal.SHORT:
+                int_signals[i] = -1
+        
+        return int_signals, exits_long, exits_short
 
     def calculate_signals(self, closes: List[float], highs: List[float], lows: List[float]) -> List[Signal]:
         n = len(closes)
