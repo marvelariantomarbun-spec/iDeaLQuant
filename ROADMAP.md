@@ -105,7 +105,8 @@ IdealData backtest sonuçları ile **%100 uyumlu** harici backtest + optimizasyo
 
 ### 4.2 Kod Export ✅
 - [x] `src/export/idealdata_exporter.py`
-- [x] Strateji 1 + 2 kod üretimi
+- [x] Strateji 1 + 2 + 3 + 4 kod üretimi
+- [x] S4 Risk Yönetimi (Kar Al/İzleyen Stop) & Mantık Hizalaması (Feb 22)
 - [x] Birleşik robot kodu
 - [x] Sistematik dosya isimlendirme
 - [ ] Isı haritası

@@ -1,4 +1,24 @@
 
+## 2026-02-22 (Strategy 4 Export Fixes & Logic Alignment)
+
+### ✅ Strateji 4 C# Export Düzeltmeleri
+- **Risk Yönetimi Entegrasyonu:** Kar Al ve İzleyen Stop mantığı C# koduna eklendi, giriş sonrası aynı barda kontrol edilecek şekilde (Python ile uyumlu) yerleştirildi.
+- **Sinyal Sıralaması (Critical Fix):** C# şablonundaki mantık hatası giderildi. Önce giriş/reverse sinyalleri hesaplanıyor, sonra pozisyon güncelleniyor, en son exit (Kar Al/Stop) kontrol ediliyor.
+- **Parametre Ayrıştırma:** HHV1 ve LLV1 periyotları birbirinden bağımsız hale getirildi (`HHV1_PERIOD`, `LLV1_PERIOD`).
+- **Performans Paneli Fix:** Panelin ihtiyaç duyduğu `O` (Acilis) serisi koda eklendi.
+- **Kod Temizliği:** `idealdata_exporter.py` dosyasının sonundaki 300+ satırlık duplicate/messy kod temizlendi.
+
+### ✅ Python ↔ C# Parite Kontrolü
+- **S4 Karşılaştırma Raporu:** `toma_strategy.py`, Numba backtest ve C# export kodları satır satır karşılaştırıldı. 5 ana fark/sorun tespit edilip düzeltildi (Rapor: `s4_comparison.md`).
+
+### 📁 Değişen Dosyalar (1)
+`idealdata_exporter.py`
+
+### 📌 Mevcut Durum
+- **Sıradaki Adım:** Yeni S4 parametreleri ile IdealData üzerinde canlı test.
+
+---
+
 ## 2026-02-22 (OOS Penalty Global Integration)
 
 ### ✅ Anti-Overfit: OOS-Aware Re-Ranking (Tüm Sistem)
